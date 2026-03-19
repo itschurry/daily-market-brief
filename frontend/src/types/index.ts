@@ -282,7 +282,7 @@ export interface BacktestEquityPoint {
 }
 
 export interface BacktestQuery {
-  market_scope: 'all' | 'kospi' | 'nasdaq';
+  market_scope: 'kospi' | 'nasdaq';
   lookback_days: number;
   initial_cash: number;
   max_positions: number;
@@ -300,6 +300,7 @@ export interface BacktestData {
   strategy?: string;
   config?: {
     initial_cash?: number;
+    base_currency?: 'KRW' | 'USD';
     max_positions?: number;
     buy_fee_rate?: number;
     sell_fee_rate?: number;

@@ -781,13 +781,19 @@ def _get_kospi_backtest() -> dict:
 
 
 def _parse_backtest_config(query: dict[str, list[str]]) -> BacktestConfig:
-    market_scope = (query.get("market_scope", ["all"])[0] or "all").strip().lower()
-    if market_scope == "kospi":
-        markets = ("KOSPI",)
-    elif market_scope == "nasdaq":
+    market_scope = (query.get("market_scope", ["kospi"])[0] or "kospi").strip().lower()
+    if market_scope == "nasdaq":
         markets = ("NASDAQ",)
+        base_currency = "USD"
+        initial_default = 10_000.0
+        initial_minimum = 1_000.0
+        initial_maximum = 5_000_000.0
     else:
-        markets = ("KOSPI", "NASDAQ")
+        markets = ("KOSPI",)
+        base_currency = "KRW"
+        initial_default = 10_000_000.0
+        initial_minimum = 1_000_000.0
+        initial_maximum = 500_000_000.0
 
     def _parse_int(name: str, default: int, minimum: int, maximum: int) -> int:
         raw = query.get(name, [str(default)])[0]
@@ -821,7 +827,8 @@ def _parse_backtest_config(query: dict[str, list[str]]) -> BacktestConfig:
         rsi_min, rsi_max = rsi_max, rsi_min
 
     return BacktestConfig(
-        initial_cash=_parse_float("initial_cash", 10_000_000.0, 1_000_000.0, 500_000_000.0),
+        initial_cash=_parse_float("initial_cash", initial_default, initial_minimum, initial_maximum),
+        base_currency=base_currency,
         max_positions=_parse_int("max_positions", 5, 1, 20),
         max_holding_days=_parse_int("max_holding_days", 30, 5, 180),
         lookback_days=_parse_int("lookback_days", 1095, 180, 1825),
@@ -838,6 +845,7 @@ def _config_cache_key(config: BacktestConfig) -> str:
     return json.dumps(
         {
             "initial_cash": config.initial_cash,
+            "base_currency": config.base_currency,
             "max_positions": config.max_positions,
             "max_holding_days": config.max_holding_days,
             "lookback_days": config.lookback_days,

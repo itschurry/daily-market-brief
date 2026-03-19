@@ -18,12 +18,13 @@ from config.backtest_universe import get_kospi50_universe, get_sp50_universe
 @dataclass(frozen=True)
 class BacktestConfig:
     initial_cash: float = 10_000_000.0
+    base_currency: str = "KRW"
     max_positions: int = 5
     buy_fee_rate: float = 0.00015
     sell_fee_rate: float = 0.00015
     max_holding_days: int = 30
     lookback_days: int = 1095
-    markets: tuple[str, ...] = ("KOSPI", "NASDAQ")
+    markets: tuple[str, ...] = ("KOSPI",)
     rsi_min: float = 45.0
     rsi_max: float = 68.0
     volume_ratio_min: float = 1.2
@@ -33,8 +34,9 @@ class BacktestConfig:
 
 def run_kospi_backtest(config: BacktestConfig | None = None) -> dict[str, Any]:
     cfg = config or BacktestConfig()
+    base_currency = (cfg.base_currency or "KRW").upper()
     universe = _get_backtest_universe(cfg.markets)
-    histories = _load_histories(universe, cfg.lookback_days)
+    histories = _load_histories(universe, cfg.lookback_days, base_currency)
 
     available_histories = {
         code: rows for code, rows in histories.items() if len(rows) >= 80
@@ -170,9 +172,10 @@ def run_kospi_backtest(config: BacktestConfig | None = None) -> dict[str, Any]:
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "universe": universe_label,
-        "strategy": "trend-momentum-volume-fx-v2",
+        "strategy": "trend-momentum-volume-v3",
         "config": {
             "initial_cash": cfg.initial_cash,
+            "base_currency": base_currency,
             "max_positions": cfg.max_positions,
             "buy_fee_rate": cfg.buy_fee_rate,
             "sell_fee_rate": cfg.sell_fee_rate,
@@ -225,10 +228,12 @@ def _get_backtest_universe(markets: tuple[str, ...]) -> list[tuple[str, str, str
 def _load_histories(
     universe: list[tuple[str, str, str, str]],
     lookback_days: int,
+    base_currency: str,
 ) -> dict[str, list[dict[str, Any]]]:
     cutoff_date = (datetime.now() - timedelta(days=lookback_days)).date()
     histories: dict[str, list[dict[str, Any]]] = {}
     fx_lookup = _load_usdkrw_lookup(cutoff_date)
+    convert_us_to_krw = base_currency == "KRW"
     domestic_count = sum(1 for _, _, market, _ in universe if market == "KOSPI")
     use_kis_for_domestic = domestic_count <= 80 and _get_kis_client() is not None
 
@@ -239,7 +244,15 @@ def _load_histories(
             if len(rows) < 80:
                 rows = _fetch_naver_daily_history(code, name, market, cutoff_date)
         else:
-            rows = _fetch_yahoo_daily_history(code, name, ticker, market, cutoff_date, fx_lookup)
+            rows = _fetch_yahoo_daily_history(
+                code,
+                name,
+                ticker,
+                market,
+                cutoff_date,
+                fx_lookup,
+                convert_to_krw=convert_us_to_krw,
+            )
         return f"{market}:{code}", rows
 
     max_workers = 18 if len(universe) > 100 else 8
@@ -446,6 +459,7 @@ def _fetch_yahoo_daily_history(
     market: str,
     cutoff_date,
     fx_lookup,
+    convert_to_krw: bool,
 ) -> list[dict[str, Any]]:
     try:
         response = requests.get(
@@ -478,10 +492,13 @@ def _fetch_yahoo_daily_history(
         date = datetime.utcfromtimestamp(ts).date()
         if date < cutoff_date:
             continue
-        fx_rate = fx_lookup(date)
-        if fx_rate is None:
-            continue
-        raw_rows.append((date, float(close), float(volume), float(close) * fx_rate))
+        trade_price = float(close)
+        if convert_to_krw:
+            fx_rate = fx_lookup(date)
+            if fx_rate is None:
+                continue
+            trade_price = float(close) * fx_rate
+        raw_rows.append((date, float(close), float(volume), trade_price))
 
     if len(raw_rows) < 80:
         return []

@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DEFAULT_BACKTEST_QUERY, useBacktest } from '../hooks/useBacktest';
 import type { BacktestData, BacktestQuery, BacktestTrade } from '../types';
 
-function formatMoney(value?: number | null) {
+function formatMoney(value?: number | null, currency: 'KRW' | 'USD' = 'KRW') {
   if (value === undefined || value === null) return '—';
-  return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(value) + '원';
+  const formatted = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(value);
+  return currency === 'USD' ? `$${formatted}` : `${formatted}원`;
 }
 
 function formatPct(value?: number | null) {
@@ -23,7 +24,7 @@ function MetricCard({ title, value, detail, tone = 'neutral' }: { title: string;
   );
 }
 
-function Sparkline({ data }: { data: BacktestData }) {
+function Sparkline({ data, currency = 'KRW' }: { data: BacktestData; currency?: 'KRW' | 'USD' }) {
   const values = (data.equity_curve || []).map((item) => item.equity);
   if (values.length < 2) return null;
 
@@ -64,7 +65,7 @@ function Sparkline({ data }: { data: BacktestData }) {
         </svg>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 10, fontSize: 12, color: 'var(--text-4)' }}>
           <span>{data.equity_curve?.[0]?.date || '시작일 없음'}</span>
-          <span>{formatMoney(min)} ~ {formatMoney(max)}</span>
+          <span>{formatMoney(min, currency)} ~ {formatMoney(max, currency)}</span>
           <span>{data.equity_curve?.[data.equity_curve.length - 1]?.date || '종료일 없음'}</span>
         </div>
       </div>
@@ -72,7 +73,7 @@ function Sparkline({ data }: { data: BacktestData }) {
   );
 }
 
-function TradeBlock({ title, trades, tone }: { title: string; trades: BacktestTrade[]; tone: 'up' | 'down' }) {
+function TradeBlock({ title, trades, tone, currency = 'KRW' }: { title: string; trades: BacktestTrade[]; tone: 'up' | 'down'; currency?: 'KRW' | 'USD' }) {
   return (
     <div className="page-section">
       <div style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>{tone === 'up' ? 'Best Trades' : 'Worst Trades'}</div>
@@ -95,10 +96,10 @@ function TradeBlock({ title, trades, tone }: { title: string; trades: BacktestTr
               </div>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 12, color: 'var(--text-3)' }}>
-              <span>진입 {formatMoney(trade.entry_price)}</span>
-              <span>청산 {formatMoney(trade.exit_price)}</span>
+              <span>진입 {formatMoney(trade.entry_price, currency)}</span>
+              <span>청산 {formatMoney(trade.exit_price, currency)}</span>
               <span>{trade.holding_days}일 보유</span>
-              <span>손익 {formatMoney(trade.pnl)}</span>
+              <span>손익 {formatMoney(trade.pnl, currency)}</span>
               <span>{trade.reason}</span>
             </div>
           </div>
@@ -141,6 +142,16 @@ function NumericField({
   min?: number;
   onChange: (value: number | null) => void;
 }) {
+  const [display, setDisplay] = useState('');
+
+  useEffect(() => {
+    if (value === undefined || value === null) {
+      setDisplay('');
+      return;
+    }
+    setDisplay(String(value));
+  }, [value]);
+
   return (
     <label style={{ display: 'grid', gap: 8 }}>
       <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)' }}>{label}</span>
@@ -148,12 +159,92 @@ function NumericField({
         <input
           className="backtest-input"
           type="number"
-          value={value ?? ''}
+          value={display}
           min={min}
           step={step}
           onChange={(event) => {
             const raw = event.target.value.trim();
-            onChange(raw ? Number(raw) : null);
+            if (!raw) {
+              setDisplay('');
+              onChange(null);
+              return;
+            }
+            const parsed = Number(raw);
+            if (!Number.isFinite(parsed)) return;
+            setDisplay(raw);
+            onChange(parsed);
+          }}
+          onBlur={() => {
+            if (!display) return;
+            const parsed = Number(display);
+            if (!Number.isFinite(parsed)) return;
+            const next = min !== undefined ? Math.max(parsed, min) : parsed;
+            if (next !== parsed) {
+              setDisplay(String(next));
+              onChange(next);
+            }
+          }}
+        />
+        {suffix && <span className="backtest-input-suffix">{suffix}</span>}
+      </div>
+    </label>
+  );
+}
+
+function CurrencyField({
+  label,
+  value,
+  suffix,
+  min,
+  onChange,
+}: {
+  label: string;
+  value: number | null | undefined;
+  suffix?: string;
+  min?: number;
+  onChange: (value: number | null) => void;
+}) {
+  const [display, setDisplay] = useState('');
+
+  useEffect(() => {
+    if (value === undefined || value === null) {
+      setDisplay('');
+      return;
+    }
+    setDisplay(new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(value));
+  }, [value]);
+
+  return (
+    <label style={{ display: 'grid', gap: 8 }}>
+      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)' }}>{label}</span>
+      <div className="backtest-input-wrap">
+        <input
+          className="backtest-input"
+          type="text"
+          inputMode="numeric"
+          value={display}
+          onChange={(event) => {
+            const digits = event.target.value.replace(/\D/g, '');
+            if (!digits) {
+              setDisplay('');
+              onChange(null);
+              return;
+            }
+            const parsed = Number(digits);
+            if (!Number.isFinite(parsed)) return;
+            setDisplay(new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(parsed));
+            onChange(parsed);
+          }}
+          onBlur={() => {
+            const digits = display.replace(/\D/g, '');
+            if (!digits) return;
+            const parsed = Number(digits);
+            if (!Number.isFinite(parsed)) return;
+            const next = min !== undefined ? Math.max(parsed, min) : parsed;
+            if (next !== parsed) {
+              onChange(next);
+            }
+            setDisplay(new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(next));
           }}
         />
         {suffix && <span className="backtest-input-suffix">{suffix}</span>}
@@ -168,9 +259,17 @@ function buildPresetLabel(lookbackDays: number) {
   return '3년';
 }
 
+function marketCashPreset(market: BacktestQuery['market_scope']) {
+  return market === 'nasdaq'
+    ? { currency: 'USD' as const, initialCash: 10_000, min: 1_000, suffix: '달러', label: '초기 자금(USD)' }
+    : { currency: 'KRW' as const, initialCash: 10_000_000, min: 1_000_000, suffix: '원', label: '초기 자금(KRW)' };
+}
+
 export function BacktestPage({ onBack }: { onBack: () => void }) {
   const { data, status, run } = useBacktest();
   const [draft, setDraft] = useState<BacktestQuery>(DEFAULT_BACKTEST_QUERY);
+  const marketPreset = marketCashPreset(draft.market_scope);
+  const baseCurrency = (data.config?.base_currency || marketPreset.currency) as 'KRW' | 'USD';
   const metrics = data.metrics;
   const equity = data.equity_curve || [];
   const trades = data.trades || [];
@@ -205,16 +304,16 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
                 <button className="ghost-button" style={{ background: 'rgba(255,255,255,.1)', color: '#fffaf2', borderColor: 'rgba(255,255,255,.18)' }} onClick={onBack}>
                   메인 대시보드로
                 </button>
-                <span className="hero-chip">기본 우주: KOSPI50 + S&amp;P50</span>
-                <span className="hero-chip">환산 기준: KRW</span>
+                <span className="hero-chip">기본 우주: {draft.market_scope === 'kospi' ? 'KOSPI50' : 'NASDAQ50'}</span>
+                <span className="hero-chip">기준 통화: {marketPreset.currency}</span>
                 <span className="hero-chip">기술 규칙 + 손절/익절</span>
               </div>
             </div>
             <div className="hero-sidecard">
               <div className="hero-sidecard-label">현재 설정</div>
-              <div className="hero-sidecard-value">{buildPresetLabel(draft.lookback_days)} · {draft.market_scope === 'all' ? '양시장' : draft.market_scope === 'kospi' ? 'KOSPI50' : 'S&P50'}</div>
+              <div className="hero-sidecard-value">{buildPresetLabel(draft.lookback_days)} · {draft.market_scope === 'kospi' ? 'KOSPI50' : 'NASDAQ50'}</div>
               <div className="hero-sidecard-copy">
-                초기자금 {formatMoney(draft.initial_cash)} · 최대 {draft.max_positions}종목 · 손절 {draft.stop_loss_pct ?? '없음'}% · 익절 {draft.take_profit_pct ?? '없음'}%
+                초기자금 {formatMoney(draft.initial_cash, marketPreset.currency)} · 최대 {draft.max_positions}종목 · 손절 {draft.stop_loss_pct ?? '없음'}% · 익절 {draft.take_profit_pct ?? '없음'}%
               </div>
             </div>
           </div>
@@ -240,14 +339,17 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', marginBottom: 8 }}>시장 범위</div>
               <div className="backtest-pill-row">
                 {[
-                  { value: 'all', label: 'KOSPI50 + S&P50' },
                   { value: 'kospi', label: 'KOSPI50' },
-                  { value: 'nasdaq', label: 'S&P50' },
+                  { value: 'nasdaq', label: 'NASDAQ50' },
                 ].map((option) => (
                   <button
                     key={option.value}
                     className={`backtest-pill ${draft.market_scope === option.value ? 'active' : ''}`}
-                    onClick={() => patchDraft('market_scope', option.value as BacktestQuery['market_scope'])}
+                    onClick={() => {
+                      const nextMarket = option.value as BacktestQuery['market_scope'];
+                      const preset = marketCashPreset(nextMarket);
+                      setDraft((prev) => ({ ...prev, market_scope: nextMarket, initial_cash: preset.initialCash }));
+                    }}
                   >
                     {option.label}
                   </button>
@@ -272,9 +374,18 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
           </div>
 
           <div className="backtest-grid">
-            <NumericField label="초기 자금" value={draft.initial_cash} suffix="원" min={1000000} step={1000000} onChange={(value) => patchDraft('initial_cash', value ?? DEFAULT_BACKTEST_QUERY.initial_cash)} />
-            <NumericField label="최대 보유 종목 수" value={draft.max_positions} suffix="종목" min={1} onChange={(value) => patchDraft('max_positions', value ?? DEFAULT_BACKTEST_QUERY.max_positions)} />
-            <NumericField label="최대 보유 일수" value={draft.max_holding_days} suffix="일" min={5} onChange={(value) => patchDraft('max_holding_days', value ?? DEFAULT_BACKTEST_QUERY.max_holding_days)} />
+            <CurrencyField label={marketPreset.label} value={draft.initial_cash} suffix={marketPreset.suffix} min={marketPreset.min} onChange={(value) => {
+              if (value === null) return;
+              patchDraft('initial_cash', value);
+            }} />
+            <NumericField label="최대 보유 종목 수" value={draft.max_positions} suffix="종목" min={1} onChange={(value) => {
+              if (value === null) return;
+              patchDraft('max_positions', value);
+            }} />
+            <NumericField label="최대 보유 일수" value={draft.max_holding_days} suffix="일" min={5} onChange={(value) => {
+              if (value === null) return;
+              patchDraft('max_holding_days', value);
+            }} />
           </div>
         </div>
 
@@ -285,9 +396,18 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
             <div style={{ fontSize: 13, color: 'var(--text-4)', marginTop: 8 }}>RSI 진입 범위, 거래량 기준, 손절·익절 값을 바꿔 전략 민감도를 조절합니다.</div>
           </div>
           <div className="backtest-grid">
-            <NumericField label="RSI 최소값" value={draft.rsi_min} min={10} onChange={(value) => patchDraft('rsi_min', value ?? DEFAULT_BACKTEST_QUERY.rsi_min)} />
-            <NumericField label="RSI 최대값" value={draft.rsi_max} min={10} onChange={(value) => patchDraft('rsi_max', value ?? DEFAULT_BACKTEST_QUERY.rsi_max)} />
-            <NumericField label="최소 거래량 배수" value={draft.volume_ratio_min} min={0.5} step={0.1} onChange={(value) => patchDraft('volume_ratio_min', value ?? DEFAULT_BACKTEST_QUERY.volume_ratio_min)} />
+            <NumericField label="RSI 최소값" value={draft.rsi_min} min={10} onChange={(value) => {
+              if (value === null) return;
+              patchDraft('rsi_min', value);
+            }} />
+            <NumericField label="RSI 최대값" value={draft.rsi_max} min={10} onChange={(value) => {
+              if (value === null) return;
+              patchDraft('rsi_max', value);
+            }} />
+            <NumericField label="최소 거래량 배수" value={draft.volume_ratio_min} min={0.5} step={0.1} onChange={(value) => {
+              if (value === null) return;
+              patchDraft('volume_ratio_min', value);
+            }} />
             <NumericField label="손절 기준" value={draft.stop_loss_pct} suffix="%" min={1} step={0.5} onChange={(value) => patchDraft('stop_loss_pct', value)} />
             <NumericField label="익절 기준" value={draft.take_profit_pct} suffix="%" min={1} step={0.5} onChange={(value) => patchDraft('take_profit_pct', value)} />
           </div>
@@ -317,7 +437,7 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
                     <div style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,250,242,.64)' }}>Backtest Result</div>
                     <div style={{ fontSize: 30, fontWeight: 800, marginTop: 8 }}>실행 결과</div>
                     <div style={{ fontSize: 15, color: 'rgba(255,250,242,.82)', marginTop: 10, lineHeight: 1.7, maxWidth: 760 }}>
-                      {data.universe || 'KOSPI50 + S&P50'} · {equity[0]?.date || '—'} ~ {equity[equity.length - 1]?.date || '—'} · 생성 시각 {data.generated_at || '없음'}
+                      {data.universe || (draft.market_scope === 'kospi' ? 'KOSPI50' : 'NASDAQ50')} · {equity[0]?.date || '—'} ~ {equity[equity.length - 1]?.date || '—'} · 생성 시각 {data.generated_at || '없음'}
                     </div>
                     <CountByMarket data={data} />
                   </div>
@@ -332,7 +452,7 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
                 </div>
               </div>
               <div style={{ padding: 18, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, background: 'rgba(255,253,248,0.78)' }}>
-                <MetricCard title="최종 자산" value={formatMoney(metrics?.final_equity)} detail={`초기자금 ${formatMoney(data.config?.initial_cash)}`} tone="up" />
+                <MetricCard title="최종 자산" value={formatMoney(metrics?.final_equity, baseCurrency)} detail={`초기자금 ${formatMoney(data.config?.initial_cash, baseCurrency)}`} tone="up" />
                 <MetricCard title="총수익률" value={formatPct(metrics?.total_return_pct)} detail={`CAGR ${formatPct(metrics?.cagr_pct)}`} tone={(metrics?.total_return_pct || 0) >= 0 ? 'up' : 'down'} />
                 <MetricCard title="최대 낙폭" value={formatPct(metrics?.max_drawdown_pct)} detail="낙폭이 작을수록 방어력이 높습니다." tone="down" />
                 <MetricCard title="거래 수 / 승률" value={`${metrics?.trade_count ?? 0}건`} detail={`승률 ${formatPct(metrics?.win_rate_pct)}`} />
@@ -372,11 +492,11 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
               </div>
             </div>
 
-            <Sparkline data={data} />
+            <Sparkline data={data} currency={baseCurrency} />
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
-              <TradeBlock title="상위 수익 거래" trades={bestTrades} tone="up" />
-              <TradeBlock title="손실이 컸던 거래" trades={worstTrades} tone="down" />
+              <TradeBlock title="상위 수익 거래" trades={bestTrades} tone="up" currency={baseCurrency} />
+              <TradeBlock title="손실이 컸던 거래" trades={worstTrades} tone="down" currency={baseCurrency} />
             </div>
           </>
         )}

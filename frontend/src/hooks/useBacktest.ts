@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { BacktestData, BacktestQuery } from '../types';
 
 export const DEFAULT_BACKTEST_QUERY: BacktestQuery = {
-  market_scope: 'all',
+  market_scope: 'kospi',
   lookback_days: 1095,
   initial_cash: 10_000_000,
   max_positions: 5,
