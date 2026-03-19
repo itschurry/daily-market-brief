@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { usePaperTrading } from '../hooks/usePaperTrading';
+import type { PaperEngineConfig } from '../types';
 
 function formatKrw(value?: number | null) {
   if (value === undefined || value === null) return '—';
@@ -24,6 +25,11 @@ function parseCommaNumber(value: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function formatIntegerInput(value?: number | null) {
+  if (value === undefined || value === null || !Number.isFinite(value)) return '';
+  return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(Math.trunc(value));
+}
+
 function formatSignedPct(value?: number | null) {
   if (value === undefined || value === null) return '—';
   return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
@@ -34,6 +40,10 @@ function formatDateTime(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('ko-KR');
+}
+
+function normalizeMarkets(markets?: Array<'KOSPI' | 'NASDAQ'>) {
+  return [...(markets || [])].sort().join(',');
 }
 
 export function PaperTradingTab() {
@@ -69,6 +79,128 @@ export function PaperTradingTab() {
     if (!initialTotalKrw) return 0;
     return ((account.equity_krw / initialTotalKrw) - 1) * 100;
   }, [account.equity_krw, initialTotalKrw]);
+
+  const buildEngineConfig = (): PaperEngineConfig | null => {
+    const markets: Array<'KOSPI' | 'NASDAQ'> = [];
+    if (engineRunKOSPI) markets.push('KOSPI');
+    if (engineRunNASDAQ) markets.push('NASDAQ');
+    if (markets.length === 0) {
+      return null;
+    }
+    return {
+      interval_seconds: Math.max(30, Math.min(3600, Math.floor(Number(engineIntervalSeconds) || 300))),
+      signal_interval: engineSignalInterval,
+      signal_range: engineSignalRange,
+      markets,
+      max_positions_per_market: Math.max(1, Math.min(20, Math.floor(Number(autoMaxPositions) || 5))),
+      min_score: Math.max(0, Math.min(100, Number(autoMinScore) || 60)),
+      include_neutral: autoIncludeNeutral,
+      daily_buy_limit: Math.max(1, Math.min(200, Math.floor(Number(engineDailyBuyLimit) || 20))),
+      daily_sell_limit: Math.max(1, Math.min(200, Math.floor(Number(engineDailySellLimit) || 20))),
+      max_orders_per_symbol_per_day: Math.max(1, Math.min(10, Math.floor(Number(engineMaxOrdersPerSymbol) || 1))),
+      rsi_min: Math.max(10, Math.min(90, Number(engineRsiMin) || 45)),
+      rsi_max: Math.max(10, Math.min(90, Number(engineRsiMax) || 68)),
+      volume_ratio_min: Math.max(0.5, Math.min(5, Number(engineVolumeRatioMin) || 1.2)),
+      stop_loss_pct: Math.max(1, Math.min(50, Number(engineStopLossPct) || 7)),
+      take_profit_pct: Math.max(1, Math.min(100, Number(engineTakeProfitPct) || 18)),
+      max_holding_days: Math.max(1, Math.min(180, Math.floor(Number(engineMaxHoldingDays) || 30))),
+    };
+  };
+
+  const desiredEngineConfig = useMemo(() => buildEngineConfig(), [
+    autoIncludeNeutral,
+    autoMaxPositions,
+    autoMinScore,
+    engineDailyBuyLimit,
+    engineDailySellLimit,
+    engineIntervalSeconds,
+    engineMaxHoldingDays,
+    engineMaxOrdersPerSymbol,
+    engineRsiMax,
+    engineRsiMin,
+    engineRunKOSPI,
+    engineRunNASDAQ,
+    engineSignalInterval,
+    engineSignalRange,
+    engineStopLossPct,
+    engineTakeProfitPct,
+    engineVolumeRatioMin,
+  ]);
+
+  const appliedMarkets = engineState.config?.markets || [];
+  const isKospiRunning = engineState.running && appliedMarkets.includes('KOSPI');
+  const isNasdaqRunning = engineState.running && appliedMarkets.includes('NASDAQ');
+  const isEngineConfigDirty = useMemo(() => {
+    const cfg = desiredEngineConfig;
+    const applied = engineState.config;
+    if (!engineState.running || !cfg || !applied) return false;
+    return (
+      cfg.interval_seconds !== applied.interval_seconds ||
+      cfg.signal_interval !== applied.signal_interval ||
+      cfg.signal_range !== applied.signal_range ||
+      normalizeMarkets(cfg.markets) !== normalizeMarkets(applied.markets) ||
+      cfg.max_positions_per_market !== applied.max_positions_per_market ||
+      cfg.min_score !== applied.min_score ||
+      cfg.include_neutral !== applied.include_neutral ||
+      cfg.daily_buy_limit !== applied.daily_buy_limit ||
+      cfg.daily_sell_limit !== applied.daily_sell_limit ||
+      cfg.max_orders_per_symbol_per_day !== applied.max_orders_per_symbol_per_day ||
+      cfg.rsi_min !== applied.rsi_min ||
+      cfg.rsi_max !== applied.rsi_max ||
+      cfg.volume_ratio_min !== applied.volume_ratio_min ||
+      cfg.stop_loss_pct !== applied.stop_loss_pct ||
+      cfg.take_profit_pct !== applied.take_profit_pct ||
+      cfg.max_holding_days !== applied.max_holding_days
+    );
+  }, [desiredEngineConfig, engineState.config, engineState.running]);
+
+  useEffect(() => {
+    setSeedKrw(formatIntegerInput(account.initial_cash_krw));
+    setSeedUsd(formatIntegerInput(account.initial_cash_usd));
+    setPaperDays(formatIntegerInput(account.paper_days));
+  }, [account.initial_cash_krw, account.initial_cash_usd, account.paper_days]);
+
+  useEffect(() => {
+    const cfg = engineState.config;
+    if (!cfg) return;
+
+    if (cfg.interval_seconds !== undefined) setEngineIntervalSeconds(String(cfg.interval_seconds));
+    if (cfg.signal_interval) setEngineSignalInterval(cfg.signal_interval);
+    if (cfg.signal_range) setEngineSignalRange(cfg.signal_range);
+    if (cfg.max_positions_per_market !== undefined) setAutoMaxPositions(String(cfg.max_positions_per_market));
+    if (cfg.min_score !== undefined) setAutoMinScore(String(cfg.min_score));
+    if (cfg.include_neutral !== undefined) setAutoIncludeNeutral(cfg.include_neutral);
+    if (cfg.daily_buy_limit !== undefined) setEngineDailyBuyLimit(String(cfg.daily_buy_limit));
+    if (cfg.daily_sell_limit !== undefined) setEngineDailySellLimit(String(cfg.daily_sell_limit));
+    if (cfg.max_orders_per_symbol_per_day !== undefined) setEngineMaxOrdersPerSymbol(String(cfg.max_orders_per_symbol_per_day));
+    if (cfg.rsi_min !== undefined) setEngineRsiMin(String(cfg.rsi_min));
+    if (cfg.rsi_max !== undefined) setEngineRsiMax(String(cfg.rsi_max));
+    if (cfg.volume_ratio_min !== undefined) setEngineVolumeRatioMin(String(cfg.volume_ratio_min));
+    if (cfg.stop_loss_pct !== undefined) setEngineStopLossPct(String(cfg.stop_loss_pct));
+    if (cfg.take_profit_pct !== undefined) setEngineTakeProfitPct(String(cfg.take_profit_pct));
+    if (cfg.max_holding_days !== undefined) setEngineMaxHoldingDays(String(cfg.max_holding_days));
+    if (cfg.markets) {
+      setEngineRunKOSPI(cfg.markets.includes('KOSPI'));
+      setEngineRunNASDAQ(cfg.markets.includes('NASDAQ'));
+    }
+  }, [
+    engineState.config?.daily_buy_limit,
+    engineState.config?.daily_sell_limit,
+    engineState.config?.include_neutral,
+    engineState.config?.interval_seconds,
+    engineState.config?.markets?.join(','),
+    engineState.config?.max_holding_days,
+    engineState.config?.max_orders_per_symbol_per_day,
+    engineState.config?.max_positions_per_market,
+    engineState.config?.min_score,
+    engineState.config?.rsi_max,
+    engineState.config?.rsi_min,
+    engineState.config?.signal_interval,
+    engineState.config?.signal_range,
+    engineState.config?.stop_loss_pct,
+    engineState.config?.take_profit_pct,
+    engineState.config?.volume_ratio_min,
+  ]);
 
   async function handleReset() {
     const result = await reset({
@@ -107,36 +239,46 @@ export function PaperTradingTab() {
   }
 
   async function handleStartEngine() {
-    const markets: Array<'KOSPI' | 'NASDAQ'> = [];
-    if (engineRunKOSPI) markets.push('KOSPI');
-    if (engineRunNASDAQ) markets.push('NASDAQ');
-    if (markets.length === 0) {
+    if (engineState.running) {
+      setStatusMessage('이미 실행 중입니다. 설정 변경 사항은 재시작으로 반영해 주세요.');
+      return;
+    }
+    const config = desiredEngineConfig;
+    if (!config) {
       setStatusMessage('최소 1개 시장을 선택해 주세요.');
       return;
     }
-    const result = await startEngine({
-      interval_seconds: Math.max(30, Math.min(3600, Math.floor(Number(engineIntervalSeconds) || 300))),
-      signal_interval: engineSignalInterval,
-      signal_range: engineSignalRange,
-      markets,
-      max_positions_per_market: Math.max(1, Math.min(20, Math.floor(Number(autoMaxPositions) || 5))),
-      min_score: Math.max(0, Math.min(100, Number(autoMinScore) || 60)),
-      include_neutral: autoIncludeNeutral,
-      daily_buy_limit: Math.max(1, Math.min(200, Math.floor(Number(engineDailyBuyLimit) || 20))),
-      daily_sell_limit: Math.max(1, Math.min(200, Math.floor(Number(engineDailySellLimit) || 20))),
-      max_orders_per_symbol_per_day: Math.max(1, Math.min(10, Math.floor(Number(engineMaxOrdersPerSymbol) || 1))),
-      rsi_min: Math.max(10, Math.min(90, Number(engineRsiMin) || 45)),
-      rsi_max: Math.max(10, Math.min(90, Number(engineRsiMax) || 68)),
-      volume_ratio_min: Math.max(0.5, Math.min(5, Number(engineVolumeRatioMin) || 1.2)),
-      stop_loss_pct: Math.max(1, Math.min(50, Number(engineStopLossPct) || 7)),
-      take_profit_pct: Math.max(1, Math.min(100, Number(engineTakeProfitPct) || 18)),
-      max_holding_days: Math.max(1, Math.min(180, Math.floor(Number(engineMaxHoldingDays) || 30))),
-    });
+    const result = await startEngine(config);
     if (!result.ok) {
       setStatusMessage(result.error || '자동매매 실행 실패');
       return;
     }
-    setStatusMessage('추천 기반 자동매매 엔진을 시작했습니다. (매수/매도, 지표 기반, 백그라운드 반복 실행)');
+    const message = result.payload?.message ? String(result.payload.message) : '추천 기반 자동매매 엔진을 시작했습니다. (매수/매도, 지표 기반, 백그라운드 반복 실행)';
+    setStatusMessage(message);
+    await refreshEngineStatus();
+  }
+
+  async function handleRestartEngine() {
+    const config = desiredEngineConfig;
+    if (!config) {
+      setStatusMessage('최소 1개 시장을 선택해 주세요.');
+      return;
+    }
+    if (!engineState.running) {
+      await handleStartEngine();
+      return;
+    }
+    const stopped = await stopEngine();
+    if (!stopped.ok) {
+      setStatusMessage(stopped.error || '자동매매 중지 실패');
+      return;
+    }
+    const restarted = await startEngine(config);
+    if (!restarted.ok) {
+      setStatusMessage(restarted.error || '자동매매 재시작 실패');
+      return;
+    }
+    setStatusMessage('설정 변경 사항을 반영해 자동매매 엔진을 재시작했습니다.');
     await refreshEngineStatus();
   }
 
@@ -220,6 +362,18 @@ export function PaperTradingTab() {
             <div style={{ marginTop: 4, color: engineState.last_error ? 'var(--down)' : 'var(--text-4)' }}>
               오류: {engineState.last_error || '없음'}
             </div>
+          </div>
+          <div style={{ padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--bg-soft)', fontSize: 12, color: 'var(--text-3)' }}>
+            <div>KOSPI: <b style={{ color: isKospiRunning ? 'var(--up)' : 'var(--text-2)' }}>{isKospiRunning ? '실행 중' : '중지'}</b></div>
+            <div style={{ marginTop: 4 }}>적용 시장: {appliedMarkets.includes('KOSPI') ? '포함' : '미포함'}</div>
+          </div>
+          <div style={{ padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--bg-soft)', fontSize: 12, color: 'var(--text-3)' }}>
+            <div>NASDAQ: <b style={{ color: isNasdaqRunning ? 'var(--up)' : 'var(--text-2)' }}>{isNasdaqRunning ? '실행 중' : '중지'}</b></div>
+            <div style={{ marginTop: 4 }}>적용 시장: {appliedMarkets.includes('NASDAQ') ? '포함' : '미포함'}</div>
+          </div>
+          <div style={{ padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--bg-soft)', fontSize: 12, color: isEngineConfigDirty ? 'var(--accent)' : 'var(--text-3)' }}>
+            <div>설정 상태: <b>{isEngineConfigDirty ? '재시작 필요' : '동기화됨'}</b></div>
+            <div style={{ marginTop: 4 }}>{isEngineConfigDirty ? '현재 입력값이 실행 중인 엔진 설정과 다릅니다.' : '화면 입력값과 엔진 설정이 같습니다.'}</div>
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
@@ -306,8 +460,22 @@ export function PaperTradingTab() {
           </label>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button className="ghost-button" style={{ background: 'var(--accent)', color: '#fffaf2', borderColor: 'var(--accent)' }} onClick={handleStartEngine}>
+          <button
+            className="ghost-button"
+            style={{
+              background: engineState.running ? 'var(--bg-soft)' : 'var(--accent)',
+              color: engineState.running ? 'var(--text-4)' : '#fffaf2',
+              borderColor: engineState.running ? 'var(--border)' : 'var(--accent)',
+              cursor: engineState.running ? 'not-allowed' : 'pointer',
+              opacity: engineState.running ? 0.7 : 1,
+            }}
+            onClick={handleStartEngine}
+            disabled={engineState.running}
+          >
             자동매매 엔진 시작
+          </button>
+          <button className="ghost-button" onClick={handleRestartEngine} disabled={engineState.running ? !isEngineConfigDirty : false}>
+            설정으로 재시작
           </button>
           <button className="ghost-button" onClick={handleStopEngine}>자동매매 엔진 중지</button>
           <button className="ghost-button" onClick={() => refreshEngineStatus()}>엔진 상태 새로고침</button>
