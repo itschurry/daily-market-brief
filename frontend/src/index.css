@@ -797,6 +797,16 @@ input {
   margin: 1.45rem 0 0.58rem;
 }
 
+.report-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.report-section-body > * {
+  min-width: 0;
+}
+
 .analysis-content p {
   color: var(--text-2);
   line-height: 1.95;
@@ -930,6 +940,77 @@ input {
   overflow-wrap: anywhere;
 }
 
+.report-subsection-block {
+  padding: 18px 20px;
+  border-radius: 22px;
+  border: 1px solid rgba(31, 77, 95, 0.1);
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+}
+
+.report-subsection-block + .report-subsection-block {
+  margin-top: 4px;
+}
+
+.report-subsection-heading {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.report-subsection-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(31, 77, 95, 0.14);
+  background: linear-gradient(135deg, rgba(31, 77, 95, 0.12), rgba(31, 77, 95, 0.04));
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.report-subsection-title {
+  display: block;
+  padding-top: 6px;
+  font-size: 1.04rem;
+  font-weight: 700;
+  line-height: 1.48;
+  color: var(--text-1);
+  letter-spacing: -0.01em;
+}
+
+.report-subsection-body {
+  margin-top: 14px;
+}
+
+.report-subsection-body > *:first-child {
+  margin-top: 0;
+}
+
+.report-subsection-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.report-inline-label {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(31, 77, 95, 0.16);
+  background: rgba(31, 77, 95, 0.08);
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.4;
+  vertical-align: baseline;
+}
+
 .report-disclaimer {
   padding: 16px 18px;
   background: rgba(255,253,248,0.72);
@@ -1040,5 +1121,27 @@ input {
 
   .report-section-title-text {
     font-size: 1.14rem;
+  }
+
+  .report-subsection-block {
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .report-subsection-heading {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .report-subsection-index {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    font-size: 11px;
+  }
+
+  .report-subsection-title {
+    padding-top: 4px;
+    font-size: 0.98rem;
   }
 }

@@ -18,6 +18,31 @@ export function AnalysisTab({ data, status, onRefresh }: Props) {
     const doc = parser.parseFromString(data.analysis_html, 'text/html');
     const outline: Array<{ id: string; title: string; level: 2 | 3 }> = [];
     const urlPattern = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?"'])/g;
+    const subsectionPattern = /^(\d+)[\.\)]\s*(.+)$/;
+
+    const getSubsectionTitle = (node: Node) => {
+      if (node.nodeType !== Node.ELEMENT_NODE) return null;
+
+      const element = node as HTMLElement;
+      const rawText = element.textContent?.replace(/\s+/g, ' ').trim() || '';
+      if (!rawText) return null;
+
+      if (element.tagName === 'H3') {
+        return { title: rawText };
+      }
+
+      if (element.tagName === 'P') {
+        const match = rawText.match(subsectionPattern);
+        if (match) {
+          return {
+            number: match[1].padStart(2, '0'),
+            title: match[2].trim(),
+          };
+        }
+      }
+
+      return null;
+    };
 
     const linkifyTextNodes = (root: ParentNode) => {
       const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -70,26 +95,30 @@ export function AnalysisTab({ data, status, onRefresh }: Props) {
       });
     };
 
-    doc.body.querySelectorAll('h2, h3').forEach((node, index) => {
-      const level = node.tagName === 'H2' ? 2 : 3;
+    const decorateInlineLabels = (root: ParentNode) => {
+      root.querySelectorAll('p > strong:first-child, li > strong:first-child, li > p > strong:first-child').forEach((node) => {
+        const strong = node as HTMLElement;
+        if ((strong.textContent || '').trim().endsWith(':')) {
+          strong.classList.add('report-inline-label');
+        }
+      });
+    };
+
+    doc.body.querySelectorAll('h2').forEach((node, index) => {
       const id = `report-section-${index + 1}`;
       const rawTitle = node.textContent?.trim() || `섹션 ${index + 1}`;
       const match = rawTitle.match(/^(\d+)\.\s*(.+)$/);
       const title = match?.[2]?.trim() || rawTitle;
-      const number = match?.[1]?.padStart(2, '0') || String(outline.filter((item) => item.level === 2).length + 1).padStart(2, '0');
+      const number = match?.[1]?.padStart(2, '0') || String(index + 1).padStart(2, '0');
 
       node.id = id;
-      if (level === 2) {
-        node.classList.add('report-section-heading');
-        node.innerHTML = `<span class="report-section-number">${number}</span><span class="report-section-title-text">${title}</span>`;
-      } else {
-        node.textContent = title;
-      }
+      node.classList.add('report-section-heading');
+      node.innerHTML = `<span class="report-section-number">${number}</span><span class="report-section-title-text">${title}</span>`;
 
       outline.push({
         id,
         title,
-        level,
+        level: 2,
       });
     });
 
@@ -113,7 +142,59 @@ export function AnalysisTab({ data, status, onRefresh }: Props) {
       }
     });
 
+    groupedBody.querySelectorAll('.report-section-block').forEach((section, sectionIndex) => {
+      const nodes = Array.from(section.childNodes);
+      const heading = nodes.shift();
+      const sectionBody = doc.createElement('div');
+      sectionBody.className = 'report-section-body';
+      let activeSubsectionContent: HTMLElement | null = null;
+      let subsectionCount = 0;
+
+      if (!heading) return;
+
+      section.innerHTML = '';
+      section.appendChild(heading);
+
+      nodes.forEach((node) => {
+        const subsection = getSubsectionTitle(node);
+        if (subsection) {
+          subsectionCount += 1;
+          const subsectionId = (node as HTMLElement).id || `report-section-${sectionIndex + 1}-subsection-${subsectionCount}`;
+          const subsectionBlock = doc.createElement('div');
+          subsectionBlock.className = 'report-subsection-block';
+
+          const subsectionHeading = doc.createElement('div');
+          subsectionHeading.className = 'report-subsection-heading';
+          subsectionHeading.id = subsectionId;
+          subsectionHeading.innerHTML = `
+            <span class="report-subsection-index">${subsection.number || String(subsectionCount).padStart(2, '0')}</span>
+            <span class="report-subsection-title">${subsection.title}</span>
+          `;
+
+          const subsectionBody = doc.createElement('div');
+          subsectionBody.className = 'report-subsection-body';
+
+          subsectionBlock.appendChild(subsectionHeading);
+          subsectionBlock.appendChild(subsectionBody);
+          sectionBody.appendChild(subsectionBlock);
+          activeSubsectionContent = subsectionBody;
+
+          outline.push({
+            id: subsectionId,
+            title: subsection.title,
+            level: 3,
+          });
+          return;
+        }
+
+        (activeSubsectionContent || sectionBody).appendChild(node);
+      });
+
+      section.appendChild(sectionBody);
+    });
+
     doc.body.innerHTML = groupedBody.innerHTML;
+    decorateInlineLabels(doc.body);
     linkifyTextNodes(doc.body);
 
     const text = (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
