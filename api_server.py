@@ -30,6 +30,7 @@ _recommendation_cache: dict = {"data": None, "mtime": 0.0}
 _macro_cache: dict = {"data": None, "mtime": 0.0}
 _market_context_cache: dict = {"data": None, "mtime": 0.0}
 _today_picks_cache: dict = {"data": None, "mtime": 0.0}
+_ai_signals_cache: dict = {"data": None, "mtime": 0.0}
 _backtest_cache: dict = {"data": None, "mtime": 0.0}
 _backtest_run_cache: dict = {}
 _technical_cache: dict = {}
@@ -658,6 +659,26 @@ def _get_today_picks() -> dict:
     return data
 
 
+def _get_ai_signals() -> dict:
+    files = sorted(glob.glob(os.path.join(
+        REPORTS_DIR, "*_ai_signals.json")), reverse=True)
+    if not files:
+        return {"signals": []}
+
+    latest = files[0]
+    mtime = os.path.getmtime(latest)
+
+    if _ai_signals_cache["data"] is not None and mtime == _ai_signals_cache["mtime"]:
+        return _ai_signals_cache["data"]
+
+    with open(latest, encoding="utf-8") as f:
+        data = json.load(f)
+
+    _ai_signals_cache["data"] = data
+    _ai_signals_cache["mtime"] = mtime
+    return data
+
+
 def _fallback_today_picks(date: str | None = None) -> dict:
     recommendations = _get_recommendations() if not date else _load_report_json("recommendations", date, latest=False)
     if not recommendations.get("recommendations"):
@@ -1005,9 +1026,11 @@ class Handler(BaseHTTPRequestHandler):
             base_date = payload.get("date") or _pick_date()
             prev_date = _previous_date(base_date)
             today_picks = _get_today_picks() if not payload.get("date") else (_load_report_json("today_picks", base_date, latest=False) or _fallback_today_picks(base_date))
+            ai_signals = _get_ai_signals() if not payload.get("date") else (_load_report_json("ai_signals", base_date, latest=False) or {"signals": []})
             recommendations = _get_recommendations() if not payload.get("date") else _load_report_json("recommendations", base_date, latest=False)
             previous_recommendations = _load_report_json("recommendations", prev_date, latest=False) if prev_date else {}
             previous_today_picks = (_load_report_json("today_picks", prev_date, latest=False) or _fallback_today_picks(prev_date)) if prev_date else {}
+            previous_ai_signals = (_load_report_json("ai_signals", prev_date, latest=False) or {"signals": []}) if prev_date else {"signals": []}
             enriched_items = [dict(item) for item in items]
             with ThreadPoolExecutor(max_workers=max(1, min(len(enriched_items), 6))) as executor:
                 futures = {
@@ -1028,7 +1051,15 @@ class Handler(BaseHTTPRequestHandler):
                     flow = _fetch_investor_flow_snapshot(enriched.get("code", ""), enriched.get("market", ""))
                     if flow:
                         enriched["investor_flow"] = flow
-            result = build_watchlist_actions(enriched_items, today_picks, recommendations, previous_recommendations, previous_today_picks)
+            result = build_watchlist_actions(
+                enriched_items,
+                today_picks,
+                recommendations,
+                previous_recommendations,
+                previous_today_picks,
+                ai_signals,
+                previous_ai_signals,
+            )
             self._json_resp(200, result)
         except Exception as e:
             self._json_resp(500, {"error": str(e), "actions": []})

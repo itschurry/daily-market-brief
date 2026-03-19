@@ -193,6 +193,16 @@ def save_investor_flows_cache(items: list, date: str) -> None:
     logger.info(f"수급 캐시 저장: {cache_path}")
 
 
+def save_ai_signals_cache(payload: dict, date: str) -> None:
+    """OpenAI 보조신호를 JSON으로 저장한다."""
+    out = dict(payload)
+    out["date"] = date
+    cache_path = REPORT_OUTPUT_DIR / f"{date}_ai_signals.json"
+    cache_path.write_text(json.dumps(
+        out, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    logger.info(f"AI 보조신호 캐시 저장: {cache_path}")
+
+
 def save_market_context_cache(context, date: str) -> None:
     """시장 컨텍스트를 JSON으로 저장한다."""
     payload = {"date": date, "context": asdict(context) if context else {}}

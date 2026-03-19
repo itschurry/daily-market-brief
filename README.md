@@ -42,6 +42,7 @@
 필수(권장)
 
 - OPENAI_API_KEY
+- OPENAI_SIGNAL_MODEL (선택, 기본값: OPENAI_MODEL)
 - FRED_API_KEY
 - ECOS_API_KEY
 - DART_API_KEY
@@ -198,6 +199,7 @@ Ubuntu에서 systemd 서비스로 백그라운드 실행이 필요하면 관리 
 리포트 결과는 [report](report) 디렉토리에 JSON 캐시로 저장됩니다.
 
 - *_analysis.json
+- *_ai_signals.json
 - *_recommendations.json
 - *_macro.json
 - *_calendar.json

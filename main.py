@@ -7,6 +7,7 @@ from loguru import logger
 
 from config.settings import LOGS_DIR, DELIVERY_METHOD
 from analyzer.market_context_builder import build_market_context
+from analyzer.openai_signal_engine import generate_stock_aux_signals
 from analyzer.today_picks_engine import generate_today_picks
 from collectors.calendar_collector import collect_calendar_events
 from collectors.disclosure_collector import collect_disclosures
@@ -19,6 +20,7 @@ from analyzer.openai_analyzer import analyze
 from analyzer.recommendation_engine import generate_recommendations
 from reporter.report_generator import (
     save_analysis_cache,
+    save_ai_signals_cache,
     save_calendar_cache,
     save_disclosures_cache,
     save_investor_flows_cache,
@@ -52,25 +54,25 @@ async def run_daily_report():
     _setup_logging()
     logger.info("=== 일일 리포트 생성 시작 ===")
 
-    logger.info("[1/9] 시장 데이터 수집...")
+    logger.info("[1/10] 시장 데이터 수집...")
     market = collect_market()
 
-    logger.info("[2/9] 뉴스 수집...")
+    logger.info("[2/10] 뉴스 수집...")
     news = collect_news()
 
-    logger.info("[3/9] 거시 지표 수집...")
+    logger.info("[3/10] 거시 지표 수집...")
     macro = collect_macro()
 
-    logger.info("[4/9] 경제 일정 수집...")
+    logger.info("[4/10] 경제 일정 수집...")
     calendar_events = collect_calendar_events()
 
-    logger.info("[5/9] 공시 수집...")
+    logger.info("[5/10] 공시 수집...")
     disclosures = collect_disclosures()
 
-    logger.info("[6/9] 수급 데이터 수집...")
+    logger.info("[6/10] 수급 데이터 수집...")
     investor_flows = collect_investor_flows()
 
-    logger.info("[7/9] 시장 컨텍스트 생성...")
+    logger.info("[7/10] 시장 컨텍스트 생성...")
     market_context = build_market_context(market, macro)
 
     daily_data = DailyData(
@@ -85,17 +87,21 @@ async def run_daily_report():
         investor_flows=investor_flows,
     )
 
-    logger.info("[8/9] OpenAI API 분석 중...")
+    logger.info("[8/10] OpenAI API 분석 중...")
     analysis = await analyze(daily_data)
 
-    logger.info("[9/9] 투자 추천 계산 및 저장...")
+    logger.info("[9/10] OpenAI 보조신호 생성 중...")
+    ai_signals = await generate_stock_aux_signals(daily_data)
+
+    logger.info("[10/10] 투자 추천 계산 및 저장...")
     recommendations = generate_recommendations(daily_data)
-    today_picks = generate_today_picks(daily_data)
+    today_picks = generate_today_picks(daily_data, ai_signals=ai_signals)
 
     date_str = datetime.now().strftime("%Y-%m-%d")
     save_analysis_cache(analysis, date_str)
     save_news_cache(daily_data.news, date_str)
     save_macro_cache(daily_data.macro, date_str)
+    save_ai_signals_cache(ai_signals, date_str)
     save_calendar_cache(daily_data.calendar_events, date_str)
     save_disclosures_cache(daily_data.disclosures, date_str)
     save_investor_flows_cache(daily_data.investor_flows, date_str)

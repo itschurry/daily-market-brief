@@ -139,6 +139,29 @@ def _serialize_flow(flow) -> dict:
     }
 
 
+def _ai_signal_adjustment(ai_signal: dict | None) -> tuple[float, list[str], list[str], dict | None]:
+    if not ai_signal:
+        return 0.0, [], [], None
+
+    score = max(-4.0, min(4.0, _safe_float(ai_signal.get("score_adjustment")) or 0.0))
+    reasons = [str(item).strip() for item in ai_signal.get("reasons", []) if str(item).strip()][:2]
+    risks = [str(item).strip() for item in ai_signal.get("risks", []) if str(item).strip()][:2]
+    summary = str(ai_signal.get("summary", "")).strip()
+    if summary and not reasons:
+        reasons.append(f"AI 해석: {summary}")
+    serialized = {
+        "score_adjustment": round(score, 1),
+        "action_bias": ai_signal.get("action_bias", "중립"),
+        "risk_level": ai_signal.get("risk_level", "중간"),
+        "confidence": ai_signal.get("confidence"),
+        "summary": summary,
+        "reasons": reasons,
+        "risks": risks,
+        "source": ai_signal.get("source", "openai-aux-signal-v1"),
+    }
+    return round(score, 1), reasons, risks, serialized
+
+
 def _calendar_adjustment(data: DailyData, entry: CompanyCatalogEntry) -> tuple[float, list[str], list[str], list]:
     upcoming_events = []
     risks: list[str] = []
@@ -231,6 +254,7 @@ def _build_pick(
     data: DailyData,
     disclosures: list,
     investor_flow,
+    ai_signal: dict | None,
 ) -> dict:
     texts = [_article_text(article) for article in articles]
     joined = " ".join(texts)
@@ -243,8 +267,9 @@ def _build_pick(
     score += _market_adjustment(data, entry.sector)
     disclosure_score, disclosure_reasons, disclosure_risks, related_disclosures = _disclosure_adjustment(disclosures)
     flow_score, flow_reasons, flow_risks, serialized_flow = _flow_adjustment(investor_flow)
+    ai_score, ai_reasons, ai_risks, serialized_ai_signal = _ai_signal_adjustment(ai_signal)
     calendar_score, calendar_reasons, calendar_risks, upcoming_events = _calendar_adjustment(data, entry)
-    score += disclosure_score + flow_score + calendar_score
+    score += disclosure_score + flow_score + ai_score + calendar_score
     score = max(25, min(95, round(score, 1)))
 
     reasons = [
@@ -259,12 +284,13 @@ def _build_pick(
         risks.append("부정 기사 비중이 높아 변동성 확대 가능성")
     if data.market_context and data.market_context.dollar_signal == "강세":
         risks.append("달러 강세 국면으로 위험자산 변동성 확대 가능성")
-    reasons = reasons[:2] + disclosure_reasons + flow_reasons + reasons[2:]
+    reasons = reasons[:2] + disclosure_reasons + flow_reasons + ai_reasons + reasons[2:]
     reasons.extend(calendar_reasons)
     if data.market_context:
         reasons.append(f"거시 컨텍스트: {data.market_context.summary}")
     risks.extend(disclosure_risks)
     risks.extend(flow_risks)
+    risks.extend(ai_risks)
     risks.extend(calendar_risks)
     if not risks:
         risks.append("단기 재료 소멸 여부를 점검할 필요")
@@ -280,7 +306,16 @@ def _build_pick(
         "sector": entry.sector,
         "signal": _signal_from_score(score),
         "score": score,
-        "confidence": max(45, min(92, 42 + len(articles) * 9 + abs(positive - negative) * 5)),
+        "confidence": max(
+            45,
+            min(
+                92,
+                round(
+                    max(45, min(92, 42 + len(articles) * 9 + abs(positive - negative) * 5)) * 0.75
+                    + ((_safe_float((serialized_ai_signal or {}).get("confidence")) or 60.0) * 0.25)
+                ),
+            ),
+        ),
         "reasons": reasons[:4],
         "risks": risks[:3],
         "catalysts": catalysts[:3],
@@ -288,15 +323,17 @@ def _build_pick(
         "related_disclosures": [_serialize_disclosure(item) for item in related_disclosures],
         "upcoming_events": [_serialize_calendar_event(event) for event in upcoming_events],
         "investor_flow": serialized_flow,
+        "ai_signal": serialized_ai_signal,
     }
 
 
-def generate_today_picks(data: DailyData, limit: int = 8) -> dict:
+def generate_today_picks(data: DailyData, limit: int = 8, ai_signals: dict | None = None) -> dict:
     """뉴스에서 기업을 매칭해 오늘의 추천 종목을 생성한다."""
     now = datetime.now(_KST)
     matched: list[dict] = []
     disclosure_map = {}
     flow_map = {}
+    ai_signal_map = {}
 
     for item in data.disclosures:
         disclosure_map.setdefault(item.stock_code, []).append(item)
@@ -306,17 +343,22 @@ def generate_today_picks(data: DailyData, limit: int = 8) -> dict:
         flow_map[flow.code] = flow
         flow_map[flow.name] = flow
 
+    for item in (ai_signals or {}).get("signals", []):
+        ai_signal_map[item.get("code") or item.get("name")] = item
+        ai_signal_map[item.get("name")] = item
+
     for entry in get_company_catalog():
         aliases = tuple(_normalize(alias) for alias in entry.aliases)
         related = []
         entry_disclosures = disclosure_map.get(entry.code, []) or disclosure_map.get(entry.name, [])
         entry_flow = flow_map.get(entry.code) or flow_map.get(entry.name)
+        entry_ai_signal = ai_signal_map.get(entry.code) or ai_signal_map.get(entry.name)
         for article in data.news:
             text = _article_text(article)
             if any(alias in text for alias in aliases):
                 related.append(article)
 
-        if not related and not entry_disclosures and not _has_notable_flow(entry_flow):
+        if not related and not entry_disclosures and not _has_notable_flow(entry_flow) and not entry_ai_signal:
             continue
 
         matched.append(
@@ -326,6 +368,7 @@ def generate_today_picks(data: DailyData, limit: int = 8) -> dict:
                 data,
                 entry_disclosures,
                 entry_flow,
+                entry_ai_signal,
             )
         )
 
@@ -341,7 +384,7 @@ def generate_today_picks(data: DailyData, limit: int = 8) -> dict:
         "generated_at": now.strftime("%Y-%m-%d %H:%M KST"),
         "date": now.strftime("%Y-%m-%d"),
         "market_tone": market_tone,
-        "strategy": "news-driven-picks-v1",
+        "strategy": "news-driven-picks-v1+openai-aux" if (ai_signals or {}).get("signals") else "news-driven-picks-v1",
         "picks": matched[:limit],
     }
 
@@ -352,6 +395,8 @@ def build_watchlist_actions(
     recommendations: dict | None,
     previous_recommendations: dict | None = None,
     previous_today_picks: dict | None = None,
+    ai_signals: dict | None = None,
+    previous_ai_signals: dict | None = None,
 ) -> dict:
     """관심종목에 대해 buy/hold/sell/watch 액션을 계산한다."""
     now = datetime.now(_KST)
@@ -359,6 +404,8 @@ def build_watchlist_actions(
     previous_pick_map = {}
     recommendation_map = {}
     previous_recommendation_map = {}
+    ai_signal_map = {}
+    previous_ai_signal_map = {}
 
     for item in (today_picks or {}).get("picks", []):
         pick_map[item.get("code") or item.get("name")] = item
@@ -378,6 +425,14 @@ def build_watchlist_actions(
         previous_recommendation_map[key] = item
         previous_recommendation_map[item.get("name")] = item
 
+    for item in (ai_signals or {}).get("signals", []):
+        ai_signal_map[item.get("code") or item.get("name")] = item
+        ai_signal_map[item.get("name")] = item
+
+    for item in (previous_ai_signals or {}).get("signals", []):
+        previous_ai_signal_map[item.get("code") or item.get("name")] = item
+        previous_ai_signal_map[item.get("name")] = item
+
     actions = []
     for watch in watchlist_items:
         key = watch.get("code") or watch.get("name")
@@ -385,6 +440,8 @@ def build_watchlist_actions(
         current_rec = recommendation_map.get(key) or recommendation_map.get(watch.get("name"))
         previous_pick = previous_pick_map.get(key) or previous_pick_map.get(watch.get("name"))
         previous_rec = previous_recommendation_map.get(key) or previous_recommendation_map.get(watch.get("name"))
+        current_ai_signal = ai_signal_map.get(key) or ai_signal_map.get(watch.get("name"))
+        previous_ai_signal = previous_ai_signal_map.get(key) or previous_ai_signal_map.get(watch.get("name"))
 
         score, score_notes = _external_watchlist_score(current_pick, current_rec)
         reasons = []
@@ -397,6 +454,9 @@ def build_watchlist_actions(
         signal = "중립"
         technicals = watch.get("technicals") or {}
         investor_flow = watch.get("investor_flow") or {}
+        ai_reasons = []
+        ai_risks = []
+        serialized_ai_signal = None
 
         if current_pick:
             signal = current_pick.get("signal", signal)
@@ -405,11 +465,18 @@ def build_watchlist_actions(
             related_news = current_pick.get("related_news", [])
             if not investor_flow:
                 investor_flow = current_pick.get("investor_flow") or {}
+            serialized_ai_signal = current_pick.get("ai_signal")
         if current_rec:
             if not current_pick:
                 signal = current_rec.get("signal", signal)
             reasons.extend(current_rec.get("reasons", []))
             risks.extend(current_rec.get("risks", []))
+        if not current_pick and current_ai_signal:
+            ai_score, ai_reasons, ai_risks, serialized_ai_signal = _ai_signal_adjustment(current_ai_signal)
+            score += ai_score
+            reasons.extend(ai_reasons)
+            risks.extend(ai_risks)
+            signal = serialized_ai_signal.get("action_bias", signal) or signal
 
         if watch.get("change_pct") is not None:
             change_pct = float(watch["change_pct"])
@@ -511,11 +578,18 @@ def build_watchlist_actions(
             previous_signal = previous_pick.get("signal")
         elif previous_rec:
             previous_signal = previous_rec.get("signal")
+        elif previous_ai_signal:
+            previous_signal = previous_ai_signal.get("action_bias")
 
         changed_from_yesterday = None
         previous_score = None
         if previous_pick or previous_rec:
             previous_score, _ = _external_watchlist_score(previous_pick, previous_rec)
+        if previous_score is None and previous_ai_signal:
+            previous_score = 50.0
+        if previous_score is not None and not previous_pick and previous_ai_signal:
+            previous_ai_score, _, _, _ = _ai_signal_adjustment(previous_ai_signal)
+            previous_score += previous_ai_score
         if previous_signal is not None or previous_score is not None:
             changed_from_yesterday = {
                 "previous_signal": previous_signal,
@@ -539,10 +613,11 @@ def build_watchlist_actions(
             "score": score,
             "confidence": confidence,
             "reasons": (score_notes + technical_reasons + flow_reasons + reasons)[:4] or ["오늘 기준 뚜렷한 추가 재료는 제한적입니다."],
-            "risks": (technical_risks + flow_risks + risks)[:3] or ["단기 변동성 관리가 필요합니다."],
+            "risks": (technical_risks + flow_risks + ai_risks + risks)[:3] or ["단기 변동성 관리가 필요합니다."],
             "related_news": related_news[:2],
             "technicals": technicals or None,
             "investor_flow": investor_flow or None,
+            "ai_signal": serialized_ai_signal,
             "changed_from_yesterday": changed_from_yesterday,
         })
 
