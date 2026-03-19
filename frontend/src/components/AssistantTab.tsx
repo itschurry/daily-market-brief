@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useMarket } from '../hooks/useMarket';
 import { useInvestmentAssistant } from '../hooks/useInvestmentAssistant';
 import { useUnifiedScores } from '../hooks/useUnifiedScores';
+import { renderTextWithLinks } from '../utils/linkify';
 
 function cardStyle(borderColor = 'var(--border)', background = 'var(--card-bg)') {
   return {
@@ -82,7 +83,7 @@ export function AssistantTab() {
               <div style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,250,242,.62)' }}>Action Board</div>
               <div style={{ fontSize: 30, fontWeight: 800, marginTop: 8 }}>오늘 바로 판단할 것</div>
               <div style={{ fontSize: 15, color: 'rgba(255,250,242,.82)', marginTop: 10, lineHeight: 1.7, maxWidth: 760 }}>
-                {analysisData.summary_lines?.[0] || '오늘의 핵심 요약이 아직 준비되지 않았습니다.'}
+                {renderTextWithLinks(analysisData.summary_lines?.[0] || '오늘의 핵심 요약이 아직 준비되지 않았습니다.')}
               </div>
             </div>
             <button className="ghost-button" style={{ background: 'rgba(255,255,255,.1)', color: '#fffaf2', borderColor: 'rgba(255,255,255,.18)' }} onClick={handleRefresh}>

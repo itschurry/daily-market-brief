@@ -1,3 +1,5 @@
+import { renderTextWithLinks } from '../utils/linkify';
+
 interface Props {
   summaryLines: string[];
   generatedAt?: string;
@@ -54,7 +56,7 @@ export function SummaryBar({ summaryLines, generatedAt, onRefresh }: Props) {
               <span className="summary-index">{i + 1}</span>
               <span className="summary-step-label">{i === 0 ? '시장 요지' : i === 1 ? '핵심 이슈' : '행동 포인트'}</span>
             </div>
-            <div className="summary-copy">{line}</div>
+            <div className="summary-copy">{renderTextWithLinks(line)}</div>
           </div>
         ))}
       </div>

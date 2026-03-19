@@ -56,6 +56,13 @@ a {
   color: inherit;
 }
 
+.inline-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
 button,
 input {
   font: inherit;
@@ -327,6 +334,13 @@ input {
   line-height: 1.74;
   color: var(--text-2);
   overflow-wrap: anywhere;
+}
+
+.summary-copy .inline-link,
+.report-brief-item .inline-link {
+  color: var(--accent);
+  text-decoration-color: rgba(31, 77, 95, 0.28);
+  word-break: break-word;
 }
 
 .ghost-button {

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import type { AnalysisData } from '../types';
+import { renderTextWithLinks } from '../utils/linkify';
 
 interface Props {
   data: AnalysisData;
@@ -16,6 +17,58 @@ export function AnalysisTab({ data, status, onRefresh }: Props) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(data.analysis_html, 'text/html');
     const outline: Array<{ id: string; title: string; level: 2 | 3 }> = [];
+    const urlPattern = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?"'])/g;
+
+    const linkifyTextNodes = (root: ParentNode) => {
+      const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const nodes: Text[] = [];
+
+      let currentNode = walker.nextNode();
+      while (currentNode) {
+        const textNode = currentNode as Text;
+        const parent = textNode.parentElement;
+        urlPattern.lastIndex = 0;
+        if (parent && !['A', 'SCRIPT', 'STYLE'].includes(parent.tagName) && urlPattern.test(textNode.textContent || '')) {
+          nodes.push(textNode);
+        }
+        currentNode = walker.nextNode();
+      }
+
+      nodes.forEach((textNode) => {
+        const text = textNode.textContent || '';
+        urlPattern.lastIndex = 0;
+
+        const fragment = doc.createDocumentFragment();
+        let lastIndex = 0;
+        let match = urlPattern.exec(text);
+
+        while (match) {
+          const [url] = match;
+          const start = match.index;
+
+          if (start > lastIndex) {
+            fragment.appendChild(doc.createTextNode(text.slice(lastIndex, start)));
+          }
+
+          const anchor = doc.createElement('a');
+          anchor.className = 'inline-link';
+          anchor.href = url;
+          anchor.target = '_blank';
+          anchor.rel = 'noreferrer';
+          anchor.textContent = url;
+          fragment.appendChild(anchor);
+
+          lastIndex = start + url.length;
+          match = urlPattern.exec(text);
+        }
+
+        if (lastIndex < text.length) {
+          fragment.appendChild(doc.createTextNode(text.slice(lastIndex)));
+        }
+
+        textNode.parentNode?.replaceChild(fragment, textNode);
+      });
+    };
 
     doc.body.querySelectorAll('h2, h3').forEach((node, index) => {
       const level = node.tagName === 'H2' ? 2 : 3;
@@ -61,6 +114,7 @@ export function AnalysisTab({ data, status, onRefresh }: Props) {
     });
 
     doc.body.innerHTML = groupedBody.innerHTML;
+    linkifyTextNodes(doc.body);
 
     const text = (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
     const readMinutes = text ? Math.max(1, Math.round(text.split(' ').length / 240)) : 0;
@@ -140,7 +194,7 @@ export function AnalysisTab({ data, status, onRefresh }: Props) {
                 {(summaryLines.length > 0 ? summaryLines : ['핵심 요약을 준비 중입니다.']).map((line, index) => (
                   <div key={index} className="report-brief-item">
                     <span className="report-brief-index">{index + 1}</span>
-                    <span>{line}</span>
+                    <span>{renderTextWithLinks(line)}</span>
                   </div>
                 ))}
               </div>
