@@ -10,16 +10,20 @@ import glob
 import json
 import os
 import re
+import threading
 import time
 import urllib.request
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import parse_qs, quote, urlparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 from analyzer.kospi_backtest import BacktestConfig, run_kospi_backtest
 from analyzer.today_picks_engine import build_watchlist_actions
+from broker.execution_engine import EngineConfig, PaperExecutionEngine
 from broker.kis_client import KISAPIError, KISClient, KISConfigError
+from config.settings import LOGS_DIR
 
 PORT = 8001
 CACHE_TTL = 300   # 5분
@@ -37,6 +41,18 @@ _technical_cache: dict = {}
 _investor_flow_cache: dict = {}
 _kis_client: KISClient | None = None
 _kis_client_disabled = False
+_paper_engine: PaperExecutionEngine | None = None
+_auto_trader_lock = threading.Lock()
+_auto_trader_stop_event: threading.Event | None = None
+_auto_trader_thread: threading.Thread | None = None
+_auto_trader_state: dict = {
+    "running": False,
+    "started_at": "",
+    "last_run_at": "",
+    "last_error": "",
+    "last_summary": {},
+    "config": {},
+}
 
 _KST = datetime.timezone(datetime.timedelta(hours=9))
 
@@ -53,6 +69,10 @@ _HEADERS = {
 _ALLOWED_SEARCH_MARKETS = {"KOSPI", "NASDAQ", "코스피", "나스닥 증권거래소"}
 TECHNICAL_CACHE_TTL = 900
 INVESTOR_FLOW_CACHE_TTL = 900
+
+
+def _now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 def _resolve_reports_dir() -> str:
@@ -183,6 +203,677 @@ def _get_kis_client() -> KISClient | None:
         return None
 
 
+def _paper_fx_rate() -> float | None:
+    try:
+        if _market_cache["data"] is not None:
+            usd_krw = _market_cache["data"].get("usd_krw")
+            if isinstance(usd_krw, (int, float)) and usd_krw > 0:
+                return float(usd_krw)
+        value = _usd_krw()
+        return float(value) if value and value > 0 else None
+    except Exception:
+        return None
+
+
+def _resolve_stock_quote(code: str, market: str = "") -> dict:
+    normalized_code = code.split(".")[0].strip().upper()
+    normalized_market = market.strip().upper()
+    if not normalized_code:
+        raise ValueError("code required")
+
+    if normalized_market == "NASDAQ":
+        technicals = _compute_technical_snapshot(normalized_code, normalized_market)
+        if technicals:
+            return {
+                "code": normalized_code,
+                "name": normalized_code,
+                "price": technicals.get("current_price"),
+                "change_pct": technicals.get("change_pct"),
+                "market": normalized_market,
+            }
+
+    if normalized_market == "KOSPI":
+        client = _get_kis_client()
+        if client is not None:
+            kis_price = client.get_domestic_price(normalized_code)
+            return {
+                "code": normalized_code,
+                "name": kis_price.get("name") or normalized_code,
+                "price": kis_price.get("price"),
+                "change_pct": kis_price.get("change_pct"),
+                "market": "KOSPI",
+            }
+
+    url = f"https://m.stock.naver.com/api/stock/{normalized_code}/basic"
+    d = json.loads(_get(url))
+    price = float(d["closePrice"].replace(",", ""))
+    pct = float(d["fluctuationsRatio"])
+    direction = d.get("compareToPreviousPrice", {}).get("code", "3")
+    if direction == "5":
+        pct = -abs(pct)
+    elif direction == "2":
+        pct = abs(pct)
+    return {
+        "code": normalized_code,
+        "name": d.get("stockName", normalized_code),
+        "price": price,
+        "change_pct": round(pct, 2),
+        "market": d.get("stockExchangeType", {}).get("name", normalized_market),
+    }
+
+
+def _get_paper_engine() -> PaperExecutionEngine:
+    global _paper_engine
+    if _paper_engine is None:
+        state_path = Path(os.getenv("PAPER_TRADING_STATE_PATH", str(LOGS_DIR / "paper_account_state.json")))
+        _paper_engine = PaperExecutionEngine(
+            config=EngineConfig(
+                state_path=state_path,
+                default_initial_cash_krw=10_000_000.0,
+                default_initial_cash_usd=10_000.0,
+                default_paper_days=7,
+            ),
+            quote_provider=_resolve_stock_quote,
+            fx_provider=_paper_fx_rate,
+        )
+    return _paper_engine
+
+
+def _normalize_pick_market(market: str) -> str:
+    normalized = (market or "").strip().upper()
+    if normalized in {"NASDAQ", "NAS", "US", "USA"}:
+        return "NASDAQ"
+    if normalized in {"KOSPI", "KRX", "KR", "KOREA"}:
+        return "KOSPI"
+    return normalized
+
+
+def _infer_pick_market(code: str, market: str) -> str:
+    normalized_market = _normalize_pick_market(market)
+    if normalized_market in {"KOSPI", "NASDAQ"}:
+        return normalized_market
+    normalized_code = (code or "").strip().upper()
+    if not normalized_code:
+        return normalized_market
+    if normalized_code.isdigit():
+        return "KOSPI"
+    if normalized_code.isalpha():
+        return "NASDAQ"
+    return normalized_market
+
+
+def _auto_invest_picks(
+    *,
+    market: str = "NASDAQ",
+    max_positions: int = 5,
+    min_score: float = 60.0,
+    include_neutral: bool = False,
+) -> dict:
+    target_market = _normalize_pick_market(market)
+    if target_market not in {"NASDAQ", "KOSPI"}:
+        return {"ok": False, "error": "market은 NASDAQ/KOSPI만 허용합니다."}
+
+    picks_payload = _get_today_picks()
+    picks = picks_payload.get("picks", [])
+    if not isinstance(picks, list):
+        picks = []
+
+    allowed_signals = {"추천", "buy", "BUY"}
+    if include_neutral:
+        allowed_signals.update({"중립", "hold", "HOLD"})
+
+    candidates: list[dict] = []
+    for item in picks:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip().upper()
+        signal = str(item.get("signal") or "")
+        score = float(item.get("score") or 0.0)
+        item_market = _infer_pick_market(code, str(item.get("market") or ""))
+        if not code:
+            continue
+        if item_market != target_market:
+            continue
+        if signal not in allowed_signals:
+            continue
+        if score < min_score:
+            continue
+        candidates.append(item)
+
+    # today-picks에 후보가 없으면 recommendations에서 동일 조건으로 보강한다.
+    if not candidates:
+        recommendations = _get_recommendations().get("recommendations", [])
+        for item in recommendations:
+            if not isinstance(item, dict):
+                continue
+            ticker = str(item.get("ticker") or "").strip().upper()
+            code = ticker.split(".")[0]
+            if not code:
+                continue
+            inferred_market = "KOSPI" if ticker.endswith(".KS") else "NASDAQ"
+            if inferred_market != target_market:
+                continue
+            signal = str(item.get("signal") or "")
+            score = float(item.get("score") or 0.0)
+            if signal not in allowed_signals:
+                continue
+            if score < min_score:
+                continue
+            candidates.append({
+                "name": item.get("name") or code,
+                "code": code,
+                "market": inferred_market,
+                "signal": signal,
+                "score": score,
+            })
+
+    candidates.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    engine = _get_paper_engine()
+    account = engine.get_account(refresh_quotes=True)
+    held_codes = {
+        str(position.get("code") or "").upper()
+        for position in account.get("positions", [])
+        if str(position.get("market") or "").upper() == target_market
+    }
+    market_position_count = sum(
+        1
+        for position in account.get("positions", [])
+        if str(position.get("market") or "").upper() == target_market
+    )
+    slots = max(0, int(max_positions) - market_position_count)
+    if slots <= 0:
+        return {
+            "ok": True,
+            "message": "이미 최대 포지션 수를 보유 중입니다.",
+            "executed": [],
+            "skipped": [{"code": item.get("code"), "reason": "max_positions"} for item in candidates],
+            "account": account,
+        }
+
+    available_cash = float(account.get("cash_usd") or 0.0) if target_market == "NASDAQ" else float(account.get("cash_krw") or 0.0)
+    executed = []
+    skipped = []
+    remaining_slots = slots
+
+    for item in candidates:
+        if remaining_slots <= 0:
+            skipped.append({"code": item.get("code"), "reason": "max_positions"})
+            continue
+        code = str(item.get("code") or "").upper()
+        if code in held_codes:
+            skipped.append({"code": code, "reason": "already_holding"})
+            continue
+
+        try:
+            quote = _resolve_stock_quote(code, target_market)
+            quote_price = float(quote.get("price") or 0.0)
+        except Exception as exc:
+            skipped.append({"code": code, "reason": f"quote_error: {exc}"})
+            continue
+        if quote_price <= 0:
+            skipped.append({"code": code, "reason": "invalid_quote"})
+            continue
+
+        fx_rate = (_paper_fx_rate() or 1300.0) if target_market == "NASDAQ" else 1.0
+        unit_price = quote_price if target_market == "NASDAQ" else (quote_price * fx_rate)
+        budget_per_slot = available_cash / max(remaining_slots, 1)
+        quantity = int((budget_per_slot * 0.995) // unit_price)
+        if quantity <= 0:
+            skipped.append({"code": code, "reason": "insufficient_cash"})
+            continue
+
+        order_result = engine.place_order(
+            side="buy",
+            code=code,
+            market=target_market,
+            quantity=quantity,
+            order_type="market",
+            limit_price=None,
+        )
+        if not order_result.get("ok"):
+            skipped.append({"code": code, "reason": order_result.get("error") or "order_failed"})
+            continue
+
+        event = order_result.get("event") or {}
+        executed.append({
+            "code": code,
+            "name": item.get("name"),
+            "score": item.get("score"),
+            "quantity": event.get("quantity"),
+            "filled_price_local": event.get("filled_price_local"),
+            "filled_price_krw": event.get("filled_price_krw"),
+            "notional_krw": event.get("notional_krw"),
+        })
+        held_codes.add(code)
+        remaining_slots -= 1
+        refreshed = order_result.get("account") or {}
+        available_cash = (
+            float(refreshed.get("cash_usd") or available_cash)
+            if target_market == "NASDAQ"
+            else float(refreshed.get("cash_krw") or available_cash)
+        )
+
+    final_account = engine.get_account(refresh_quotes=True)
+    message = ""
+    if not candidates:
+        message = "조건에 맞는 자동매수 후보가 없습니다. market/signal/min_score 조건을 낮춰 보세요."
+    return {
+        "ok": True,
+        "strategy": "today-picks-auto-buy-v1",
+        "market": target_market,
+        "max_positions": int(max_positions),
+        "min_score": float(min_score),
+        "executed": executed,
+        "skipped": skipped,
+        "candidate_count": len(candidates),
+        "include_neutral": include_neutral,
+        "message": message,
+        "account": final_account,
+    }
+
+
+def _default_auto_trader_config() -> dict:
+    return {
+        "interval_seconds": 300,
+        "markets": ["KOSPI", "NASDAQ"],
+        "max_positions_per_market": 5,
+        "min_score": 60.0,
+        "include_neutral": False,
+        "daily_buy_limit": 20,
+        "daily_sell_limit": 20,
+        "max_orders_per_symbol_per_day": 1,
+        "rsi_min": 45.0,
+        "rsi_max": 68.0,
+        "volume_ratio_min": 1.2,
+        "signal_interval": "5m",
+        "signal_range": "5d",
+        "stop_loss_pct": 7.0,
+        "take_profit_pct": 18.0,
+        "max_holding_days": 30,
+    }
+
+
+def _today_kst_str() -> str:
+    return datetime.datetime.now(_KST).date().isoformat()
+
+
+def _order_day(ts: str) -> str:
+    try:
+        return datetime.datetime.fromisoformat(ts).astimezone(_KST).date().isoformat()
+    except Exception:
+        return ""
+
+
+def _position_holding_days(position: dict) -> int:
+    entry_ts = str(position.get("entry_ts") or position.get("updated_at") or "")
+    try:
+        entry_date = datetime.datetime.fromisoformat(entry_ts).astimezone(_KST).date()
+    except Exception:
+        return 0
+    return max(0, (datetime.datetime.now(_KST).date() - entry_date).days)
+
+
+def _should_enter_by_indicators(technicals: dict, cfg: dict) -> bool:
+    close = technicals.get("current_price")
+    sma20 = technicals.get("sma20")
+    sma60 = technicals.get("sma60")
+    volume_ratio = technicals.get("volume_ratio")
+    rsi14 = technicals.get("rsi14")
+    macd = technicals.get("macd")
+    macd_signal = technicals.get("macd_signal")
+    macd_hist = technicals.get("macd_hist")
+    return bool(
+        close is not None
+        and sma20 is not None
+        and sma60 is not None
+        and volume_ratio is not None
+        and rsi14 is not None
+        and macd is not None
+        and macd_signal is not None
+        and macd_hist is not None
+        and close > sma20 > sma60
+        and volume_ratio >= float(cfg.get("volume_ratio_min", 1.2))
+        and float(cfg.get("rsi_min", 45.0)) <= rsi14 <= float(cfg.get("rsi_max", 68.0))
+        and macd_hist > 0
+        and macd > macd_signal
+    )
+
+
+def _should_exit_by_indicators(position: dict, technicals: dict, cfg: dict) -> str | None:
+    price = technicals.get("current_price")
+    if price is None:
+        return None
+    avg = float(position.get("avg_price_local") or 0.0)
+    if avg > 0:
+        pnl_pct = ((float(price) / avg) - 1) * 100
+        stop_loss = float(cfg.get("stop_loss_pct", 7.0))
+        take_profit = float(cfg.get("take_profit_pct", 18.0))
+        if pnl_pct <= -abs(stop_loss):
+            return "손절"
+        if pnl_pct >= abs(take_profit):
+            return "익절"
+    if _position_holding_days(position) >= int(cfg.get("max_holding_days", 30)):
+        return "보유기간 만료"
+    sma20 = technicals.get("sma20")
+    rsi14 = technicals.get("rsi14")
+    macd = technicals.get("macd")
+    macd_signal = technicals.get("macd_signal")
+    macd_hist = technicals.get("macd_hist")
+    if sma20 is not None and price < sma20:
+        return "20일선 이탈"
+    if macd is not None and macd_signal is not None and macd_hist is not None and macd < macd_signal and macd_hist < 0:
+        return "MACD 약세 전환"
+    if rsi14 is not None and rsi14 >= 75:
+        return "RSI 과열"
+    return None
+
+
+def _collect_pick_candidates(market: str, min_score: float, include_neutral: bool) -> list[dict]:
+    allowed_signals = {"추천", "buy", "BUY"}
+    if include_neutral:
+        allowed_signals.update({"중립", "hold", "HOLD"})
+
+    picks_payload = _get_today_picks()
+    picks = picks_payload.get("picks", [])
+    if not isinstance(picks, list):
+        picks = []
+
+    candidates: list[dict] = []
+    for item in picks:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip().upper()
+        if not code:
+            continue
+        item_market = _infer_pick_market(code, str(item.get("market") or ""))
+        signal = str(item.get("signal") or "")
+        score = float(item.get("score") or 0.0)
+        if item_market != market or signal not in allowed_signals or score < min_score:
+            continue
+        candidates.append({
+            "code": code,
+            "name": item.get("name") or code,
+            "score": score,
+            "signal": signal,
+        })
+    if candidates:
+        return sorted(candidates, key=lambda item: item["score"], reverse=True)
+
+    recommendations = _get_recommendations().get("recommendations", [])
+    for item in recommendations:
+        if not isinstance(item, dict):
+            continue
+        ticker = str(item.get("ticker") or "").strip().upper()
+        code = ticker.split(".")[0]
+        if not code:
+            continue
+        inferred_market = "KOSPI" if ticker.endswith(".KS") else "NASDAQ"
+        signal = str(item.get("signal") or "")
+        score = float(item.get("score") or 0.0)
+        if inferred_market != market or signal not in allowed_signals or score < min_score:
+            continue
+        candidates.append({
+            "code": code,
+            "name": item.get("name") or code,
+            "score": score,
+            "signal": signal,
+        })
+    return sorted(candidates, key=lambda item: item["score"], reverse=True)
+
+
+def _run_auto_trader_cycle(cfg: dict) -> dict:
+    engine = _get_paper_engine()
+    account = engine.get_account(refresh_quotes=True)
+    if int(account.get("days_left") or 0) <= 0:
+        raise RuntimeError("모의투자 기간이 종료되어 자동매매를 중지합니다.")
+
+    orders = account.get("orders", [])
+    today = _today_kst_str()
+    daily_buy_limit = int(cfg.get("daily_buy_limit", 20))
+    daily_sell_limit = int(cfg.get("daily_sell_limit", 20))
+    max_orders_per_symbol = int(cfg.get("max_orders_per_symbol_per_day", 1))
+
+    def _count_orders(market: str, side: str) -> int:
+        return sum(
+            1 for order in orders
+            if str(order.get("market") or "").upper() == market
+            and str(order.get("side") or "").lower() == side
+            and _order_day(str(order.get("ts") or "")) == today
+        )
+
+    def _symbol_order_count(market: str, side: str, code: str) -> int:
+        return sum(
+            1 for order in orders
+            if str(order.get("market") or "").upper() == market
+            and str(order.get("side") or "").lower() == side
+            and str(order.get("code") or "").upper() == code
+            and _order_day(str(order.get("ts") or "")) == today
+        )
+
+    executed_buys: list[dict] = []
+    executed_sells: list[dict] = []
+    skipped: list[dict] = []
+    markets = [m for m in cfg.get("markets", ["KOSPI", "NASDAQ"]) if m in {"KOSPI", "NASDAQ"}]
+
+    for market in markets:
+        account = engine.get_account(refresh_quotes=True)
+        market_positions = [
+            position for position in account.get("positions", [])
+            if str(position.get("market") or "").upper() == market
+        ]
+
+        sell_count = _count_orders(market, "sell")
+        for position in market_positions:
+            if sell_count >= daily_sell_limit:
+                break
+            code = str(position.get("code") or "").upper()
+            if _symbol_order_count(market, "sell", code) >= max_orders_per_symbol:
+                continue
+            technicals = _compute_technical_snapshot(
+                code,
+                market,
+                range_=str(cfg.get("signal_range") or "5d"),
+                interval=str(cfg.get("signal_interval") or "5m"),
+            )
+            if not technicals:
+                continue
+            reason = _should_exit_by_indicators(position, technicals, cfg)
+            if not reason:
+                continue
+            result = engine.place_order(
+                side="sell",
+                code=code,
+                market=market,
+                quantity=int(position.get("quantity") or 0),
+                order_type="market",
+            )
+            if result.get("ok"):
+                sell_count += 1
+                event = result.get("event") or {}
+                executed_sells.append({"code": code, "market": market, "reason": reason, "quantity": event.get("quantity")})
+                orders = (result.get("account") or {}).get("orders", orders)
+            else:
+                skipped.append({"code": code, "market": market, "reason": result.get("error") or "sell_failed"})
+
+        account = engine.get_account(refresh_quotes=True)
+        held_codes = {
+            str(position.get("code") or "").upper()
+            for position in account.get("positions", [])
+            if str(position.get("market") or "").upper() == market
+        }
+        market_position_count = len(held_codes)
+        max_positions = int(cfg.get("max_positions_per_market", 5))
+        slots = max(0, max_positions - market_position_count)
+        if slots <= 0:
+            continue
+        buy_count = _count_orders(market, "buy")
+        candidates = _collect_pick_candidates(
+            market=market,
+            min_score=float(cfg.get("min_score", 60.0)),
+            include_neutral=bool(cfg.get("include_neutral", False)),
+        )
+        for candidate in candidates:
+            if slots <= 0 or buy_count >= daily_buy_limit:
+                break
+            code = str(candidate.get("code") or "").upper()
+            if not code or code in held_codes:
+                continue
+            if _symbol_order_count(market, "buy", code) >= max_orders_per_symbol:
+                continue
+            technicals = _compute_technical_snapshot(
+                code,
+                market,
+                range_=str(cfg.get("signal_range") or "5d"),
+                interval=str(cfg.get("signal_interval") or "5m"),
+            )
+            if not technicals:
+                skipped.append({"code": code, "market": market, "reason": "technicals_unavailable"})
+                continue
+            if not _should_enter_by_indicators(technicals, cfg):
+                skipped.append({"code": code, "market": market, "reason": "entry_signal_not_matched"})
+                continue
+            quote = _resolve_stock_quote(code, market)
+            price_local = float(quote.get("price") or 0.0)
+            if price_local <= 0:
+                skipped.append({"code": code, "market": market, "reason": "invalid_quote"})
+                continue
+            account = engine.get_account(refresh_quotes=False)
+            available_cash = float(account.get("cash_usd") or 0.0) if market == "NASDAQ" else float(account.get("cash_krw") or 0.0)
+            budget_per_slot = available_cash / max(slots, 1)
+            quantity = int((budget_per_slot * 0.995) // price_local)
+            if quantity <= 0:
+                skipped.append({"code": code, "market": market, "reason": "insufficient_cash"})
+                continue
+            result = engine.place_order(
+                side="buy",
+                code=code,
+                market=market,
+                quantity=quantity,
+                order_type="market",
+            )
+            if result.get("ok"):
+                buy_count += 1
+                slots -= 1
+                held_codes.add(code)
+                event = result.get("event") or {}
+                executed_buys.append({
+                    "code": code,
+                    "market": market,
+                    "quantity": event.get("quantity"),
+                    "filled_price_local": event.get("filled_price_local"),
+                })
+                orders = (result.get("account") or {}).get("orders", orders)
+            else:
+                skipped.append({"code": code, "market": market, "reason": result.get("error") or "buy_failed"})
+
+    final_account = engine.get_account(refresh_quotes=True)
+    return {
+        "ok": True,
+        "ran_at": _now_iso(),
+        "executed_buy_count": len(executed_buys),
+        "executed_sell_count": len(executed_sells),
+        "executed_buys": executed_buys,
+        "executed_sells": executed_sells,
+        "skipped": skipped[:50],
+        "account": final_account,
+    }
+
+
+def _auto_trader_loop(stop_event: threading.Event) -> None:
+    while not stop_event.is_set():
+        with _auto_trader_lock:
+            cfg = dict(_auto_trader_state.get("config") or _default_auto_trader_config())
+        try:
+            summary = _run_auto_trader_cycle(cfg)
+            with _auto_trader_lock:
+                _auto_trader_state["last_run_at"] = _now_iso()
+                _auto_trader_state["last_summary"] = summary
+                _auto_trader_state["last_error"] = ""
+        except Exception as exc:
+            with _auto_trader_lock:
+                _auto_trader_state["last_run_at"] = _now_iso()
+                _auto_trader_state["last_error"] = str(exc)
+                if "기간이 종료" in str(exc):
+                    _auto_trader_state["running"] = False
+                    stop_event.set()
+                    break
+        interval = int((cfg.get("interval_seconds") or 300))
+        interval = max(30, min(3600, interval))
+        stop_event.wait(interval)
+
+
+def _start_auto_trader(config: dict) -> dict:
+    global _auto_trader_thread, _auto_trader_stop_event
+    with _auto_trader_lock:
+        if _auto_trader_state.get("running") and _auto_trader_thread and _auto_trader_thread.is_alive():
+            return {"ok": True, "running": True, "message": "이미 실행 중입니다.", "state": dict(_auto_trader_state)}
+        merged = _default_auto_trader_config()
+        merged.update(config or {})
+        merged["interval_seconds"] = max(30, min(3600, int(merged.get("interval_seconds") or 300)))
+        merged["max_positions_per_market"] = max(1, min(20, int(merged.get("max_positions_per_market") or 5)))
+        merged["daily_buy_limit"] = max(1, min(200, int(merged.get("daily_buy_limit") or 20)))
+        merged["daily_sell_limit"] = max(1, min(200, int(merged.get("daily_sell_limit") or 20)))
+        merged["max_orders_per_symbol_per_day"] = max(1, min(10, int(merged.get("max_orders_per_symbol_per_day") or 1)))
+        merged["min_score"] = max(0.0, min(100.0, float(merged.get("min_score") or 60.0)))
+        merged["rsi_min"] = max(10.0, min(90.0, float(merged.get("rsi_min") or 45.0)))
+        merged["rsi_max"] = max(10.0, min(90.0, float(merged.get("rsi_max") or 68.0)))
+        if merged["rsi_min"] > merged["rsi_max"]:
+            merged["rsi_min"], merged["rsi_max"] = merged["rsi_max"], merged["rsi_min"]
+        merged["volume_ratio_min"] = max(0.5, min(5.0, float(merged.get("volume_ratio_min") or 1.2)))
+        merged["stop_loss_pct"] = max(1.0, min(50.0, float(merged.get("stop_loss_pct") or 7.0)))
+        merged["take_profit_pct"] = max(1.0, min(100.0, float(merged.get("take_profit_pct") or 18.0)))
+        merged["max_holding_days"] = max(1, min(180, int(merged.get("max_holding_days") or 30)))
+        signal_interval = str(merged.get("signal_interval") or "5m").strip().lower()
+        if signal_interval not in {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1d"}:
+            signal_interval = "5m"
+        merged["signal_interval"] = signal_interval
+        signal_range = str(merged.get("signal_range") or "5d").strip().lower()
+        if signal_range not in {"1d", "5d", "1mo", "3mo", "6mo", "1y"}:
+            signal_range = "5d"
+        if signal_interval == "1d" and signal_range in {"1d", "5d"}:
+            signal_range = "6mo"
+        merged["signal_range"] = signal_range
+        markets = merged.get("markets") or ["KOSPI", "NASDAQ"]
+        if not isinstance(markets, list):
+            markets = ["KOSPI", "NASDAQ"]
+        merged["markets"] = [m for m in markets if m in {"KOSPI", "NASDAQ"}] or ["KOSPI", "NASDAQ"]
+
+        _auto_trader_stop_event = threading.Event()
+        _auto_trader_thread = threading.Thread(target=_auto_trader_loop, args=(_auto_trader_stop_event,), daemon=True)
+        _auto_trader_state["running"] = True
+        _auto_trader_state["started_at"] = _now_iso()
+        _auto_trader_state["config"] = merged
+        _auto_trader_state["last_error"] = ""
+        _auto_trader_thread.start()
+        return {"ok": True, "running": True, "state": dict(_auto_trader_state)}
+
+
+def _stop_auto_trader() -> dict:
+    global _auto_trader_thread, _auto_trader_stop_event
+    with _auto_trader_lock:
+        stop_event = _auto_trader_stop_event
+        thread = _auto_trader_thread
+        _auto_trader_state["running"] = False
+    if stop_event:
+        stop_event.set()
+    if thread and thread.is_alive():
+        thread.join(timeout=2.0)
+    with _auto_trader_lock:
+        return {"ok": True, "running": False, "state": dict(_auto_trader_state)}
+
+
+def _auto_trader_status() -> dict:
+    with _auto_trader_lock:
+        state = dict(_auto_trader_state)
+    if state.get("running") and not (_auto_trader_thread and _auto_trader_thread.is_alive()):
+        state["running"] = False
+        with _auto_trader_lock:
+            _auto_trader_state["running"] = False
+    engine = _get_paper_engine()
+    account = engine.get_account(refresh_quotes=False)
+    return {"ok": True, "state": state, "account": account}
+
+
 def _ema(values: list[float], period: int) -> list[float]:
     if not values:
         return []
@@ -269,20 +960,27 @@ def _fetch_kis_domestic_history(code: str, lookback_days: int = 180) -> dict | N
     return {"history": history} if history else None
 
 
-def _compute_technical_snapshot(code: str, market: str) -> dict | None:
+def _compute_technical_snapshot(
+    code: str,
+    market: str,
+    *,
+    range_: str = "6mo",
+    interval: str = "1d",
+) -> dict | None:
     symbol = _resolve_chart_symbol(code, market)
     if not symbol:
         return None
 
-    cache_key = f"{market}:{code}"
+    cache_key = f"{market}:{code}:{range_}:{interval}"
     cached = _technical_cache.get(cache_key)
     now = time.time()
     if cached and now - cached["ts"] < TECHNICAL_CACHE_TTL:
         return cached["data"]
 
-    chart = _fetch_kis_domestic_history(code) if market.strip().upper() == "KOSPI" else None
+    normalized_market = market.strip().upper()
+    chart = _fetch_kis_domestic_history(code) if normalized_market == "KOSPI" and interval == "1d" else None
     if not chart:
-        chart = _fetch_chart_history(symbol)
+        chart = _fetch_chart_history(symbol, range_=range_, interval=interval)
     if not chart:
         return None
 
@@ -916,6 +1614,12 @@ class Handler(BaseHTTPRequestHandler):
             code = parsed.path[len("/api/stock/"):]
             market = parse_qs(parsed.query).get("market", [""])[0]
             self._serve_stock_price(code, market)
+        elif parsed.path == "/api/paper/account":
+            query = parse_qs(parsed.query)
+            refresh_quotes = (query.get("refresh", ["1"])[0] or "1").strip() != "0"
+            self._serve_paper_account(refresh_quotes=refresh_quotes)
+        elif parsed.path == "/api/paper/engine/status":
+            self._serve_paper_engine_status()
         else:
             self.send_response(404)
             self.end_headers()
@@ -923,6 +1627,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/watchlist-actions":
             self._serve_watchlist_actions()
+            return
+        if self.path == "/api/paper/order":
+            self._serve_paper_order()
+            return
+        if self.path == "/api/paper/reset":
+            self._serve_paper_reset()
+            return
+        if self.path == "/api/paper/auto-invest":
+            self._serve_paper_auto_invest()
+            return
+        if self.path == "/api/paper/engine/start":
+            self._serve_paper_engine_start()
+            return
+        if self.path == "/api/paper/engine/stop":
+            self._serve_paper_engine_stop()
             return
         self.send_response(404)
         self.end_headers()
@@ -1073,53 +1792,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json_resp(500, {"error": str(e), "actions": []})
 
     def _serve_stock_price(self, code: str, market: str = ""):
-        code = code.split(".")[0].strip()
-        if not code:
-            self._json_resp(400, {"error": "code required"})
-            return
         try:
-            if market.upper() == "NASDAQ":
-                technicals = _compute_technical_snapshot(code, market)
-                if not technicals:
-                    raise ValueError("NASDAQ 종목 기술지표를 불러오지 못했습니다.")
-                self._json_resp(200, {
-                    "code": code,
-                    "name": code,
-                    "price": technicals.get("current_price"),
-                    "change_pct": technicals.get("change_pct"),
-                    "market": market,
-                })
-                return
-
-            if market.upper() == "KOSPI":
-                client = _get_kis_client()
-                if client is not None:
-                    kis_price = client.get_domestic_price(code)
-                    self._json_resp(200, {
-                        "code": code,
-                        "name": kis_price.get("name") or code,
-                        "price": kis_price.get("price"),
-                        "change_pct": kis_price.get("change_pct"),
-                        "market": "KOSPI",
-                    })
-                    return
-
-            url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-            d = json.loads(_get(url))
-            price = float(d["closePrice"].replace(",", ""))
-            pct = float(d["fluctuationsRatio"])
-            direction = d.get("compareToPreviousPrice", {}).get("code", "3")
-            if direction == "5":
-                pct = -abs(pct)
-            elif direction == "2":
-                pct = abs(pct)
-            self._json_resp(200, {
-                "code":       code,
-                "name":       d.get("stockName", code),
-                "price":      price,
-                "change_pct": round(pct, 2),
-                "market":     d.get("stockExchangeType", {}).get("name", market),
-            })
+            self._json_resp(200, _resolve_stock_quote(code, market))
         except Exception as e:
             technicals = _compute_technical_snapshot(code, market) if market else None
             if technicals:
@@ -1132,6 +1806,117 @@ class Handler(BaseHTTPRequestHandler):
                 })
                 return
             self._json_resp(500, {"error": str(e)})
+
+    def _read_json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        payload = json.loads(raw or "{}")
+        return payload if isinstance(payload, dict) else {}
+
+    def _serve_paper_account(self, *, refresh_quotes: bool = True):
+        try:
+            engine = _get_paper_engine()
+            self._json_resp(200, engine.get_account(refresh_quotes=refresh_quotes))
+        except Exception as exc:
+            self._json_resp(500, {"error": str(exc)})
+
+    def _serve_paper_order(self):
+        try:
+            payload = self._read_json_body()
+            side = str(payload.get("side") or "").strip().lower()
+            code = str(payload.get("code") or "").strip().upper()
+            market = str(payload.get("market") or "").strip().upper()
+            try:
+                quantity = int(payload.get("quantity") or 0)
+            except (TypeError, ValueError):
+                quantity = 0
+            order_type = str(payload.get("order_type") or "market").strip().lower()
+            limit_price_raw = payload.get("limit_price")
+            try:
+                limit_price = float(limit_price_raw) if limit_price_raw not in (None, "") else None
+            except (TypeError, ValueError):
+                limit_price = None
+            engine = _get_paper_engine()
+            result = engine.place_order(
+                side=side,
+                code=code,
+                market=market,
+                quantity=quantity,
+                order_type=order_type,
+                limit_price=limit_price,
+            )
+            status = 200 if result.get("ok") else 400
+            self._json_resp(status, result)
+        except Exception as exc:
+            self._json_resp(500, {"ok": False, "error": str(exc)})
+
+    def _serve_paper_reset(self):
+        try:
+            payload = self._read_json_body()
+            initial_cash_krw_raw = payload.get("initial_cash_krw")
+            initial_cash_usd_raw = payload.get("initial_cash_usd")
+            paper_days_raw = payload.get("paper_days")
+            initial_cash_krw = float(initial_cash_krw_raw) if initial_cash_krw_raw not in (None, "") else None
+            initial_cash_usd = float(initial_cash_usd_raw) if initial_cash_usd_raw not in (None, "") else None
+            paper_days = int(paper_days_raw) if paper_days_raw not in (None, "") else None
+            engine = _get_paper_engine()
+            self._json_resp(200, {
+                "ok": True,
+                "account": engine.reset(
+                    initial_cash_krw=initial_cash_krw,
+                    initial_cash_usd=initial_cash_usd,
+                    paper_days=paper_days,
+                ),
+            })
+        except Exception as exc:
+            self._json_resp(500, {"ok": False, "error": str(exc)})
+
+    def _serve_paper_auto_invest(self):
+        try:
+            payload = self._read_json_body()
+            market = str(payload.get("market") or "NASDAQ").strip().upper()
+            try:
+                max_positions_raw = payload.get("max_positions")
+                max_positions = int(5 if max_positions_raw in (None, "") else max_positions_raw)
+            except (TypeError, ValueError):
+                max_positions = 5
+            try:
+                min_score_raw = payload.get("min_score")
+                min_score = float(60.0 if min_score_raw in (None, "") else min_score_raw)
+            except (TypeError, ValueError):
+                min_score = 60.0
+            include_neutral = bool(payload.get("include_neutral") is True)
+            max_positions = max(1, min(20, max_positions))
+            min_score = max(0.0, min(100.0, min_score))
+            result = _auto_invest_picks(
+                market=market,
+                max_positions=max_positions,
+                min_score=min_score,
+                include_neutral=include_neutral,
+            )
+            status = 200 if result.get("ok") else 400
+            self._json_resp(status, result)
+        except Exception as exc:
+            self._json_resp(500, {"ok": False, "error": str(exc)})
+
+    def _serve_paper_engine_start(self):
+        try:
+            payload = self._read_json_body()
+            self._json_resp(200, _start_auto_trader(payload))
+        except Exception as exc:
+            self._json_resp(500, {"ok": False, "error": str(exc)})
+
+    def _serve_paper_engine_stop(self):
+        try:
+            self._json_resp(200, _stop_auto_trader())
+        except Exception as exc:
+            self._json_resp(500, {"ok": False, "error": str(exc)})
+
+    def _serve_paper_engine_status(self):
+        try:
+            self._json_resp(200, _auto_trader_status())
+        except Exception as exc:
+            self._json_resp(500, {"ok": False, "error": str(exc)})
 
     def _json_resp(self, status: int, data: dict):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")

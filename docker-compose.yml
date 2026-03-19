@@ -3,7 +3,7 @@ services:
     build: .
     container_name: daily-report-viewer
     ports:
-      - "8080:80"
+      - "8081:80"
     volumes:
       - ./report:/reports:ro   # 리포트 디렉토리를 읽기전용으로 마운트
     environment:

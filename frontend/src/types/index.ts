@@ -1,4 +1,4 @@
-export type TabId = 'assistant' | 'market' | 'holdings' | 'analysis' | 'recommendations';
+export type TabId = 'assistant' | 'market' | 'holdings' | 'analysis' | 'recommendations' | 'paper';
 
 export interface MarketData {
   kospi?: number; kospi_pct?: number;
@@ -322,4 +322,99 @@ export interface BacktestData {
   trades?: BacktestTrade[];
   equity_curve?: BacktestEquityPoint[];
   error?: string;
+}
+
+export interface PaperPosition {
+  code: string;
+  name: string;
+  market: 'KOSPI' | 'NASDAQ';
+  currency: 'KRW' | 'USD';
+  quantity: number;
+  entry_ts?: string;
+  avg_price_krw: number;
+  avg_price_local: number;
+  last_price_krw: number;
+  last_price_local: number;
+  fx_rate: number;
+  market_value_krw: number;
+  unrealized_pnl_krw: number;
+  unrealized_pnl_pct: number;
+  updated_at?: string;
+}
+
+export interface PaperOrderEvent {
+  order_id: string;
+  ts: string;
+  side: 'buy' | 'sell';
+  order_type: 'market' | 'limit';
+  code: string;
+  name: string;
+  market: 'KOSPI' | 'NASDAQ';
+  quantity: number;
+  filled_price_local: number;
+  filled_price_krw: number;
+  fx_rate: number;
+  notional_local?: number;
+  notional_krw: number;
+  fee_local?: number;
+  fee_krw: number;
+  realized_pnl_local?: number;
+  realized_pnl_krw: number;
+  status: 'filled';
+}
+
+export interface PaperAccountData {
+  mode: 'paper';
+  base_currency: 'MULTI';
+  created_at?: string;
+  updated_at?: string;
+  paper_days?: number;
+  days_elapsed?: number;
+  days_left?: number;
+  initial_cash_krw: number;
+  initial_cash_usd: number;
+  cash_krw: number;
+  cash_usd: number;
+  market_value_krw: number;
+  market_value_usd: number;
+  equity_krw: number;
+  fx_rate: number;
+  realized_pnl_krw: number;
+  realized_pnl_usd: number;
+  total_fees_krw: number;
+  total_fees_usd: number;
+  positions: PaperPosition[];
+  orders: PaperOrderEvent[];
+  error?: string;
+}
+
+export interface PaperEngineConfig {
+  interval_seconds: number;
+  markets: Array<'KOSPI' | 'NASDAQ'>;
+  max_positions_per_market: number;
+  min_score: number;
+  include_neutral: boolean;
+  daily_buy_limit: number;
+  daily_sell_limit: number;
+  max_orders_per_symbol_per_day: number;
+  rsi_min: number;
+  rsi_max: number;
+  volume_ratio_min: number;
+  signal_interval: '1m' | '2m' | '5m' | '15m' | '30m' | '60m' | '90m' | '1d';
+  signal_range: '1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y';
+  stop_loss_pct: number;
+  take_profit_pct: number;
+  max_holding_days: number;
+}
+
+export interface PaperEngineState {
+  running: boolean;
+  started_at?: string;
+  last_run_at?: string;
+  last_error?: string;
+  last_summary?: {
+    executed_buy_count?: number;
+    executed_sell_count?: number;
+  };
+  config?: Partial<PaperEngineConfig>;
 }

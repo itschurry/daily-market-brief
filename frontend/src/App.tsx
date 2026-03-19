@@ -9,6 +9,7 @@ import { WatchlistTab } from './components/WatchlistTab';
 import { AnalysisTab } from './components/AnalysisTab';
 import { RecommendationTab } from './components/RecommendationTab';
 import { BacktestPage } from './components/BacktestPage';
+import { PaperTradingTab } from './components/PaperTradingTab';
 import { useAnalysis } from './hooks/useAnalysis';
 
 type RouteId = 'dashboard' | 'backtest';
@@ -19,7 +20,7 @@ function readRoute(): RouteId {
 
 function readTab(): TabId {
   const hash = location.hash.replace('#', '') as TabId;
-  return ['assistant', 'market', 'holdings', 'analysis', 'recommendations'].includes(hash) ? hash : 'analysis';
+  return ['assistant', 'market', 'holdings', 'analysis', 'recommendations', 'paper'].includes(hash) ? hash : 'analysis';
 }
 
 function DashboardPage({ onOpenBacktest }: { onOpenBacktest: () => void }) {
@@ -72,6 +73,7 @@ function DashboardPage({ onOpenBacktest }: { onOpenBacktest: () => void }) {
               onRefresh={refreshAnalysis}
             />
           )}
+          {activeTab === 'paper' && <PaperTradingTab />}
         </div>
       </div>
     </div>

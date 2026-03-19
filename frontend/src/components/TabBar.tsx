@@ -11,6 +11,7 @@ const TABS: { id: TabId; label: string; help: string }[] = [
   { id: 'assistant', label: '액션 보드', help: '오늘 할 일 정리' },
   { id: 'recommendations', label: '오늘의 추천', help: '뉴스 기반 아이디어' },
   { id: 'holdings', label: '관심종목 판단', help: '매수·매도 시그널' },
+  { id: 'paper', label: '모의투자', help: '실시세 기반 가상체결' },
   { id: 'market', label: '실시간 참고', help: '보조 지표 확인' },
 ];
 
