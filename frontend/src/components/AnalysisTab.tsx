@@ -215,9 +215,6 @@ export function AnalysisTab({ data, status, onRefresh }: Props) {
         <div>
           <div className="report-kicker">Today Report</div>
           <div className="report-title">읽는 흐름에 맞춘 오늘 리포트</div>
-          <div className="report-description">
-            카드식 정보 과밀도를 줄이고, 요약에서 본문으로 자연스럽게 이어지도록 문서형 레이아웃으로 정리했습니다.
-          </div>
         </div>
         <div className="report-stat-panel">
           <div className="report-stat-grid">
