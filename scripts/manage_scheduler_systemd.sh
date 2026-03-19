@@ -58,6 +58,7 @@ ExecStart=$PYTHON_BIN $REPO_DIR/scheduler.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Asia/Seoul
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 StandardOutput=append:$LOG_DIR/scheduler.systemd.out.log
 StandardError=append:$LOG_DIR/scheduler.systemd.err.log
