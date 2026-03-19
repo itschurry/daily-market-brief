@@ -6,28 +6,71 @@ interface Props {
   onRefresh: () => void;
 }
 
-function getNextScheduleLabel(now = new Date()) {
-  const slots = [6, 9, 12, 15, 18, 21];
-  const next = new Date(now);
-  next.setSeconds(0, 0);
+const OFF_SESSION_HOURS = [6, 9, 12, 15, 18, 21];
 
-  const currentHour = now.getHours();
-  const currentMinute = now.getMinutes();
-  const targetHour = slots.find((hour) => hour > currentHour || (hour === currentHour && currentMinute === 0));
-
-  if (targetHour !== undefined) {
-    next.setHours(targetHour, 0, 0, 0);
-  } else {
-    next.setDate(next.getDate() + 1);
-    next.setHours(slots[0], 0, 0, 0);
-  }
-
-  return next.toLocaleString('ko-KR', {
-    month: '2-digit',
-    day: '2-digit',
+function getZonedTimeParts(timeZone: string, now: Date) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
   });
+
+  const parts = formatter.formatToParts(now);
+  const weekday = parts.find((part) => part.type === 'weekday')?.value || 'Mon';
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value || 0);
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value || 0);
+
+  return {
+    weekday,
+    hour,
+    minute,
+    minutes: hour * 60 + minute,
+  };
+}
+
+function isWeekday(weekday: string) {
+  return weekday !== 'Sat' && weekday !== 'Sun';
+}
+
+function isKoreaSessionSlot(now: Date) {
+  const zoned = getZonedTimeParts('Asia/Seoul', now);
+  return isWeekday(zoned.weekday) && zoned.minutes >= 9 * 60 && zoned.minutes <= 15 * 60 + 30 && (zoned.minutes - 9 * 60) % 30 === 0;
+}
+
+function isUsSessionSlot(now: Date) {
+  const zoned = getZonedTimeParts('America/New_York', now);
+  return isWeekday(zoned.weekday) && zoned.minutes >= 9 * 60 + 30 && zoned.minutes <= 16 * 60 && (zoned.minutes - (9 * 60 + 30)) % 30 === 0;
+}
+
+function isOffSessionSlot(now: Date) {
+  const zoned = getZonedTimeParts('Asia/Seoul', now);
+  return zoned.minute === 0 && OFF_SESSION_HOURS.includes(zoned.hour);
+}
+
+function isReportScheduleSlot(now: Date) {
+  return isOffSessionSlot(now) || isKoreaSessionSlot(now) || isUsSessionSlot(now);
+}
+
+function getNextScheduleLabel(now = new Date()) {
+  const next = new Date(now);
+  next.setSeconds(0, 0);
+  next.setMinutes(next.getMinutes() + 1);
+
+  for (let i = 0; i < 60 * 24 * 8; i += 1) {
+    if (isReportScheduleSlot(next)) {
+      return next.toLocaleString('ko-KR', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
+    next.setMinutes(next.getMinutes() + 1);
+  }
+
+  return '계산 중';
 }
 
 export function SummaryBar({ summaryLines, generatedAt, onRefresh }: Props) {
