@@ -63,7 +63,12 @@ def collect_calendar_events(window_days: int = 7, limit: int = 10) -> list[Econo
     end = now + timedelta(days=window_days)
 
     try:
-        response = requests.get(_BLS_ICS_URL, timeout=12)
+        response = requests.get(
+            _BLS_ICS_URL,
+            timeout=12,
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; DailyMarketBrief/1.0)"},
+        )
         response.raise_for_status()
     except Exception as exc:
         logger.warning(f"경제 일정 수집 실패 [BLS ICS]: {exc}")
