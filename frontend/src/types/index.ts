@@ -407,6 +407,7 @@ export interface PaperEngineConfig {
   theme_gate_enabled: boolean;
   theme_min_score: number;
   theme_min_news: number;
+  theme_priority_bonus?: number;
   theme_focus: Array<'automotive' | 'robotics' | 'physical_ai'>;
   daily_buy_limit: number;
   daily_sell_limit: number;

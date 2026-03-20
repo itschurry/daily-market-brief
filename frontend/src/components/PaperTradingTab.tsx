@@ -55,7 +55,7 @@ export function PaperTradingTab() {
   const [paperDays, setPaperDays] = useState('7');
   const [autoMarket] = useState<'KOSPI' | 'NASDAQ'>('NASDAQ');
   const [autoMaxPositions, setAutoMaxPositions] = useState('12');
-  const [autoMinScore, setAutoMinScore] = useState('52');
+  const [autoMinScore, setAutoMinScore] = useState('50');
   const [autoIncludeNeutral, setAutoIncludeNeutral] = useState(true);
   const [engineIntervalSeconds, setEngineIntervalSeconds] = useState('300');
   const [engineSignalInterval, setEngineSignalInterval] = useState<'1m' | '2m' | '5m' | '15m' | '30m' | '60m' | '90m' | '1d'>('15m');
@@ -74,6 +74,7 @@ export function PaperTradingTab() {
   const [themeGateEnabled, setThemeGateEnabled] = useState(true);
   const [themeMinScore, setThemeMinScore] = useState('2.5');
   const [themeMinNews, setThemeMinNews] = useState('1');
+  const [themePriorityBonus, setThemePriorityBonus] = useState('2.0');
   const [statusMessage, setStatusMessage] = useState('');
 
   const initialTotalKrw = useMemo(() => {
@@ -94,17 +95,19 @@ export function PaperTradingTab() {
     }
     const parsedThemeScore = Number(themeMinScore);
     const parsedThemeNews = Number(themeMinNews);
+    const parsedThemeBonus = Number(themePriorityBonus);
     return {
       interval_seconds: Math.max(30, Math.min(3600, Math.floor(Number(engineIntervalSeconds) || 300))),
       signal_interval: engineSignalInterval,
       signal_range: engineSignalRange,
       markets,
       max_positions_per_market: Math.max(1, Math.min(20, Math.floor(Number(autoMaxPositions) || 5))),
-      min_score: Math.max(0, Math.min(100, Number(autoMinScore) || 60)),
+      min_score: Math.max(0, Math.min(100, Number(autoMinScore) || 50)),
       include_neutral: autoIncludeNeutral,
       theme_gate_enabled: themeGateEnabled,
       theme_min_score: Number.isFinite(parsedThemeScore) ? Math.max(0, Math.min(30, parsedThemeScore)) : 2.5,
       theme_min_news: Number.isFinite(parsedThemeNews) ? Math.max(0, Math.min(10, Math.floor(parsedThemeNews))) : 1,
+      theme_priority_bonus: Number.isFinite(parsedThemeBonus) ? Math.max(0, Math.min(10, parsedThemeBonus)) : 2,
       theme_focus: DEFAULT_THEME_FOCUS,
       daily_buy_limit: Math.max(1, Math.min(200, Math.floor(Number(engineDailyBuyLimit) || 20))),
       daily_sell_limit: Math.max(1, Math.min(200, Math.floor(Number(engineDailySellLimit) || 20))),
@@ -138,6 +141,7 @@ export function PaperTradingTab() {
     engineVolumeRatioMin,
     themeGateEnabled,
     themeMinNews,
+    themePriorityBonus,
     themeMinScore,
   ]);
 
@@ -163,6 +167,7 @@ export function PaperTradingTab() {
       cfg.theme_gate_enabled !== applied.theme_gate_enabled ||
       cfg.theme_min_score !== applied.theme_min_score ||
       cfg.theme_min_news !== applied.theme_min_news ||
+      cfg.theme_priority_bonus !== applied.theme_priority_bonus ||
       cfg.daily_buy_limit !== applied.daily_buy_limit ||
       cfg.daily_sell_limit !== applied.daily_sell_limit ||
       cfg.max_orders_per_symbol_per_day !== applied.max_orders_per_symbol_per_day ||
@@ -194,6 +199,7 @@ export function PaperTradingTab() {
     if (cfg.theme_gate_enabled !== undefined) setThemeGateEnabled(Boolean(cfg.theme_gate_enabled));
     if (cfg.theme_min_score !== undefined) setThemeMinScore(String(cfg.theme_min_score));
     if (cfg.theme_min_news !== undefined) setThemeMinNews(String(cfg.theme_min_news));
+    if (cfg.theme_priority_bonus !== undefined) setThemePriorityBonus(String(cfg.theme_priority_bonus));
     if (cfg.daily_buy_limit !== undefined) setEngineDailyBuyLimit(String(cfg.daily_buy_limit));
     if (cfg.daily_sell_limit !== undefined) setEngineDailySellLimit(String(cfg.daily_sell_limit));
     if (cfg.max_orders_per_symbol_per_day !== undefined) setEngineMaxOrdersPerSymbol(String(cfg.max_orders_per_symbol_per_day));
@@ -225,6 +231,7 @@ export function PaperTradingTab() {
     engineState.config?.take_profit_pct,
     engineState.config?.theme_gate_enabled,
     engineState.config?.theme_min_news,
+    engineState.config?.theme_priority_bonus,
     engineState.config?.theme_min_score,
     engineState.config?.volume_ratio_min,
   ]);
@@ -247,14 +254,16 @@ export function PaperTradingTab() {
     const parsedScore = Number(autoMinScore);
     const parsedThemeScore = Number(themeMinScore);
     const parsedThemeNews = Number(themeMinNews);
+    const parsedThemeBonus = Number(themePriorityBonus);
     const result = await autoInvest({
       market: autoMarket,
       max_positions: Number.isFinite(parsedMax) ? Math.max(1, Math.floor(parsedMax)) : 5,
-      min_score: Number.isFinite(parsedScore) ? parsedScore : 60,
+      min_score: Number.isFinite(parsedScore) ? parsedScore : 50,
       include_neutral: autoIncludeNeutral,
       theme_gate_enabled: themeGateEnabled,
       theme_min_score: Number.isFinite(parsedThemeScore) ? Math.max(0, Math.min(30, parsedThemeScore)) : 2.5,
       theme_min_news: Number.isFinite(parsedThemeNews) ? Math.max(0, Math.min(10, Math.floor(parsedThemeNews))) : 1,
+      theme_priority_bonus: Number.isFinite(parsedThemeBonus) ? Math.max(0, Math.min(10, parsedThemeBonus)) : 2,
       theme_focus: DEFAULT_THEME_FOCUS,
     });
     if (!result.ok) {
@@ -508,6 +517,10 @@ export function PaperTradingTab() {
           <label style={{ display: 'grid', gap: 6 }}>
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>테마 최소 뉴스 수</span>
             <input className="backtest-input" type="number" min={0} max={10} value={themeMinNews} onChange={(event) => setThemeMinNews(event.target.value)} />
+          </label>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>테마 우선 보너스</span>
+            <input className="backtest-input" type="number" min={0} max={10} step={0.1} value={themePriorityBonus} onChange={(event) => setThemePriorityBonus(event.target.value)} />
           </label>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
