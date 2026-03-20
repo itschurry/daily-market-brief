@@ -266,12 +266,16 @@ class KISClient:
         for item in output:
             date = str(item.get("stck_bsop_date") or item.get("xymd") or "")
             close = _to_float(item.get("stck_clpr") or item.get("clos"))
+            high = _to_float(item.get("stck_hgpr") or item.get("hgpr"))
+            low = _to_float(item.get("stck_lwpr") or item.get("lwpr"))
             volume = _to_float(item.get("acml_vol") or item.get("tvol"))
             if not date or close is None:
                 continue
             history.append({
                 "date": date,
                 "close": close,
+                "high": high,
+                "low": low,
                 "volume": volume,
             })
         return history
@@ -409,6 +413,8 @@ class KISClient:
         for item in output:
             date = str(item.get("xymd") or item.get("stck_bsop_date") or "")
             close = _pick_float(item, "clos", "stck_clpr", "last")
+            high = _pick_float(item, "high", "hgpr", "stck_hgpr")
+            low = _pick_float(item, "low", "lwpr", "stck_lwpr")
             volume = _pick_float(item, "tvol", "acml_vol", "volume")
             if not date or close is None:
                 continue
@@ -419,6 +425,8 @@ class KISClient:
             history.append({
                 "date": date,
                 "close": close,
+                "high": high,
+                "low": low,
                 "volume": volume,
             })
         return history

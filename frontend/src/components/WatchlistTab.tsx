@@ -4,12 +4,13 @@ import { useWatchlistActions } from '../hooks/useWatchlistActions';
 import { COMPANY_CATALOG } from '../data/companyCatalog';
 import type { StockSearchResult, WatchlistActionItem } from '../types';
 import { getMarketBucket, getMarketSectionCaption, getMarketSectionLabel, getMarketSessions, getPreferredMarketOrder, type MarketBucket, type MarketSessionInfo } from '../utils/marketSession';
+import { getQuantSignalLabel } from '../utils/quantLabels';
 
 const actionLabel: Record<WatchlistActionItem['action'], string> = {
-  buy: '매수',
-  hold: '보유',
-  sell: '매도',
-  watch: '관망',
+  buy: '롱 진입 검토',
+  hold: '보유 유지',
+  sell: '익절/축소 검토',
+  watch: '관찰 유지',
 };
 
 const actionColor: Record<WatchlistActionItem['action'], string> = {
@@ -188,7 +189,7 @@ function ActionCard({ item, onRemove }: { item: WatchlistActionItem; onRemove: (
 
       {item.changed_from_yesterday && (
         <div style={{ fontSize: 12, color: 'var(--text-2)', padding: '10px 12px', borderRadius: 16, background: 'rgba(15,76,92,.05)', border: '1px solid rgba(15,76,92,.12)' }}>
-          전일 대비 {item.changed_from_yesterday.previous_signal || '데이터 없음'} → {item.signal}
+          전일 대비 {item.changed_from_yesterday.previous_signal ? getQuantSignalLabel(item.changed_from_yesterday.previous_signal) : '데이터 없음'} → {getQuantSignalLabel(item.signal)}
           {' · '}
           <span style={{ color: (item.changed_from_yesterday.score_diff || 0) >= 0 ? 'var(--up)' : 'var(--down)', fontWeight: 700 }}>
             {(item.changed_from_yesterday.score_diff || 0) >= 0 ? '+' : ''}{item.changed_from_yesterday.score_diff || 0}
@@ -232,6 +233,20 @@ function ActionCard({ item, onRemove }: { item: WatchlistActionItem; onRemove: (
               {formatNumber(technicals.sma20, 0)} / {formatNumber(technicals.sma60, 0)}
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4 }}>20일선 / 60일선</div>
+          </div>
+          <div style={{ padding: '12px 13px', borderRadius: 16, background: 'var(--bg-soft)', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-4)' }}>ATR(14)</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-1)', marginTop: 6 }}>{formatNumber(technicals.atr14, 2)}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4 }}>{technicals.atr14_pct ? `${formatNumber(technicals.atr14_pct, 2)}%` : '변동성 정보 없음'}</div>
+          </div>
+          <div style={{ padding: '12px 13px', borderRadius: 16, background: 'var(--bg-soft)', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-4)' }}>20일 돌파</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: technicals.breakout_20d ? 'var(--up)' : 'var(--text-1)', marginTop: 6 }}>
+              {technicals.breakout_20d ? '돌파' : '미확인'}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4 }}>
+              기준 고점 {formatNumber(technicals.breakout_20d_high, 2)}
+            </div>
           </div>
         </div>
       )}

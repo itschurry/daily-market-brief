@@ -4,6 +4,7 @@ import { useCompare } from '../hooks/useCompare';
 import { useUnifiedScores } from '../hooks/useUnifiedScores';
 import type { TodayPickItem } from '../types';
 import { getMarketBucket, getMarketSectionCaption, getMarketSectionLabel, getMarketSessions, getPreferredMarketOrder, type MarketBucket, type MarketSessionInfo } from '../utils/marketSession';
+import { getQuantGateLabel, getQuantSignalLabel, getSetupQualityLabel } from '../utils/quantLabels';
 
 interface Props {
   onRefresh: () => void;
@@ -14,6 +15,32 @@ const signalColor: Record<string, string> = {
   '중립': '#b7791f',
   '회피': 'var(--down)',
 };
+
+const gateTone: Record<string, { label: string; color: string; background: string; border: string }> = {
+  passed: {
+    label: '필터 통과',
+    color: 'var(--up)',
+    background: 'rgba(24,121,78,.12)',
+    border: 'rgba(24,121,78,.2)',
+  },
+  caution: {
+    label: '주의',
+    color: '#b7791f',
+    background: 'rgba(183,121,31,.12)',
+    border: 'rgba(183,121,31,.2)',
+  },
+  blocked: {
+    label: '제외',
+    color: 'var(--down)',
+    background: 'rgba(196,68,45,.10)',
+    border: 'rgba(196,68,45,.2)',
+  },
+};
+
+function formatHorizon(value?: 'short_term' | 'mid_term') {
+  if (value === 'mid_term') return '중기';
+  return '단타';
+}
 
 function SummaryCard({ title, value, detail, tone = 'neutral' }: { title: string; value: string; detail: string; tone?: 'up' | 'down' | 'neutral' }) {
   const borderColor = tone === 'up' ? 'rgba(24,121,78,.2)' : tone === 'down' ? 'rgba(196,68,45,.2)' : 'var(--border)';
@@ -73,6 +100,8 @@ function MarketSection({ bucket, items, session }: { bucket: MarketBucket; items
 }
 
 function PickCard({ item }: { item: TodayPickItem }) {
+  const gate = gateTone[item.gate_status || 'passed'] || gateTone.passed;
+  const signalLabel = getQuantSignalLabel(item.signal);
   return (
     <div className="page-section" style={{ padding: 18, borderColor: `${signalColor[item.signal] || 'var(--border)'}33`, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
@@ -80,23 +109,38 @@ function PickCard({ item }: { item: TodayPickItem }) {
           <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-1)' }}>{item.name}</div>
           <div style={{ fontSize: 12, color: 'var(--text-4)', marginTop: 5 }}>{[item.code, item.market, item.sector].filter(Boolean).join(' • ')}</div>
         </div>
-        <span style={{ fontSize: 11, fontWeight: 800, borderRadius: 999, padding: '6px 10px', color: signalColor[item.signal], border: `1px solid ${signalColor[item.signal]}`, background: `${signalColor[item.signal]}15` }}>
-          {item.signal}
-        </span>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <span style={{ fontSize: 11, fontWeight: 800, borderRadius: 999, padding: '6px 10px', color: gate.color, border: `1px solid ${gate.border}`, background: gate.background }}>
+            {getQuantGateLabel(item.gate_status)}
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 800, borderRadius: 999, padding: '6px 10px', color: signalColor[item.signal], border: `1px solid ${signalColor[item.signal]}`, background: `${signalColor[item.signal]}15` }}>
+            {signalLabel}
+          </span>
+          {item.setup_quality && (
+            <span style={{ fontSize: 11, fontWeight: 800, borderRadius: 999, padding: '6px 10px', color: 'var(--text-2)', border: '1px solid var(--border)', background: 'var(--bg-soft)' }}>
+              {getSetupQualityLabel(item.setup_quality)}
+            </span>
+          )}
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 14, alignItems: 'center' }}>
         <div style={{ padding: '14px 12px', borderRadius: 18, background: 'var(--bg-soft)', border: '1px solid var(--border)' }}>
           <div style={{ fontSize: 11, color: 'var(--text-4)' }}>종합점수</div>
           <div style={{ fontSize: 34, fontWeight: 800, color: 'var(--accent)', marginTop: 6 }}>{item.score}</div>
-          <div style={{ fontSize: 11, color: 'var(--text-4)' }}>신뢰도 {item.confidence}%</div>
+          <div style={{ fontSize: 11, color: 'var(--text-4)' }}>{formatHorizon(item.horizon)} · 신뢰도 {item.confidence}%</div>
         </div>
 
         <div style={{ padding: '14px 16px', borderRadius: 18, background: 'rgba(15,76,92,.06)', border: '1px solid rgba(15,76,92,.12)' }}>
-          <div style={{ fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Catalyst</div>
+          <div style={{ fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Playbook Thesis</div>
           <div style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.7, marginTop: 8 }}>
-            {item.catalysts[0] || item.reasons[0] || '핵심 촉매 데이터 없음'}
+            {item.ai_thesis || item.technical_view || item.catalysts[0] || item.reasons[0] || '핵심 촉매 데이터 없음'}
           </div>
+          {item.technical_view && (
+            <div style={{ fontSize: 12, color: 'var(--text-4)', marginTop: 8 }}>
+              {item.technical_view}
+            </div>
+          )}
         </div>
       </div>
 
@@ -105,6 +149,16 @@ function PickCard({ item }: { item: TodayPickItem }) {
           <div key={index}>• {reason}</div>
         ))}
       </div>
+
+      {item.gate_reasons && item.gate_reasons.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {item.gate_reasons.slice(0, 2).map((reason, index) => (
+            <span key={index} style={{ fontSize: 11, color: gate.color, background: gate.background, border: `1px solid ${gate.border}`, borderRadius: 999, padding: '5px 9px' }}>
+              {reason}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         {item.risks.slice(0, 2).map((risk, index) => (
@@ -183,7 +237,7 @@ export function RecommendationTab({ onRefresh }: Props) {
               <div style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,250,242,.64)' }}>Today Picks</div>
               <div style={{ fontSize: 30, fontWeight: 800, marginTop: 8 }}>오늘의 추천</div>
               <div style={{ fontSize: 15, color: 'rgba(255,250,242,.82)', marginTop: 10, lineHeight: 1.7, maxWidth: 760 }}>
-                최신 뉴스와 시장 맥락을 바탕으로 오늘 먼저 볼 종목을 정리합니다. 점수보다 촉매와 리스크를 함께 읽는 탭입니다.
+                최신 뉴스와 시장 맥락을 바탕으로 오늘 먼저 볼 종목을 정리합니다. 플레이북 게이트를 통과한 아이디어와 보류 사유를 함께 읽는 탭입니다.
               </div>
             </div>
             <button className="ghost-button" style={{ background: 'rgba(255,255,255,.1)', color: '#fffaf2', borderColor: 'rgba(255,255,255,.18)' }} onClick={handleRefresh}>
@@ -193,8 +247,8 @@ export function RecommendationTab({ onRefresh }: Props) {
         </div>
 
         <div style={{ padding: 18, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, background: 'rgba(255,253,248,0.78)' }}>
-          <SummaryCard title="추천 신호" value={`${prevSignals['추천'] || 0} → ${baseSignals['추천'] || 0}`} detail="전일 대비 추천 종목 수 변화" tone={recommendationShift >= 0 ? 'up' : 'down'} />
-          <SummaryCard title="회피 신호" value={`${prevSignals['회피'] || 0} → ${baseSignals['회피'] || 0}`} detail="리스크가 커질수록 회피 신호가 늘어납니다." tone={avoidanceShift > 0 ? 'down' : 'neutral'} />
+          <SummaryCard title="롱 우위 신호" value={`${prevSignals['추천'] || 0} → ${baseSignals['추천'] || 0}`} detail="전일 대비 롱 우위 후보 수 변화" tone={recommendationShift >= 0 ? 'up' : 'down'} />
+          <SummaryCard title="기대값 낮음" value={`${prevSignals['회피'] || 0} → ${baseSignals['회피'] || 0}`} detail="리스크가 커질수록 기대값 낮음 판정이 늘어납니다." tone={avoidanceShift > 0 ? 'down' : 'neutral'} />
           <SummaryCard title="새 리스크" value={`${compare.new_risks?.length || 0}개`} detail={(compare.new_risks && compare.new_risks[0]) || '새로 추가된 리스크 없음'} tone={(compare.new_risks?.length || 0) > 0 ? 'down' : 'neutral'} />
           <SummaryCard title="시장 톤" value={todayPicks.data.market_tone || '데이터 없음'} detail={todayPicks.data.generated_at || '생성 시각 없음'} />
         </div>
@@ -214,7 +268,7 @@ export function RecommendationTab({ onRefresh }: Props) {
               <div key={`${item.name}-${index}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', padding: '12px 14px', borderRadius: 18, background: 'var(--bg-soft)', border: '1px solid var(--border)' }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>{item.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4 }}>{item.previous_signal ? `${item.previous_signal} → ${item.current_signal}` : '신규 추천 편입'}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 4 }}>{item.previous_signal ? `${getQuantSignalLabel(item.previous_signal)} → ${getQuantSignalLabel(item.current_signal)}` : '신규 추천 편입'}</div>
                 </div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: item.score_diff >= 0 ? 'var(--up)' : 'var(--down)' }}>
                   {item.score_diff >= 0 ? '+' : ''}{item.score_diff}

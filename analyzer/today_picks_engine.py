@@ -187,6 +187,144 @@ def _ai_signal_adjustment(ai_signal: dict | None) -> tuple[float, list[str], lis
     return round(score, 1), reasons, risks, serialized
 
 
+def _playbook_candidate_map(playbook: dict | None) -> dict[str, dict]:
+    candidate_map: dict[str, dict] = {}
+    if not playbook:
+        return candidate_map
+    for horizon in ("short_term", "mid_term"):
+        for item in playbook.get(f"stock_candidates_{horizon}", []):
+            if not isinstance(item, dict):
+                continue
+            candidate = dict(item)
+            candidate["horizon"] = horizon
+            for key in {
+                str(item.get("code") or "").strip().upper(),
+                str(item.get("name") or "").strip(),
+            }:
+                if key:
+                    candidate_map[key] = candidate
+    return candidate_map
+
+
+def _event_watchlist_risk(playbook: dict | None, sector: str) -> str | None:
+    if not playbook or not playbook.get("event_watchlist"):
+        return None
+    joined = " ".join(
+        f"{item.get('name', '')} {item.get('note', '')}"
+        for item in playbook.get("event_watchlist", [])
+        if isinstance(item, dict)
+    ).lower()
+    sector_lower = sector.lower()
+    if any(keyword in joined for keyword in ("cpi", "fomc", "금리", "고용", "인플레이션")) and sector_lower in {"반도체", "플랫폼", "자동차", "가전", "로봇"}:
+        return "이벤트 리스크가 커 단기 추격은 보수적으로 접근"
+    return None
+
+
+def _apply_playbook_overlay(
+    entry: CompanyCatalogEntry,
+    score: float,
+    reasons: list[str],
+    risks: list[str],
+    playbook: dict | None,
+    playbook_candidate: dict | None,
+) -> tuple[float, list[str], list[str], dict]:
+    favored = {str(item).strip().lower() for item in (playbook or {}).get("favored_sectors", []) if str(item).strip()}
+    avoided = {str(item).strip().lower() for item in (playbook or {}).get("avoided_sectors", []) if str(item).strip()}
+    invalid_setups = [str(item).strip().lower() for item in (playbook or {}).get("invalid_setups", []) if str(item).strip()]
+    short_term_bias = str((playbook or {}).get("short_term_bias", "neutral")).strip().lower()
+
+    next_score = score
+    gate_status = "passed"
+    gate_reasons: list[str] = []
+    horizon = "short_term"
+    ai_thesis = ""
+    alignment = 50.0
+    technical_view = ""
+    setup_quality = "mixed"
+    technical_snapshot = None
+
+    if entry.sector.lower() in favored:
+        next_score += 3.0
+        alignment += 10.0
+        reasons.append("플레이북 유리 섹터에 포함")
+    if entry.sector.lower() in avoided:
+        next_score -= 4.0
+        alignment -= 12.0
+        gate_reasons.append("플레이북에서 불리한 섹터로 분류")
+
+    event_risk = _event_watchlist_risk(playbook, entry.sector)
+    if event_risk:
+        gate_reasons.append(event_risk)
+        alignment -= 5.0
+
+    if playbook_candidate:
+        horizon = str(playbook_candidate.get("horizon", "short_term"))
+        ai_thesis = str(playbook_candidate.get("thesis", "")).strip()
+        technical_view = str(playbook_candidate.get("technical_view", "")).strip()
+        setup_quality = str(playbook_candidate.get("setup_quality", "mixed")).strip().lower() or "mixed"
+        technical_snapshot = playbook_candidate.get("technical_snapshot")
+        action = str(playbook_candidate.get("action", "watch")).strip().lower()
+        confidence = _safe_float(playbook_candidate.get("confidence")) or 60.0
+        next_score += max(-6.0, min(8.0, (confidence - 55.0) * 0.12))
+        alignment += max(-15.0, min(18.0, (confidence - 50.0) * 0.4))
+        if ai_thesis:
+            reasons.append(f"플레이북 논리: {ai_thesis}")
+        if technical_view:
+            reasons.append(f"기술해석: {technical_view}")
+        reasons.extend(str(item).strip() for item in playbook_candidate.get("reasons", []) if str(item).strip())
+        risks.extend(str(item).strip() for item in playbook_candidate.get("risks", []) if str(item).strip())
+
+        if action == "buy":
+            next_score += 4.0
+            alignment += 8.0
+        elif action == "watch":
+            next_score += 1.0
+        elif action == "avoid":
+            next_score -= 12.0
+            alignment -= 18.0
+            gate_reasons.append("플레이북에서 보류/제외 후보로 분류")
+
+        thesis_blob = " ".join([ai_thesis] + [str(item) for item in playbook_candidate.get("reasons", [])]).lower()
+        if any(rule in thesis_blob for rule in invalid_setups):
+            gate_reasons.append("플레이북 금지 셋업과 충돌")
+            alignment -= 18.0
+
+        if short_term_bias == "defensive" and action == "buy":
+            gate_reasons.append("단기 시장 바이어스와 역행")
+            alignment -= 10.0
+
+        if setup_quality == "high":
+            next_score += 2.0
+            alignment += 5.0
+        elif setup_quality == "low":
+            gate_reasons.append("기술 셋업 기대값 낮음")
+            next_score -= 5.0
+            alignment -= 10.0
+        elif setup_quality == "unknown":
+            gate_reasons.append("기술지표 확인 전")
+            next_score -= 2.0
+            alignment -= 6.0
+
+    deduped_gate_reasons = list(dict.fromkeys(gate_reasons))[:4]
+    if any(reason in {"플레이북 금지 셋업과 충돌", "플레이북에서 보류/제외 후보로 분류"} for reason in deduped_gate_reasons):
+        gate_status = "blocked"
+        next_score -= 10.0
+    elif deduped_gate_reasons:
+        gate_status = "caution"
+        next_score -= 3.0
+
+    return next_score, reasons, risks, {
+        "horizon": horizon if horizon in {"short_term", "mid_term"} else "short_term",
+        "gate_status": gate_status,
+        "gate_reasons": deduped_gate_reasons,
+        "playbook_alignment": round(max(5.0, min(95.0, alignment)), 1),
+        "ai_thesis": ai_thesis,
+        "technical_snapshot": technical_snapshot,
+        "technical_view": technical_view,
+        "setup_quality": setup_quality,
+    }
+
+
 def _calendar_adjustment(data: DailyData, entry: CompanyCatalogEntry) -> tuple[float, list[str], list[str], list]:
     upcoming_events = []
     risks: list[str] = []
@@ -382,6 +520,8 @@ def _build_pick(
     disclosures: list,
     investor_flow,
     ai_signal: dict | None,
+    playbook: dict | None,
+    playbook_candidate: dict | None,
 ) -> dict:
     texts = [_article_text(article) for article in articles]
     joined = " ".join(texts)
@@ -401,7 +541,6 @@ def _build_pick(
     ai_score, ai_reasons, ai_risks, serialized_ai_signal = _ai_signal_adjustment(ai_signal)
     calendar_score, calendar_reasons, calendar_risks, upcoming_events = _calendar_adjustment(data, entry)
     score += disclosure_score + flow_score + ai_score + calendar_score
-    score = max(25, min(95, round(score, 1)))
 
     reasons = [
         f"관련 뉴스 {len(articles)}건",
@@ -431,6 +570,16 @@ def _build_pick(
     if not risks:
         risks.append("단기 재료 소멸 여부를 점검할 필요")
 
+    score, reasons, risks, playbook_meta = _apply_playbook_overlay(
+        entry,
+        score,
+        reasons,
+        risks,
+        playbook,
+        playbook_candidate,
+    )
+    score = max(25, min(95, round(score, 1)))
+
     catalysts = [article.title for article in articles[:2]]
     catalysts.extend(item.title for item in related_disclosures[:1])
     catalysts.extend(event.name for event in upcoming_events[:1])
@@ -446,7 +595,7 @@ def _build_pick(
         "code": entry.code,
         "market": entry.market,
         "sector": entry.sector,
-        "signal": _signal_from_score(score),
+        "signal": "회피" if playbook_meta["gate_status"] == "blocked" else ("중립" if playbook_meta["gate_status"] == "caution" and _signal_from_score(score) == "추천" else _signal_from_score(score)),
         "score": score,
         "confidence": max(
             45,
@@ -470,6 +619,14 @@ def _build_pick(
         "theme_hit_count": article_theme_hits,
         "matched_themes": matched_themes,
         "keyword_gate_passed": keyword_gate_passed,
+        "horizon": playbook_meta["horizon"],
+        "gate_status": playbook_meta["gate_status"],
+        "gate_reasons": playbook_meta["gate_reasons"],
+        "playbook_alignment": playbook_meta["playbook_alignment"],
+        "ai_thesis": playbook_meta["ai_thesis"] or (serialized_ai_signal or {}).get("summary"),
+        "technical_snapshot": playbook_meta["technical_snapshot"],
+        "technical_view": playbook_meta["technical_view"],
+        "setup_quality": playbook_meta["setup_quality"],
     }
 
 
@@ -478,6 +635,7 @@ def generate_today_picks(
     limit: int = 8,
     auto_candidate_limit: int = 100,
     ai_signals: dict | None = None,
+    playbook: dict | None = None,
 ) -> dict:
     """뉴스에서 기업을 매칭해 오늘의 추천 종목을 생성한다."""
     now = datetime.now(_KST)
@@ -485,6 +643,7 @@ def generate_today_picks(
     disclosure_map = {}
     flow_map = {}
     ai_signal_map = {}
+    playbook_candidate_map = _playbook_candidate_map(playbook)
 
     for item in data.disclosures:
         disclosure_map.setdefault(item.stock_code, []).append(item)
@@ -512,12 +671,13 @@ def generate_today_picks(
         entry_disclosures = disclosure_map.get(entry.code, []) or disclosure_map.get(entry.name, [])
         entry_flow = flow_map.get(entry.code) or flow_map.get(entry.name)
         entry_ai_signal = ai_signal_map.get(entry.code) or ai_signal_map.get(entry.name)
+        entry_playbook_candidate = playbook_candidate_map.get(entry.code) or playbook_candidate_map.get(entry.name)
         for article in data.news:
             text = _article_text(article)
             if any(alias in text for alias in aliases):
                 related.append(article)
 
-        if not related and not entry_disclosures and not _has_notable_flow(entry_flow) and not entry_ai_signal:
+        if not related and not entry_disclosures and not _has_notable_flow(entry_flow) and not entry_ai_signal and not entry_playbook_candidate:
             continue
 
         matched.append(
@@ -528,10 +688,19 @@ def generate_today_picks(
                 entry_disclosures,
                 entry_flow,
                 entry_ai_signal,
+                playbook,
+                entry_playbook_candidate,
             )
         )
 
-    matched.sort(key=lambda item: (item["score"], item["confidence"]), reverse=True)
+    matched.sort(
+        key=lambda item: (
+            {"passed": 2, "caution": 1, "blocked": 0}.get(str(item.get("gate_status", "passed")), 0),
+            item["score"],
+            item["confidence"],
+        ),
+        reverse=True,
+    )
 
     auto_limit = max(1, int(auto_candidate_limit))
     auto_candidates = [
@@ -557,7 +726,8 @@ def generate_today_picks(
         "generated_at": now.strftime("%Y-%m-%d %H:%M KST"),
         "date": now.strftime("%Y-%m-%d"),
         "market_tone": market_tone,
-        "strategy": "news-driven-picks-v1+openai-aux" if (ai_signals or {}).get("signals") else "news-driven-picks-v1",
+        "strategy": "news-driven-picks-v1+playbook+openai-aux" if playbook else ("news-driven-picks-v1+openai-aux" if (ai_signals or {}).get("signals") else "news-driven-picks-v1"),
+        "playbook_ref": (playbook or {}).get("generated_at") or (playbook or {}).get("date"),
         "picks": matched[:limit],
         "auto_candidates": auto_candidates,
         "auto_candidate_limit": auto_limit,
@@ -634,6 +804,11 @@ def build_watchlist_actions(
         ai_reasons = []
         ai_risks = []
         serialized_ai_signal = None
+        gate_status = "passed"
+        gate_reasons: list[str] = []
+        horizon = "short_term"
+        playbook_alignment = None
+        ai_thesis = None
 
         if current_pick:
             signal = current_pick.get("signal", signal)
@@ -643,11 +818,22 @@ def build_watchlist_actions(
             if not investor_flow:
                 investor_flow = current_pick.get("investor_flow") or {}
             serialized_ai_signal = current_pick.get("ai_signal")
+            gate_status = str(current_pick.get("gate_status", gate_status))
+            gate_reasons = list(current_pick.get("gate_reasons", gate_reasons) or [])
+            horizon = str(current_pick.get("horizon", horizon))
+            playbook_alignment = current_pick.get("playbook_alignment")
+            ai_thesis = current_pick.get("ai_thesis")
         if current_rec:
             if not current_pick:
                 signal = current_rec.get("signal", signal)
             reasons.extend(current_rec.get("reasons", []))
             risks.extend(current_rec.get("risks", []))
+            if not gate_reasons:
+                gate_status = str(current_rec.get("gate_status", gate_status))
+                gate_reasons = list(current_rec.get("gate_reasons", gate_reasons) or [])
+                horizon = str(current_rec.get("horizon", horizon))
+                playbook_alignment = current_rec.get("playbook_alignment", playbook_alignment)
+                ai_thesis = current_rec.get("ai_thesis", ai_thesis)
         if not current_pick and current_ai_signal:
             ai_score, ai_reasons, ai_risks, serialized_ai_signal = _ai_signal_adjustment(current_ai_signal)
             score += ai_score
@@ -796,6 +982,11 @@ def build_watchlist_actions(
             "investor_flow": investor_flow or None,
             "ai_signal": serialized_ai_signal,
             "changed_from_yesterday": changed_from_yesterday,
+            "gate_status": gate_status,
+            "gate_reasons": gate_reasons[:3],
+            "horizon": horizon if horizon in {"short_term", "mid_term"} else "short_term",
+            "playbook_alignment": playbook_alignment,
+            "ai_thesis": ai_thesis,
         })
 
     actions.sort(key=lambda item: item["score"], reverse=True)

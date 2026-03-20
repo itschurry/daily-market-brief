@@ -14,6 +14,8 @@ export const DEFAULT_BACKTEST_QUERY: BacktestQuery = {
   take_profit_pct: 18,
 };
 
+const BACKTEST_QUERY_STORAGE_KEY = 'backtest_query_v1';
+
 function buildQueryString(query: BacktestQuery) {
   const params = new URLSearchParams();
   params.set('market_scope', query.market_scope);
@@ -31,6 +33,43 @@ function buildQueryString(query: BacktestQuery) {
     params.set('take_profit_pct', String(query.take_profit_pct));
   }
   return params.toString();
+}
+
+function readNumber(value: unknown, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function readNullableNumber(value: unknown, fallback: number | null | undefined) {
+  if (value === null) return null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : (fallback ?? null);
+}
+
+function normalizeBacktestQuery(value: unknown): BacktestQuery {
+  const raw = value && typeof value === 'object' ? (value as Partial<BacktestQuery>) : {};
+  return {
+    market_scope: raw.market_scope === 'nasdaq' ? 'nasdaq' : DEFAULT_BACKTEST_QUERY.market_scope,
+    lookback_days: readNumber(raw.lookback_days, DEFAULT_BACKTEST_QUERY.lookback_days),
+    initial_cash: readNumber(raw.initial_cash, DEFAULT_BACKTEST_QUERY.initial_cash),
+    max_positions: readNumber(raw.max_positions, DEFAULT_BACKTEST_QUERY.max_positions),
+    max_holding_days: readNumber(raw.max_holding_days, DEFAULT_BACKTEST_QUERY.max_holding_days),
+    rsi_min: readNumber(raw.rsi_min, DEFAULT_BACKTEST_QUERY.rsi_min),
+    rsi_max: readNumber(raw.rsi_max, DEFAULT_BACKTEST_QUERY.rsi_max),
+    volume_ratio_min: readNumber(raw.volume_ratio_min, DEFAULT_BACKTEST_QUERY.volume_ratio_min),
+    stop_loss_pct: readNullableNumber(raw.stop_loss_pct, DEFAULT_BACKTEST_QUERY.stop_loss_pct),
+    take_profit_pct: readNullableNumber(raw.take_profit_pct, DEFAULT_BACKTEST_QUERY.take_profit_pct),
+  };
+}
+
+export function loadBacktestQuery() {
+  try {
+    return normalizeBacktestQuery(JSON.parse(localStorage.getItem(BACKTEST_QUERY_STORAGE_KEY) || 'null'));
+  } catch {
+    return { ...DEFAULT_BACKTEST_QUERY };
+  }
+}
+
+export function saveBacktestQuery(query: BacktestQuery) {
+  localStorage.setItem(BACKTEST_QUERY_STORAGE_KEY, JSON.stringify(query));
 }
 
 export function useBacktest(initialQuery: BacktestQuery = DEFAULT_BACKTEST_QUERY) {

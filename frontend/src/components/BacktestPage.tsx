@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { DEFAULT_BACKTEST_QUERY, useBacktest } from '../hooks/useBacktest';
+import { DEFAULT_BACKTEST_QUERY, loadBacktestQuery, saveBacktestQuery, useBacktest } from '../hooks/useBacktest';
 import type { BacktestData, BacktestQuery, BacktestTrade } from '../types';
 
 function formatMoney(value?: number | null, currency: 'KRW' | 'USD' = 'KRW') {
@@ -266,8 +266,9 @@ function marketCashPreset(market: BacktestQuery['market_scope']) {
 }
 
 export function BacktestPage({ onBack }: { onBack: () => void }) {
-  const { data, status, run } = useBacktest();
-  const [draft, setDraft] = useState<BacktestQuery>(DEFAULT_BACKTEST_QUERY);
+  const [initialQuery] = useState<BacktestQuery>(loadBacktestQuery);
+  const { data, status, run } = useBacktest(initialQuery);
+  const [draft, setDraft] = useState<BacktestQuery>(initialQuery);
   const marketPreset = marketCashPreset(draft.market_scope);
   const baseCurrency = (data.config?.base_currency || marketPreset.currency) as 'KRW' | 'USD';
   const metrics = data.metrics;
@@ -275,6 +276,10 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
   const trades = data.trades || [];
   const bestTrades = [...trades].sort((a, b) => b.pnl_pct - a.pnl_pct).slice(0, 3);
   const worstTrades = [...trades].sort((a, b) => a.pnl_pct - b.pnl_pct).slice(0, 3);
+
+  useEffect(() => {
+    saveBacktestQuery(draft);
+  }, [draft]);
 
   function patchDraft<K extends keyof BacktestQuery>(key: K, value: BacktestQuery[K]) {
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -285,8 +290,9 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
   }
 
   function handleReset() {
-    setDraft(DEFAULT_BACKTEST_QUERY);
-    run(DEFAULT_BACKTEST_QUERY);
+    const resetQuery = { ...DEFAULT_BACKTEST_QUERY };
+    setDraft(resetQuery);
+    run(resetQuery);
   }
 
   return (
@@ -304,14 +310,14 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
                 <button className="ghost-button" style={{ background: 'rgba(255,255,255,.1)', color: '#fffaf2', borderColor: 'rgba(255,255,255,.18)' }} onClick={onBack}>
                   메인 대시보드로
                 </button>
-                <span className="hero-chip">기본 우주: {draft.market_scope === 'kospi' ? 'KOSPI50' : 'NASDAQ50'}</span>
+                <span className="hero-chip">종목 유니버스: {draft.market_scope === 'kospi' ? 'KOSPI100' : 'S&P100'}</span>
                 <span className="hero-chip">기준 통화: {marketPreset.currency}</span>
                 <span className="hero-chip">기술 규칙 + 손절/익절</span>
               </div>
             </div>
             <div className="hero-sidecard">
               <div className="hero-sidecard-label">현재 설정</div>
-              <div className="hero-sidecard-value">{buildPresetLabel(draft.lookback_days)} · {draft.market_scope === 'kospi' ? 'KOSPI50' : 'NASDAQ50'}</div>
+              <div className="hero-sidecard-value">{buildPresetLabel(draft.lookback_days)} · {draft.market_scope === 'kospi' ? 'KOSPI100' : 'S&P100'}</div>
               <div className="hero-sidecard-copy">
                 초기자금 {formatMoney(draft.initial_cash, marketPreset.currency)} · 최대 {draft.max_positions}종목 · 손절 {draft.stop_loss_pct ?? '없음'}% · 익절 {draft.take_profit_pct ?? '없음'}%
               </div>
@@ -339,8 +345,8 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-2)', marginBottom: 8 }}>시장 범위</div>
               <div className="backtest-pill-row">
                 {[
-                  { value: 'kospi', label: 'KOSPI50' },
-                  { value: 'nasdaq', label: 'NASDAQ50' },
+                  { value: 'kospi', label: 'KOSPI100' },
+                  { value: 'nasdaq', label: 'S&P100' },
                 ].map((option) => (
                   <button
                     key={option.value}
@@ -437,7 +443,7 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
                     <div style={{ fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,250,242,.64)' }}>Backtest Result</div>
                     <div style={{ fontSize: 30, fontWeight: 800, marginTop: 8 }}>실행 결과</div>
                     <div style={{ fontSize: 15, color: 'rgba(255,250,242,.82)', marginTop: 10, lineHeight: 1.7, maxWidth: 760 }}>
-                      {data.universe || (draft.market_scope === 'kospi' ? 'KOSPI50' : 'NASDAQ50')} · {equity[0]?.date || '—'} ~ {equity[equity.length - 1]?.date || '—'} · 생성 시각 {data.generated_at || '없음'}
+                      {data.universe || (draft.market_scope === 'kospi' ? 'KOSPI100' : 'S&P100')} · {equity[0]?.date || '—'} ~ {equity[equity.length - 1]?.date || '—'} · 생성 시각 {data.generated_at || '없음'}
                     </div>
                     <CountByMarket data={data} />
                   </div>

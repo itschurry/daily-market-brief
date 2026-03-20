@@ -16,6 +16,53 @@ export interface AnalysisData {
   generated_at?: string;
   summary_lines?: string[];
   analysis_html?: string;
+  analysis_playbook?: {
+    market_regime?: string;
+    short_term_bias?: 'bullish' | 'neutral' | 'defensive';
+    mid_term_bias?: 'bullish' | 'neutral' | 'defensive';
+    favored_sectors?: string[];
+    avoided_sectors?: string[];
+    tactical_setups?: string[];
+    invalid_setups?: string[];
+    key_risks?: string[];
+    event_watchlist?: Array<{
+      name?: string;
+      timing?: string;
+      importance?: string;
+      note?: string;
+    }>;
+    stock_candidates_short_term?: Array<{
+      name?: string;
+      code?: string;
+      market?: string;
+      sector?: string;
+      thesis?: string;
+      action?: 'buy' | 'watch' | 'avoid';
+      confidence?: number;
+      reasons?: string[];
+      risks?: string[];
+      technical_snapshot?: TechnicalSnapshot | null;
+      technical_view?: string;
+      setup_quality?: string;
+    }>;
+    stock_candidates_mid_term?: Array<{
+      name?: string;
+      code?: string;
+      market?: string;
+      sector?: string;
+      thesis?: string;
+      action?: 'buy' | 'watch' | 'avoid';
+      confidence?: number;
+      reasons?: string[];
+      risks?: string[];
+      technical_snapshot?: TechnicalSnapshot | null;
+      technical_view?: string;
+      setup_quality?: string;
+    }>;
+    gating_rules?: string[];
+    date?: string;
+    generated_at?: string;
+  };
   date?: string;
   error?: string;
 }
@@ -71,6 +118,15 @@ export interface RecommendationItem {
   risk_level: '낮음' | '중간' | '높음';
   reasons: string[];
   risks: string[];
+  horizon?: 'short_term' | 'mid_term';
+  gate_status?: 'passed' | 'blocked' | 'caution';
+  gate_reasons?: string[];
+  playbook_alignment?: number;
+  ai_thesis?: string;
+  playbook_ref?: string | null;
+  technical_snapshot?: TechnicalSnapshot | null;
+  technical_view?: string | null;
+  setup_quality?: string | null;
 }
 
 export interface RecommendationsData {
@@ -78,8 +134,10 @@ export interface RecommendationsData {
   date?: string;
   strategy?: string;
   universe?: string;
+  playbook_ref?: string | null;
   signal_counts?: Record<string, number>;
   recommendations: RecommendationItem[];
+  rejected_candidates?: RecommendationItem[];
   backtest?: {
     window?: string;
     hit_rate?: number | null;
@@ -110,6 +168,10 @@ export interface TechnicalSnapshot {
   macd?: number | null;
   macd_signal?: number | null;
   macd_hist?: number | null;
+  atr14?: number | null;
+  atr14_pct?: number | null;
+  breakout_20d?: boolean | null;
+  breakout_20d_high?: number | null;
   trend?: 'bullish' | 'bearish' | 'neutral';
 }
 
@@ -181,6 +243,14 @@ export interface TodayPickItem {
   theme_hit_count?: number;
   matched_themes?: string[];
   keyword_gate_passed?: boolean;
+  horizon?: 'short_term' | 'mid_term';
+  gate_status?: 'passed' | 'blocked' | 'caution';
+  gate_reasons?: string[];
+  playbook_alignment?: number;
+  ai_thesis?: string;
+  technical_snapshot?: TechnicalSnapshot | null;
+  technical_view?: string | null;
+  setup_quality?: string | null;
 }
 
 export interface TodayPicksData {
@@ -188,6 +258,7 @@ export interface TodayPicksData {
   date?: string;
   market_tone?: string;
   strategy?: string;
+  playbook_ref?: string | null;
   picks: TodayPickItem[];
   auto_candidates?: TodayPickItem[];
   auto_candidate_limit?: number;
@@ -206,6 +277,13 @@ export interface WatchlistActionItem extends WatchlistItem {
   related_news: RelatedNewsItem[];
   technicals?: TechnicalSnapshot | null;
   investor_flow?: InvestorFlowSnapshot | null;
+  gate_status?: 'passed' | 'blocked' | 'caution';
+  gate_reasons?: string[];
+  horizon?: 'short_term' | 'mid_term';
+  playbook_alignment?: number | null;
+  ai_thesis?: string | null;
+  technical_view?: string | null;
+  setup_quality?: string | null;
   changed_from_yesterday?: {
     previous_signal?: string;
     score_diff?: number;

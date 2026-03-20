@@ -16,10 +16,11 @@ from collectors.market_collector import collect_market
 from collectors.macro_collector import collect_macro
 from collectors.news_collector import collect_news
 from collectors.models import DailyData
-from analyzer.openai_analyzer import analyze
+from analyzer.openai_analyzer import analyze_with_playbook
 from analyzer.recommendation_engine import generate_recommendations
 from reporter.report_generator import (
     save_analysis_cache,
+    save_analysis_playbook_cache,
     save_ai_signals_cache,
     save_calendar_cache,
     save_disclosures_cache,
@@ -88,17 +89,18 @@ async def run_daily_report():
     )
 
     logger.info("[8/10] OpenAI API 분석 중...")
-    analysis = await analyze(daily_data)
+    analysis, analysis_playbook = await analyze_with_playbook(daily_data)
 
     logger.info("[9/10] OpenAI 보조신호 생성 중...")
     ai_signals = await generate_stock_aux_signals(daily_data)
 
     logger.info("[10/10] 투자 추천 계산 및 저장...")
-    recommendations = generate_recommendations(daily_data)
-    today_picks = generate_today_picks(daily_data, ai_signals=ai_signals)
+    recommendations = generate_recommendations(daily_data, playbook=analysis_playbook)
+    today_picks = generate_today_picks(daily_data, ai_signals=ai_signals, playbook=analysis_playbook)
 
     date_str = datetime.now().strftime("%Y-%m-%d")
-    save_analysis_cache(analysis, date_str)
+    save_analysis_cache(analysis, date_str, playbook=analysis_playbook)
+    save_analysis_playbook_cache(analysis_playbook, date_str)
     save_news_cache(daily_data.news, date_str)
     save_macro_cache(daily_data.macro, date_str)
     save_ai_signals_cache(ai_signals, date_str)

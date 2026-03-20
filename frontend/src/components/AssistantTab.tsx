@@ -3,6 +3,7 @@ import { useMarket } from '../hooks/useMarket';
 import { useInvestmentAssistant } from '../hooks/useInvestmentAssistant';
 import { useUnifiedScores } from '../hooks/useUnifiedScores';
 import { renderTextWithLinks } from '../utils/linkify';
+import { getQuantSignalLabel } from '../utils/quantLabels';
 
 function cardStyle(borderColor = 'var(--border)', background = 'var(--card-bg)') {
   return {
@@ -63,7 +64,7 @@ export function AssistantTab() {
   const actionItems = useMemo(() => {
     const items: string[] = [];
     if (topIdeas[0]) items.push(`${topIdeas[0].name}의 근거 뉴스와 리스크를 먼저 확인하세요.`);
-    if (watchlistFocus.some((item) => item.signal === '회피')) items.push('관심종목 중 회피 신호가 나온 종목은 비중 축소 또는 보류 판단을 남기세요.');
+    if (watchlistFocus.some((item) => item.signal === '회피')) items.push('관심종목 중 기대값 낮음 판정이 나온 종목은 비중 축소 또는 보류 판단을 남기세요.');
     if (riskSignals.length > 0) items.push(`${riskSignals[0].title} 관련 일정과 노출 종목을 점검하세요.`);
     return items.slice(0, 3);
   }, [topIdeas, watchlistFocus, riskSignals]);
@@ -101,7 +102,7 @@ export function AssistantTab() {
           <div style={cardStyle('rgba(15,76,92,.18)', 'rgba(255,255,255,.72)')}>
             <div style={{ fontSize: 12, color: 'var(--text-3)' }}>오늘의 상위 아이디어</div>
             <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--text-1)', marginTop: 8 }}>{topIdeas[0]?.name || '대기 중'}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 8 }}>{topIdeas[0] ? `${topIdeas[0].signal} · 종합 ${topIdeas[0].score}점` : '추천 후보를 분석 중입니다.'}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 8 }}>{topIdeas[0] ? `${getQuantSignalLabel(topIdeas[0].signal)} · 종합 ${topIdeas[0].score}점` : '추천 후보를 분석 중입니다.'}</div>
           </div>
           <div style={cardStyle('rgba(196,68,45,.16)', 'rgba(255,255,255,.72)')}>
             <div style={{ fontSize: 12, color: 'var(--text-3)' }}>관심종목 경고</div>
@@ -190,7 +191,7 @@ export function AssistantTab() {
               <div key={item.code} style={{ padding: '14px 16px', borderRadius: 18, background: 'var(--bg-soft)', border: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
                   <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text-1)' }}>{item.name}</div>
-                  <div style={{ fontSize: 12, color: item.signal === '회피' ? 'var(--down)' : item.signal === '강력추천' ? 'var(--up)' : 'var(--accent)' }}>{item.signal}</div>
+                  <div style={{ fontSize: 12, color: item.signal === '회피' ? 'var(--down)' : item.signal === '강력추천' ? 'var(--up)' : 'var(--accent)' }}>{getQuantSignalLabel(item.signal)}</div>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-4)', marginTop: 5 }}>{item.code} • {item.market}</div>
                 <div style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.7, marginTop: 8 }}>{item.evidence[0] || item.reasons[0]}</div>

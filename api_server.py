@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from analyzer.kospi_backtest import BacktestConfig, run_kospi_backtest
+from analyzer.technical_snapshot import fetch_technical_snapshot
 from analyzer.today_picks_engine import build_watchlist_actions
 from broker.execution_engine import EngineConfig, PaperExecutionEngine
 from broker.kis_client import KISAPIError, KISClient, KISConfigError
@@ -884,13 +885,15 @@ def _collect_pick_candidates(market: str, cfg: dict) -> list[dict]:
         item_market = _infer_pick_market(code, str(item.get("market") or ""))
         signal = str(item.get("signal") or "")
         score = float(item.get("score") or 0.0)
-        if item_market != market or signal not in allowed_signals or score < min_score:
+        gate_status = str(item.get("gate_status") or "passed")
+        if item_market != market or signal not in allowed_signals or score < min_score or gate_status == "blocked":
             continue
         candidates.append({
             "code": code,
             "name": item.get("name") or code,
             "score": score,
             "signal": signal,
+            "gate_status": gate_status,
             "theme_score": _to_float(item.get("theme_score"), default=0.0),
             "matched_themes": item.get("matched_themes", []),
             "keyword_gate_passed": bool(item.get("keyword_gate_passed", False)),
@@ -911,13 +914,15 @@ def _collect_pick_candidates(market: str, cfg: dict) -> list[dict]:
         inferred_market = _infer_recommendation_market(ticker)
         signal = str(item.get("signal") or "")
         score = float(item.get("score") or 0.0)
-        if inferred_market != market or signal not in allowed_signals or score < min_score:
+        gate_status = str(item.get("gate_status") or "passed")
+        if inferred_market != market or signal not in allowed_signals or score < min_score or gate_status == "blocked":
             continue
         candidate = {
             "code": code,
             "name": item.get("name") or code,
             "score": score,
             "signal": signal,
+            "gate_status": gate_status,
             "theme_score": _to_float(item.get("theme_score"), default=0.0),
             "matched_themes": item.get("matched_themes", []),
             "keyword_gate_passed": bool(item.get("keyword_gate_passed", False)),
@@ -1316,6 +1321,8 @@ def _fetch_kis_history(code: str, market: str, lookback_days: int = 180) -> dict
             continue
         history.append({
             "close": float(close),
+            "high": float(item.get("high")) if item.get("high") is not None else float(close),
+            "low": float(item.get("low")) if item.get("low") is not None else float(close),
             "volume": float(volume) if volume is not None else None,
         })
     return {"history": history} if history else None
@@ -1343,72 +1350,7 @@ def _compute_technical_snapshot(
     range_: str = "6mo",
     interval: str = "1d",
 ) -> dict | None:
-    normalized_market = _normalize_quote_market(code, market)
-    if normalized_market not in {"KOSPI", "NASDAQ"}:
-        return None
-    if interval != "1d":
-        return None
-    history_market = market.strip().upper()
-    if history_market not in {"KOSPI", "NASDAQ", "NYSE", "AMEX"}:
-        history_market = normalized_market
-
-    cache_key = f"{market}:{code}:{range_}:{interval}"
-    cached = _technical_cache.get(cache_key)
-    now = time.time()
-    if cached and now - cached["ts"] < TECHNICAL_CACHE_TTL:
-        return cached["data"]
-
-    chart = _fetch_kis_history(code, history_market, lookback_days=_lookback_days(range_))
-    if not chart:
-        return None
-
-    history = chart["history"]
-    closes = [item["close"] for item in history if item.get("close") is not None]
-    volumes = [item["volume"] for item in history if item.get("volume") is not None]
-    if len(closes) < 35:
-        return None
-
-    current_price = closes[-1]
-    prev_close = closes[-2] if len(closes) >= 2 else closes[-1]
-    change_pct = ((current_price - prev_close) / prev_close * 100) if prev_close else None
-    sma20 = sum(closes[-20:]) / 20 if len(closes) >= 20 else None
-    sma60 = sum(closes[-60:]) / 60 if len(closes) >= 60 else None
-    volume = volumes[-1] if volumes else None
-    volume_avg20 = (sum(volumes[-20:]) / 20) if len(volumes) >= 20 else None
-    volume_ratio = (volume / volume_avg20) if volume and volume_avg20 else None
-
-    ema12 = _ema(closes, 12)
-    ema26 = _ema(closes, 26)
-    macd_series = [fast - slow for fast, slow in zip(ema12[-len(ema26):], ema26)]
-    signal_series = _ema(macd_series, 9)
-    macd = macd_series[-1] if macd_series else None
-    macd_signal = signal_series[-1] if signal_series else None
-    macd_hist = (macd - macd_signal) if macd is not None and macd_signal is not None else None
-    rsi14 = _rsi(closes, 14)
-
-    trend = "neutral"
-    if sma20 is not None and sma60 is not None:
-        if current_price > sma20 and sma20 > sma60:
-            trend = "bullish"
-        elif current_price < sma20 and sma20 < sma60:
-            trend = "bearish"
-
-    snapshot = {
-        "current_price": round(current_price, 2),
-        "change_pct": round(change_pct, 2) if change_pct is not None else None,
-        "sma20": round(sma20, 2) if sma20 is not None else None,
-        "sma60": round(sma60, 2) if sma60 is not None else None,
-        "volume": int(volume) if volume is not None else None,
-        "volume_avg20": int(volume_avg20) if volume_avg20 is not None else None,
-        "volume_ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
-        "rsi14": round(rsi14, 1) if rsi14 is not None else None,
-        "macd": round(macd, 3) if macd is not None else None,
-        "macd_signal": round(macd_signal, 3) if macd_signal is not None else None,
-        "macd_hist": round(macd_hist, 3) if macd_hist is not None else None,
-        "trend": trend,
-    }
-    _technical_cache[cache_key] = {"ts": now, "data": snapshot}
-    return snapshot
+    return fetch_technical_snapshot(code, market, range_=range_, interval=interval)
 
 
 def _strip_html(text: str) -> str:
@@ -1780,6 +1722,11 @@ def _fallback_today_picks(date: str | None = None) -> dict:
             "theme_hit_count": 0,
             "matched_themes": [],
             "keyword_gate_passed": False,
+            "horizon": item.get("horizon", "short_term"),
+            "gate_status": item.get("gate_status", "passed"),
+            "gate_reasons": item.get("gate_reasons", []),
+            "playbook_alignment": item.get("playbook_alignment"),
+            "ai_thesis": item.get("ai_thesis"),
         }
         all_candidates.append(candidate)
 
@@ -1794,6 +1741,7 @@ def _fallback_today_picks(date: str | None = None) -> dict:
         "date": recommendations.get("date"),
         "market_tone": "fallback",
         "strategy": "recommendation-fallback",
+        "playbook_ref": recommendations.get("playbook_ref"),
         "picks": picks,
         "auto_candidates": auto_candidates,
         "auto_candidate_limit": 100,

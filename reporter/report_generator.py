@@ -106,7 +106,7 @@ def save_report(content: str, date: str, fmt: str = "html") -> str:
     return str(path)
 
 
-def save_analysis_cache(analysis: str, date: str) -> None:
+def save_analysis_cache(analysis: str, date: str, playbook: dict | None = None) -> None:
     """AI 분석 결과를 JSON으로 캐시 저장 (api_server.py가 읽어 /api/analysis 제공)"""
     summary_lines = _extract_summary(analysis)
 
@@ -127,11 +127,24 @@ def save_analysis_cache(analysis: str, date: str) -> None:
         "summary_lines": summary_lines,
         "analysis_html": analysis_html,
         "date":          date,
+        "analysis_playbook": playbook or {},
     }
     cache_path = REPORT_OUTPUT_DIR / f"{date}_analysis.json"
     cache_path.write_text(json.dumps(
         payload, ensure_ascii=False, indent=2), encoding="utf-8")
     logger.info(f"분석 캐시 저장: {cache_path}")
+
+
+def save_analysis_playbook_cache(payload: dict, date: str) -> None:
+    """구조화된 분석 플레이북을 JSON으로 저장한다."""
+    out = dict(payload)
+    out["date"] = date
+    cache_path = REPORT_OUTPUT_DIR / f"{date}_analysis_playbook.json"
+    cache_path.write_text(
+        json.dumps(out, ensure_ascii=False, indent=2, default=_json_default),
+        encoding="utf-8",
+    )
+    logger.info(f"분석 플레이북 캐시 저장: {cache_path}")
 
 
 def save_recommendations_cache(payload: dict, date: str) -> None:

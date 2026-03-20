@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { AnalysisData } from '../types';
 import { renderTextWithLinks } from '../utils/linkify';
+import { getBiasLabel } from '../utils/quantLabels';
 
 interface Props {
   data: AnalysisData;
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export function AnalysisTab({ data, status, onRefresh }: Props) {
+  const playbook = data.analysis_playbook;
   const report = useMemo(() => {
     if (!data.analysis_html || typeof window === 'undefined') {
       return { html: data.analysis_html || '', outline: [] as Array<{ id: string; title: string; level: 2 | 3 }>, readMinutes: 0 };
@@ -296,6 +298,18 @@ export function AnalysisTab({ data, status, onRefresh }: Props) {
                 ))}
               </nav>
             </div>
+
+            {playbook && (
+              <div className="report-rail-card">
+                <div className="report-rail-label">Playbook</div>
+                <div className="report-rail-title">단타 / 중기 프레임</div>
+                <div className="report-note-line">시장 국면 {playbook.market_regime || 'neutral'}</div>
+                <div className="report-note-line">단타 바이어스 {getBiasLabel(playbook.short_term_bias)}</div>
+                <div className="report-note-line">중기 바이어스 {getBiasLabel(playbook.mid_term_bias)}</div>
+                <div className="report-note-line">유리 섹터 {(playbook.favored_sectors || []).slice(0, 2).join(', ') || '없음'}</div>
+                <div className="report-note-line">핵심 리스크 {(playbook.key_risks || [])[0] || '없음'}</div>
+              </div>
+            )}
 
             <div className="report-rail-card subtle">
               <div className="report-rail-label">Reading Notes</div>
