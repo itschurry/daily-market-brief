@@ -3,6 +3,7 @@
 report/market_brief.db 파일 하나로 기존 report/*.json 파일들을 대체한다.
 연결은 함수 호출마다 열고 닫아 라즈베리파이 메모리를 절약한다.
 """
+import dataclasses
 import datetime
 import json
 import sqlite3
@@ -72,4 +73,6 @@ def list_report_dates(key: str) -> list[str]:
 def _json_default(value: Any) -> Any:
     if isinstance(value, datetime.datetime):
         return value.isoformat()
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
     raise TypeError(f"JSON serializable unsupported type: {type(value)!r}")
