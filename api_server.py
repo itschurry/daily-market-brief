@@ -14,9 +14,8 @@ import asyncio
 import threading
 import time
 import urllib.request
-import urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, urlparse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -24,6 +23,7 @@ from analyzer.kospi_backtest import BacktestConfig, run_kospi_backtest
 from analyzer.today_picks_engine import build_watchlist_actions
 from broker.execution_engine import EngineConfig, PaperExecutionEngine
 from broker.kis_client import KISAPIError, KISClient, KISConfigError
+from config.company_catalog import get_company_catalog
 from config.settings import LOGS_DIR
 from reporter.telegram_sender import send_text_message
 
@@ -69,9 +69,13 @@ _HEADERS = {
     "Referer": "https://finance.naver.com/",
 }
 
-_ALLOWED_SEARCH_MARKETS = {"KOSPI", "NASDAQ", "코스피", "나스닥 증권거래소"}
+_ALLOWED_SEARCH_MARKETS = {"KOSPI", "NASDAQ"}
+_SUPPORTED_AUTO_TRADE_MARKETS = {"KOSPI", "NASDAQ"}
+_DEFAULT_THEME_FOCUS = ["automotive", "robotics", "physical_ai"]
+_ALLOWED_THEME_FOCUS = set(_DEFAULT_THEME_FOCUS)
 TECHNICAL_CACHE_TTL = 900
 INVESTOR_FLOW_CACHE_TTL = 900
+_SEARCH_CATALOG = [entry for entry in get_company_catalog(scope="core") if entry.market in _ALLOWED_SEARCH_MARKETS]
 
 
 def _now_iso() -> str:
@@ -282,21 +286,80 @@ def _usd_krw():
     return None
 
 
-def _is_allowed_market_label(*labels: str) -> bool:
-    normalized_labels = {label.strip().upper() for label in labels if label and label.strip()}
-    return any(label in _ALLOWED_SEARCH_MARKETS for label in normalized_labels)
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", "", value).strip().lower()
 
 
-def _resolve_chart_symbol(code: str, market: str) -> str | None:
-    normalized_code = code.strip().upper()
-    normalized_market = market.strip().upper()
-    if not normalized_code:
-        return None
-    if normalized_market == "KOSPI" and normalized_code.isdigit():
-        return f"{normalized_code}.KS"
-    if normalized_market == "NASDAQ":
-        return normalized_code
-    return None
+def _normalize_quote_market(code: str, market: str) -> str:
+    normalized_market = (market or "").strip().upper()
+    if normalized_market in {"KOSPI", "KOSDAQ", "KRX", "KR", "KOREA"}:
+        return "KOSPI"
+    if normalized_market in {"NASDAQ", "NAS", "US", "USA", "NYSE", "AMEX"}:
+        return "NASDAQ"
+    normalized_code = code.split(".")[0].strip().upper()
+    if normalized_code.isdigit():
+        return "KOSPI"
+    if normalized_code:
+        return "NASDAQ"
+    return ""
+
+
+def _search_catalog(query: str, limit: int = 10) -> list[dict]:
+    query_raw = query.strip()
+    if not query_raw:
+        return []
+
+    query_upper = query_raw.upper()
+    query_normalized = _normalize_text(query_raw)
+    scored: dict[tuple[str, str], tuple[int, dict]] = {}
+
+    for entry in _SEARCH_CATALOG:
+        code = entry.code.strip().upper()
+        market = entry.market.strip().upper()
+        name = entry.name.strip()
+        if not code or market not in _ALLOWED_SEARCH_MARKETS:
+            continue
+
+        terms = [name, code, *entry.aliases]
+        score = 0
+        if query_upper == code:
+            score = 400
+        elif query_upper and code.startswith(query_upper):
+            score = 350
+
+        for term in terms:
+            normalized_term = _normalize_text(str(term))
+            if not normalized_term:
+                continue
+            if normalized_term == query_normalized:
+                score = max(score, 320)
+            elif normalized_term.startswith(query_normalized):
+                score = max(score, 260)
+            elif query_normalized in normalized_term:
+                score = max(score, 220)
+
+        if score <= 0:
+            continue
+
+        key = (market, code)
+        candidate = {"name": name, "code": code, "market": market}
+        existing = scored.get(key)
+        if not existing or score > existing[0]:
+            scored[key] = (score, candidate)
+
+    if re.fullmatch(r"\d{4,6}", query_upper):
+        code = query_upper.zfill(6)
+        key = ("KOSPI", code)
+        scored.setdefault(key, (280, {"name": code, "code": code, "market": "KOSPI"}))
+    elif re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}", query_upper):
+        key = ("NASDAQ", query_upper)
+        scored.setdefault(key, (280, {"name": query_upper, "code": query_upper, "market": "NASDAQ"}))
+
+    ordered = sorted(
+        scored.values(),
+        key=lambda item: (-item[0], item[1]["market"], item[1]["code"]),
+    )
+    return [item[1] for item in ordered[:max(1, limit)]]
 
 
 def _get_kis_client() -> KISClient | None:
@@ -331,48 +394,36 @@ def _paper_fx_rate() -> float | None:
 
 def _resolve_stock_quote(code: str, market: str = "") -> dict:
     normalized_code = code.split(".")[0].strip().upper()
-    normalized_market = market.strip().upper()
+    normalized_market = _normalize_quote_market(normalized_code, market)
+    overseas_exchange = (market or "").strip().upper()
+    if overseas_exchange not in {"NASDAQ", "NYSE", "AMEX"}:
+        overseas_exchange = "NASDAQ"
     if not normalized_code:
         raise ValueError("code required")
+    if normalized_market not in {"KOSPI", "NASDAQ"}:
+        raise ValueError("market must be KOSPI or NASDAQ")
 
-    if normalized_market == "NASDAQ":
-        technicals = _compute_technical_snapshot(normalized_code, normalized_market)
-        if technicals:
-            return {
-                "code": normalized_code,
-                "name": normalized_code,
-                "price": technicals.get("current_price"),
-                "change_pct": technicals.get("change_pct"),
-                "market": normalized_market,
-            }
+    client = _get_kis_client()
+    if client is None:
+        raise KISConfigError("KIS가 설정되지 않았거나 비활성 상태입니다.")
 
     if normalized_market == "KOSPI":
-        client = _get_kis_client()
-        if client is not None:
-            kis_price = client.get_domestic_price(normalized_code)
-            return {
-                "code": normalized_code,
-                "name": kis_price.get("name") or normalized_code,
-                "price": kis_price.get("price"),
-                "change_pct": kis_price.get("change_pct"),
-                "market": "KOSPI",
-            }
+        kis_price = client.get_domestic_price(normalized_code)
+        return {
+            "code": normalized_code,
+            "name": kis_price.get("name") or normalized_code,
+            "price": kis_price.get("price"),
+            "change_pct": kis_price.get("change_pct"),
+            "market": "KOSPI",
+        }
 
-    url = f"https://m.stock.naver.com/api/stock/{normalized_code}/basic"
-    d = json.loads(_get(url))
-    price = float(d["closePrice"].replace(",", ""))
-    pct = float(d["fluctuationsRatio"])
-    direction = d.get("compareToPreviousPrice", {}).get("code", "3")
-    if direction == "5":
-        pct = -abs(pct)
-    elif direction == "2":
-        pct = abs(pct)
+    kis_price = client.get_overseas_price(normalized_code, exchange=overseas_exchange)
     return {
         "code": normalized_code,
-        "name": d.get("stockName", normalized_code),
-        "price": price,
-        "change_pct": round(pct, 2),
-        "market": d.get("stockExchangeType", {}).get("name", normalized_market),
+        "name": kis_price.get("name") or normalized_code,
+        "price": kis_price.get("price"),
+        "change_pct": kis_price.get("change_pct"),
+        "market": overseas_exchange,
     }
 
 
@@ -398,6 +449,8 @@ def _normalize_pick_market(market: str) -> str:
     normalized = (market or "").strip().upper()
     if normalized in {"NASDAQ", "NAS", "US", "USA"}:
         return "NASDAQ"
+    if normalized in {"KOSDAQ", "KQ", "KOSDAQ GLOBAL", "코스닥"}:
+        return "KOSDAQ"
     if normalized in {"KOSPI", "KRX", "KR", "KOREA"}:
         return "KOSPI"
     return normalized
@@ -405,7 +458,7 @@ def _normalize_pick_market(market: str) -> str:
 
 def _infer_pick_market(code: str, market: str) -> str:
     normalized_market = _normalize_pick_market(market)
-    if normalized_market in {"KOSPI", "NASDAQ"}:
+    if normalized_market in {"KOSPI", "KOSDAQ", "NASDAQ"}:
         return normalized_market
     normalized_code = (code or "").strip().upper()
     if not normalized_code:
@@ -417,72 +470,119 @@ def _infer_pick_market(code: str, market: str) -> str:
     return normalized_market
 
 
+def _infer_recommendation_market(ticker: str) -> str:
+    normalized_ticker = (ticker or "").strip().upper()
+    if not normalized_ticker:
+        return ""
+    if normalized_ticker.endswith(".KS"):
+        return "KOSPI"
+    if normalized_ticker.endswith(".KQ"):
+        return "KOSDAQ"
+    code = normalized_ticker.split(".")[0]
+    if code.isdigit():
+        return "KOSPI"
+    return "NASDAQ"
+
+
+def _normalize_theme_focus(raw) -> list[str]:
+    if not isinstance(raw, list):
+        return list(_DEFAULT_THEME_FOCUS)
+    normalized: list[str] = []
+    for item in raw:
+        key = str(item or "").strip().lower()
+        if key in _ALLOWED_THEME_FOCUS and key not in normalized:
+            normalized.append(key)
+    return normalized or list(_DEFAULT_THEME_FOCUS)
+
+
+def _parse_theme_gate_config(raw: dict | None = None) -> dict:
+    payload = raw or {}
+    try:
+        min_score = float(payload.get("theme_min_score", 2.5))
+    except (TypeError, ValueError):
+        min_score = 2.5
+    try:
+        min_news = int(payload.get("theme_min_news", 1))
+    except (TypeError, ValueError):
+        min_news = 1
+    return {
+        "theme_gate_enabled": bool(payload.get("theme_gate_enabled", True)),
+        "theme_min_score": max(0.0, min(30.0, min_score)),
+        "theme_min_news": max(0, min(10, min_news)),
+        # theme_focus는 고정 운영값으로 유지한다.
+        "theme_focus": list(_DEFAULT_THEME_FOCUS),
+    }
+
+
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _pick_theme_news_count(item: dict) -> int:
+    if not isinstance(item, dict):
+        return 0
+    explicit = item.get("theme_news_count")
+    if isinstance(explicit, (int, float)):
+        return int(explicit)
+    related_news = item.get("related_news", [])
+    if not isinstance(related_news, list):
+        return 0
+    count = 0
+    for news in related_news:
+        if not isinstance(news, dict):
+            continue
+        score = _to_float(news.get("theme_score"), default=0.0)
+        themes = news.get("matched_themes", [])
+        if score > 0 or (isinstance(themes, list) and len(themes) > 0):
+            count += 1
+    return count
+
+
+def _passes_theme_gate(item: dict, cfg: dict) -> bool:
+    if not bool(cfg.get("theme_gate_enabled", True)):
+        return True
+    matched_themes = {
+        str(theme).strip().lower()
+        for theme in (item.get("matched_themes", []) or [])
+        if str(theme).strip()
+    }
+    focus = set(cfg.get("theme_focus") or _DEFAULT_THEME_FOCUS)
+    if focus and not (focus & matched_themes):
+        return False
+    if _to_float(item.get("theme_score"), default=0.0) < float(cfg.get("theme_min_score", 2.5)):
+        return False
+    if _pick_theme_news_count(item) < int(cfg.get("theme_min_news", 1)):
+        return False
+    return bool(item.get("keyword_gate_passed", False))
+
+
 def _auto_invest_picks(
     *,
     market: str = "NASDAQ",
     max_positions: int = 5,
     min_score: float = 60.0,
     include_neutral: bool = False,
+    theme_gate_enabled: bool = True,
+    theme_min_score: float = 2.5,
+    theme_min_news: int = 1,
+    theme_focus: list[str] | None = None,
 ) -> dict:
     target_market = _normalize_pick_market(market)
-    if target_market not in {"NASDAQ", "KOSPI"}:
+    if target_market not in _SUPPORTED_AUTO_TRADE_MARKETS:
         return {"ok": False, "error": "market은 NASDAQ/KOSPI만 허용합니다."}
 
-    picks_payload = _get_today_picks()
-    picks = picks_payload.get("picks", [])
-    if not isinstance(picks, list):
-        picks = []
-
-    allowed_signals = {"추천", "buy", "BUY"}
-    if include_neutral:
-        allowed_signals.update({"중립", "hold", "HOLD"})
-
-    candidates: list[dict] = []
-    for item in picks:
-        if not isinstance(item, dict):
-            continue
-        code = str(item.get("code") or "").strip().upper()
-        signal = str(item.get("signal") or "")
-        score = float(item.get("score") or 0.0)
-        item_market = _infer_pick_market(code, str(item.get("market") or ""))
-        if not code:
-            continue
-        if item_market != target_market:
-            continue
-        if signal not in allowed_signals:
-            continue
-        if score < min_score:
-            continue
-        candidates.append(item)
-
-    # today-picks에 후보가 없으면 recommendations에서 동일 조건으로 보강한다.
-    if not candidates:
-        recommendations = _get_recommendations().get("recommendations", [])
-        for item in recommendations:
-            if not isinstance(item, dict):
-                continue
-            ticker = str(item.get("ticker") or "").strip().upper()
-            code = ticker.split(".")[0]
-            if not code:
-                continue
-            inferred_market = "KOSPI" if ticker.endswith(".KS") else "NASDAQ"
-            if inferred_market != target_market:
-                continue
-            signal = str(item.get("signal") or "")
-            score = float(item.get("score") or 0.0)
-            if signal not in allowed_signals:
-                continue
-            if score < min_score:
-                continue
-            candidates.append({
-                "name": item.get("name") or code,
-                "code": code,
-                "market": inferred_market,
-                "signal": signal,
-                "score": score,
-            })
-
-    candidates.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    filter_cfg = {
+        "min_score": min_score,
+        "include_neutral": include_neutral,
+        "theme_gate_enabled": theme_gate_enabled,
+        "theme_min_score": theme_min_score,
+        "theme_min_news": theme_min_news,
+        "theme_focus": theme_focus or list(_DEFAULT_THEME_FOCUS),
+    }
+    candidates = _collect_pick_candidates(target_market, filter_cfg)
     engine = _get_paper_engine()
     account = engine.get_account(refresh_quotes=True)
     held_codes = {
@@ -571,7 +671,7 @@ def _auto_invest_picks(
     final_account = engine.get_account(refresh_quotes=True)
     message = ""
     if not candidates:
-        message = "조건에 맞는 자동매수 후보가 없습니다. market/signal/min_score 조건을 낮춰 보세요."
+        message = "조건에 맞는 자동매수 후보가 없습니다. (테마 우선 후 일반 보충 모드) min_score 또는 데이터 갱신 상태를 확인해 보세요."
     return {
         "ok": True,
         "strategy": "today-picks-auto-buy-v1",
@@ -582,6 +682,10 @@ def _auto_invest_picks(
         "skipped": skipped,
         "candidate_count": len(candidates),
         "include_neutral": include_neutral,
+        "theme_gate_enabled": bool(theme_gate_enabled),
+        "theme_min_score": float(theme_min_score),
+        "theme_min_news": int(theme_min_news),
+        "theme_focus": _normalize_theme_focus(theme_focus),
         "message": message,
         "account": final_account,
     }
@@ -591,20 +695,25 @@ def _default_auto_trader_config() -> dict:
     return {
         "interval_seconds": 300,
         "markets": ["KOSPI", "NASDAQ"],
-        "max_positions_per_market": 5,
-        "min_score": 60.0,
-        "include_neutral": False,
-        "daily_buy_limit": 20,
-        "daily_sell_limit": 20,
-        "max_orders_per_symbol_per_day": 1,
-        "rsi_min": 45.0,
-        "rsi_max": 68.0,
-        "volume_ratio_min": 1.2,
-        "signal_interval": "5m",
+        "max_positions_per_market": 12,
+        "min_score": 52.0,
+        "include_neutral": True,
+        "theme_gate_enabled": True,
+        "theme_min_score": 2.5,
+        "theme_min_news": 1,
+        "theme_focus": list(_DEFAULT_THEME_FOCUS),
+        "daily_buy_limit": 100,
+        "daily_sell_limit": 100,
+        "max_orders_per_symbol_per_day": 3,
+        "rsi_min": 35.0,
+        "rsi_max": 78.0,
+        "volume_ratio_min": 0.8,
+        "min_entry_signals": 3,
+        "signal_interval": "15m",
         "signal_range": "5d",
-        "stop_loss_pct": 7.0,
-        "take_profit_pct": 18.0,
-        "max_holding_days": 30,
+        "stop_loss_pct": 5.0,
+        "take_profit_pct": 10.0,
+        "max_holding_days": 10,
     }
 
 
@@ -629,6 +738,8 @@ def _position_holding_days(position: dict) -> int:
 
 
 def _should_enter_by_indicators(technicals: dict, cfg: dict) -> bool:
+    if not isinstance(technicals, dict):
+        return False
     close = technicals.get("current_price")
     sma20 = technicals.get("sma20")
     sma60 = technicals.get("sma60")
@@ -637,21 +748,41 @@ def _should_enter_by_indicators(technicals: dict, cfg: dict) -> bool:
     macd = technicals.get("macd")
     macd_signal = technicals.get("macd_signal")
     macd_hist = technicals.get("macd_hist")
-    return bool(
-        close is not None
-        and sma20 is not None
-        and sma60 is not None
-        and volume_ratio is not None
-        and rsi14 is not None
-        and macd is not None
-        and macd_signal is not None
-        and macd_hist is not None
-        and close > sma20 > sma60
-        and volume_ratio >= float(cfg.get("volume_ratio_min", 1.2))
-        and float(cfg.get("rsi_min", 45.0)) <= rsi14 <= float(cfg.get("rsi_max", 68.0))
-        and macd_hist > 0
-        and macd > macd_signal
-    )
+    try:
+        required = int(cfg.get("min_entry_signals", 3))
+    except (TypeError, ValueError):
+        required = 3
+    required = max(1, min(6, required))
+
+    passed = 0
+    available = 0
+
+    if close is not None and sma20 is not None:
+        available += 1
+        if close > sma20:
+            passed += 1
+    if sma20 is not None and sma60 is not None:
+        available += 1
+        if sma20 > sma60:
+            passed += 1
+    if volume_ratio is not None:
+        available += 1
+        if volume_ratio >= float(cfg.get("volume_ratio_min", 0.8)):
+            passed += 1
+    if rsi14 is not None:
+        available += 1
+        if float(cfg.get("rsi_min", 35.0)) <= rsi14 <= float(cfg.get("rsi_max", 78.0)):
+            passed += 1
+    if macd_hist is not None:
+        available += 1
+        if macd_hist > 0:
+            passed += 1
+    if macd is not None and macd_signal is not None:
+        available += 1
+        if macd > macd_signal:
+            passed += 1
+
+    return available >= required and passed >= required
 
 
 def _should_exit_by_indicators(position: dict, technicals: dict, cfg: dict) -> str | None:
@@ -683,15 +814,35 @@ def _should_exit_by_indicators(position: dict, technicals: dict, cfg: dict) -> s
     return None
 
 
-def _collect_pick_candidates(market: str, min_score: float, include_neutral: bool) -> list[dict]:
+def _collect_pick_candidates(market: str, cfg: dict) -> list[dict]:
+    min_score = float(cfg.get("min_score", 60.0))
+    include_neutral = bool(cfg.get("include_neutral", False))
+    theme_cfg = _parse_theme_gate_config(cfg)
     allowed_signals = {"추천", "buy", "BUY"}
     if include_neutral:
         allowed_signals.update({"중립", "hold", "HOLD"})
 
     picks_payload = _get_today_picks()
-    picks = picks_payload.get("picks", [])
+    picks = picks_payload.get("auto_candidates")
+    if not isinstance(picks, list) or not picks:
+        picks = picks_payload.get("picks", [])
     if not isinstance(picks, list):
         picks = []
+
+    def _sort_candidates(items: list[dict]) -> list[dict]:
+        return sorted(items, key=lambda item: item["score"], reverse=True)
+
+    def _prioritize_theme(items: list[dict]) -> list[dict]:
+        if not bool(theme_cfg.get("theme_gate_enabled", True)):
+            return _sort_candidates(items)
+        themed: list[dict] = []
+        general: list[dict] = []
+        for item in items:
+            if _passes_theme_gate(item, theme_cfg):
+                themed.append(item)
+            else:
+                general.append(item)
+        return _sort_candidates(themed) + _sort_candidates(general)
 
     candidates: list[dict] = []
     for item in picks:
@@ -710,9 +861,14 @@ def _collect_pick_candidates(market: str, min_score: float, include_neutral: boo
             "name": item.get("name") or code,
             "score": score,
             "signal": signal,
+            "theme_score": _to_float(item.get("theme_score"), default=0.0),
+            "matched_themes": item.get("matched_themes", []),
+            "keyword_gate_passed": bool(item.get("keyword_gate_passed", False)),
+            "related_news": item.get("related_news", []),
+            "theme_news_count": _pick_theme_news_count(item),
         })
     if candidates:
-        return sorted(candidates, key=lambda item: item["score"], reverse=True)
+        return _prioritize_theme(candidates)
 
     recommendations = _get_recommendations().get("recommendations", [])
     for item in recommendations:
@@ -722,18 +878,24 @@ def _collect_pick_candidates(market: str, min_score: float, include_neutral: boo
         code = ticker.split(".")[0]
         if not code:
             continue
-        inferred_market = "KOSPI" if ticker.endswith(".KS") else "NASDAQ"
+        inferred_market = _infer_recommendation_market(ticker)
         signal = str(item.get("signal") or "")
         score = float(item.get("score") or 0.0)
         if inferred_market != market or signal not in allowed_signals or score < min_score:
             continue
-        candidates.append({
+        candidate = {
             "code": code,
             "name": item.get("name") or code,
             "score": score,
             "signal": signal,
-        })
-    return sorted(candidates, key=lambda item: item["score"], reverse=True)
+            "theme_score": _to_float(item.get("theme_score"), default=0.0),
+            "matched_themes": item.get("matched_themes", []),
+            "keyword_gate_passed": bool(item.get("keyword_gate_passed", False)),
+            "related_news": item.get("related_news", []),
+            "theme_news_count": _pick_theme_news_count(item),
+        }
+        candidates.append(candidate)
+    return _prioritize_theme(candidates)
 
 
 def _run_auto_trader_cycle(cfg: dict) -> dict:
@@ -747,6 +909,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
     daily_buy_limit = int(cfg.get("daily_buy_limit", 20))
     daily_sell_limit = int(cfg.get("daily_sell_limit", 20))
     max_orders_per_symbol = int(cfg.get("max_orders_per_symbol_per_day", 1))
+    signal_range = str(cfg.get("signal_range") or "6mo")
+    signal_interval = str(cfg.get("signal_interval") or "1d")
 
     def _count_orders(market: str, side: str) -> int:
         return sum(
@@ -765,10 +929,44 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
             and _order_day(str(order.get("ts") or "")) == today
         )
 
+    def _load_technicals(code: str, market: str) -> tuple[dict | None, str | None]:
+        primary_error: str | None = None
+        try:
+            technicals = _compute_technical_snapshot(
+                code,
+                market,
+                range_=signal_range,
+                interval=signal_interval,
+            )
+        except Exception as exc:
+            technicals = None
+            primary_error = str(exc)
+        if technicals:
+            return technicals, None
+
+        # intraday 설정값은 현재 일봉 계산기로 직접 지원하지 않으므로 안전하게 일봉으로 폴백한다.
+        if signal_interval != "1d" or signal_range != "6mo":
+            try:
+                fallback = _compute_technical_snapshot(
+                    code,
+                    market,
+                    range_="6mo",
+                    interval="1d",
+                )
+            except Exception as exc:
+                if primary_error:
+                    return None, f"{primary_error}; fallback={exc}"
+                return None, str(exc)
+            if fallback:
+                return fallback, None
+
+        return None, primary_error
+
     executed_buys: list[dict] = []
     executed_sells: list[dict] = []
     skipped: list[dict] = []
     markets = [m for m in cfg.get("markets", ["KOSPI", "NASDAQ"]) if m in {"KOSPI", "NASDAQ"}]
+    candidate_counts_by_market: dict[str, int] = {market: 0 for market in markets}
 
     for market in markets:
         account = engine.get_account(refresh_quotes=True)
@@ -784,12 +982,10 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
             code = str(position.get("code") or "").upper()
             if _symbol_order_count(market, "sell", code) >= max_orders_per_symbol:
                 continue
-            technicals = _compute_technical_snapshot(
-                code,
-                market,
-                range_=str(cfg.get("signal_range") or "5d"),
-                interval=str(cfg.get("signal_interval") or "5m"),
-            )
+            technicals, tech_error = _load_technicals(code, market)
+            if tech_error:
+                skipped.append({"code": code, "market": market, "reason": f"technicals_error: {tech_error}"})
+                continue
             if not technicals:
                 continue
             reason = _should_exit_by_indicators(position, technicals, cfg)
@@ -820,13 +1016,14 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
         max_positions = int(cfg.get("max_positions_per_market", 5))
         slots = max(0, max_positions - market_position_count)
         if slots <= 0:
+            candidate_counts_by_market[market] = 0
             continue
         buy_count = _count_orders(market, "buy")
         candidates = _collect_pick_candidates(
             market=market,
-            min_score=float(cfg.get("min_score", 60.0)),
-            include_neutral=bool(cfg.get("include_neutral", False)),
+            cfg=cfg,
         )
+        candidate_counts_by_market[market] = len(candidates)
         for candidate in candidates:
             if slots <= 0 or buy_count >= daily_buy_limit:
                 break
@@ -835,12 +1032,10 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 continue
             if _symbol_order_count(market, "buy", code) >= max_orders_per_symbol:
                 continue
-            technicals = _compute_technical_snapshot(
-                code,
-                market,
-                range_=str(cfg.get("signal_range") or "5d"),
-                interval=str(cfg.get("signal_interval") or "5m"),
-            )
+            technicals, tech_error = _load_technicals(code, market)
+            if tech_error:
+                skipped.append({"code": code, "market": market, "reason": f"technicals_error: {tech_error}"})
+                continue
             if not technicals:
                 skipped.append({"code": code, "market": market, "reason": "technicals_unavailable"})
                 continue
@@ -881,6 +1076,29 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
             else:
                 skipped.append({"code": code, "market": market, "reason": result.get("error") or "buy_failed"})
 
+    skip_reason_counts: dict[str, int] = {}
+    for item in skipped:
+        reason = str(item.get("reason") or "unknown")
+        skip_reason_counts[reason] = skip_reason_counts.get(reason, 0) + 1
+
+    market_stats: dict[str, dict] = {}
+    for market in markets:
+        market_stats[market] = {
+            "candidate_count": int(candidate_counts_by_market.get(market, 0)),
+            "executed_buy_count": sum(
+                1 for item in executed_buys
+                if str(item.get("market") or "").upper() == market
+            ),
+            "executed_sell_count": sum(
+                1 for item in executed_sells
+                if str(item.get("market") or "").upper() == market
+            ),
+            "skipped_count": sum(
+                1 for item in skipped
+                if str(item.get("market") or "").upper() == market
+            ),
+        }
+
     final_account = engine.get_account(refresh_quotes=True)
     return {
         "ok": True,
@@ -889,6 +1107,9 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
         "executed_sell_count": len(executed_sells),
         "executed_buys": executed_buys,
         "executed_sells": executed_sells,
+        "candidate_counts_by_market": candidate_counts_by_market,
+        "skip_reason_counts": skip_reason_counts,
+        "market_stats": market_stats,
         "skipped": skipped[:50],
         "account": final_account,
     }
@@ -930,23 +1151,23 @@ def _start_auto_trader(config: dict) -> dict:
         merged["daily_sell_limit"] = max(1, min(200, int(merged.get("daily_sell_limit") or 20)))
         merged["max_orders_per_symbol_per_day"] = max(1, min(10, int(merged.get("max_orders_per_symbol_per_day") or 1)))
         merged["min_score"] = max(0.0, min(100.0, float(merged.get("min_score") or 60.0)))
+        merged.update(_parse_theme_gate_config(merged))
         merged["rsi_min"] = max(10.0, min(90.0, float(merged.get("rsi_min") or 45.0)))
         merged["rsi_max"] = max(10.0, min(90.0, float(merged.get("rsi_max") or 68.0)))
         if merged["rsi_min"] > merged["rsi_max"]:
             merged["rsi_min"], merged["rsi_max"] = merged["rsi_max"], merged["rsi_min"]
         merged["volume_ratio_min"] = max(0.5, min(5.0, float(merged.get("volume_ratio_min") or 1.2)))
+        merged["min_entry_signals"] = max(1, min(6, int(merged.get("min_entry_signals") or 3)))
         merged["stop_loss_pct"] = max(1.0, min(50.0, float(merged.get("stop_loss_pct") or 7.0)))
         merged["take_profit_pct"] = max(1.0, min(100.0, float(merged.get("take_profit_pct") or 18.0)))
         merged["max_holding_days"] = max(1, min(180, int(merged.get("max_holding_days") or 30)))
-        signal_interval = str(merged.get("signal_interval") or "5m").strip().lower()
+        signal_interval = str(merged.get("signal_interval") or "1d").strip().lower()
         if signal_interval not in {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1d"}:
-            signal_interval = "5m"
+            signal_interval = "15m"
         merged["signal_interval"] = signal_interval
-        signal_range = str(merged.get("signal_range") or "5d").strip().lower()
+        signal_range = str(merged.get("signal_range") or "6mo").strip().lower()
         if signal_range not in {"1d", "5d", "1mo", "3mo", "6mo", "1y"}:
             signal_range = "5d"
-        if signal_interval == "1d" and signal_range in {"1d", "5d"}:
-            signal_range = "6mo"
         merged["signal_range"] = signal_range
         markets = merged.get("markets") or ["KOSPI", "NASDAQ"]
         if not isinstance(markets, list):
@@ -1022,43 +1243,30 @@ def _rsi(values: list[float], period: int = 14) -> float | None:
     return 100 - (100 / (1 + rs))
 
 
-def _fetch_chart_history(symbol: str, range_: str = "6mo", interval: str = "1d") -> dict | None:
-    payload = json.loads(_get(
-        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range={range_}&interval={interval}",
-        timeout=5,
-    ))
-    result = payload.get("chart", {}).get("result", [])
-    if not result:
-        return None
-    chart = result[0]
-    quote = chart.get("indicators", {}).get("quote", [{}])[0]
-    closes = quote.get("close", [])
-    volumes = quote.get("volume", [])
-
-    history = []
-    for close, volume in zip(closes, volumes):
-        if close is None:
-            continue
-        history.append({
-            "close": float(close),
-            "volume": float(volume) if volume is not None else None,
-        })
-    return {"history": history}
-
-
-def _fetch_kis_domestic_history(code: str, lookback_days: int = 180) -> dict | None:
+def _fetch_kis_history(code: str, market: str, lookback_days: int = 180) -> dict | None:
     client = _get_kis_client()
     if client is None:
         return None
 
+    normalized_market = market.strip().upper()
     end_date = datetime.datetime.now(_KST).strftime("%Y%m%d")
     start_date = (datetime.datetime.now(_KST) - datetime.timedelta(days=lookback_days)).strftime("%Y%m%d")
     try:
-        rows = client.get_domestic_daily_history(
-            code,
-            start_date=start_date,
-            end_date=end_date,
-        )
+        if normalized_market == "KOSPI":
+            rows = client.get_domestic_daily_history(
+                code,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        elif normalized_market in {"NASDAQ", "NYSE", "AMEX"}:
+            rows = client.get_overseas_daily_history(
+                code,
+                exchange=normalized_market,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        else:
+            return None
     except Exception:
         return None
 
@@ -1075,6 +1283,21 @@ def _fetch_kis_domestic_history(code: str, lookback_days: int = 180) -> dict | N
     return {"history": history} if history else None
 
 
+def _lookback_days(range_: str) -> int:
+    normalized = (range_ or "").strip().lower()
+    if normalized == "1d":
+        return 5
+    if normalized == "5d":
+        return 10
+    if normalized == "1mo":
+        return 45
+    if normalized == "3mo":
+        return 120
+    if normalized == "1y":
+        return 420
+    return 180
+
+
 def _compute_technical_snapshot(
     code: str,
     market: str,
@@ -1082,9 +1305,14 @@ def _compute_technical_snapshot(
     range_: str = "6mo",
     interval: str = "1d",
 ) -> dict | None:
-    symbol = _resolve_chart_symbol(code, market)
-    if not symbol:
+    normalized_market = _normalize_quote_market(code, market)
+    if normalized_market not in {"KOSPI", "NASDAQ"}:
         return None
+    if interval != "1d":
+        return None
+    history_market = market.strip().upper()
+    if history_market not in {"KOSPI", "NASDAQ", "NYSE", "AMEX"}:
+        history_market = normalized_market
 
     cache_key = f"{market}:{code}:{range_}:{interval}"
     cached = _technical_cache.get(cache_key)
@@ -1092,10 +1320,7 @@ def _compute_technical_snapshot(
     if cached and now - cached["ts"] < TECHNICAL_CACHE_TTL:
         return cached["data"]
 
-    normalized_market = market.strip().upper()
-    chart = _fetch_kis_domestic_history(code) if normalized_market == "KOSPI" and interval == "1d" else None
-    if not chart:
-        chart = _fetch_chart_history(symbol, range_=range_, interval=interval)
+    chart = _fetch_kis_history(code, history_market, lookback_days=_lookback_days(range_))
     if not chart:
         return None
 
@@ -1456,7 +1681,7 @@ def _get_today_picks() -> dict:
         fallback = _fallback_today_picks()
         if fallback.get("picks"):
             return fallback
-        return {"error": "오늘의 추천 결과가 없습니다.", "picks": []}
+        return {"error": "오늘의 추천 결과가 없습니다.", "picks": [], "auto_candidates": []}
 
     latest = files[0]
     mtime = os.path.getmtime(latest)
@@ -1495,15 +1720,16 @@ def _get_ai_signals() -> dict:
 def _fallback_today_picks(date: str | None = None) -> dict:
     recommendations = _get_recommendations() if not date else _load_report_json("recommendations", date, latest=False)
     if not recommendations.get("recommendations"):
-        return {"picks": []}
+        return {"picks": [], "auto_candidates": []}
 
-    picks = []
-    for item in recommendations.get("recommendations", [])[:8]:
+    all_candidates = []
+    for item in recommendations.get("recommendations", []):
         ticker = (item.get("ticker") or "").split(".")[0]
-        picks.append({
+        market = "KOSPI" if item.get("ticker", "").endswith(".KS") else "KOSDAQ" if item.get("ticker", "").endswith(".KQ") else "NASDAQ" if ticker.isalpha() else ""
+        candidate = {
             "name": item.get("name"),
             "code": ticker,
-            "market": "KOSPI" if item.get("ticker", "").endswith(".KS") else "KOSDAQ" if item.get("ticker", "").endswith(".KQ") else "",
+            "market": market,
             "sector": item.get("sector"),
             "signal": item.get("signal"),
             "score": item.get("score"),
@@ -1512,7 +1738,18 @@ def _fallback_today_picks(date: str | None = None) -> dict:
             "risks": item.get("risks", []),
             "catalysts": item.get("reasons", [])[:2],
             "related_news": [],
-        })
+            "theme_score": 0.0,
+            "theme_hit_count": 0,
+            "matched_themes": [],
+            "keyword_gate_passed": False,
+        }
+        all_candidates.append(candidate)
+
+    picks = all_candidates[:8]
+    auto_candidates = [
+        item for item in all_candidates
+        if str(item.get("market") or "").upper() in _SUPPORTED_AUTO_TRADE_MARKETS
+    ][:100]
 
     return {
         "generated_at": recommendations.get("generated_at"),
@@ -1520,6 +1757,16 @@ def _fallback_today_picks(date: str | None = None) -> dict:
         "market_tone": "fallback",
         "strategy": "recommendation-fallback",
         "picks": picks,
+        "auto_candidates": auto_candidates,
+        "auto_candidate_limit": 100,
+        "auto_candidate_total": len(auto_candidates),
+        "auto_candidate_market_counts": {
+            market: sum(
+                1 for item in auto_candidates
+                if str(item.get("market") or "").upper() == market
+            )
+            for market in sorted(_SUPPORTED_AUTO_TRADE_MARKETS)
+        },
     }
 
 
@@ -1848,19 +2095,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json_resp(200, {"results": []})
             return
         try:
-            url = f"https://ac.stock.naver.com/ac?q={quote(query)}&target=stock,index"
-            raw = json.loads(_get(url))
-            items = raw.get("items", [])
-            results = [
-                {
-                    "name":   r["name"],
-                    "code":   r["code"],
-                    "market": r.get("typeCode", r.get("typeName", "")),
-                }
-                for r in items[:10]
-                if _is_allowed_market_label(r.get("typeCode", ""), r.get("typeName", ""))
-            ]
-            self._json_resp(200, {"results": results})
+            self._json_resp(200, {"results": _search_catalog(query, limit=10)})
         except Exception as e:
             self._json_resp(500, {"error": str(e)})
 
@@ -1933,17 +2168,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self._json_resp(200, _resolve_stock_quote(code, market))
         except Exception as e:
-            technicals = _compute_technical_snapshot(code, market) if market else None
-            if technicals:
-                self._json_resp(200, {
-                    "code": code,
-                    "name": code,
-                    "price": technicals.get("current_price"),
-                    "change_pct": technicals.get("change_pct"),
-                    "market": market,
-                })
-                return
-            self._json_resp(500, {"error": str(e)})
+            self._json_resp(500, {"error": str(e), "source": "KIS"})
 
     def _read_json_body(self) -> dict:
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -2024,6 +2249,7 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 min_score = 60.0
             include_neutral = bool(payload.get("include_neutral") is True)
+            theme_cfg = _parse_theme_gate_config(payload)
             max_positions = max(1, min(20, max_positions))
             min_score = max(0.0, min(100.0, min_score))
             result = _auto_invest_picks(
@@ -2031,6 +2257,10 @@ class Handler(BaseHTTPRequestHandler):
                 max_positions=max_positions,
                 min_score=min_score,
                 include_neutral=include_neutral,
+                theme_gate_enabled=theme_cfg["theme_gate_enabled"],
+                theme_min_score=theme_cfg["theme_min_score"],
+                theme_min_news=theme_cfg["theme_min_news"],
+                theme_focus=theme_cfg["theme_focus"],
             )
             status = 200 if result.get("ok") else 400
             self._json_resp(status, result)

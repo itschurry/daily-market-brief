@@ -22,11 +22,26 @@ _THEME_BOOSTS = {
     "에너지": ("유가", "원유", "에너지"),
     "항공": ("여행", "노선", "관광"),
     "반도체": ("반도체", "hbm", "ai", "칩", "엔비디아"),
+    "자동차": ("자동차", "전기차", "자율주행", "sdv", "robotaxi"),
+    "로봇": ("로봇", "협동로봇", "휴머노이드", "humanoid", "physical ai"),
+    "플랫폼": ("ai 에이전트", "멀티모달", "physical ai"),
     "가전": ("가전", "냉장고", "가정용 ai", "비스포크"),
 }
 _DISCLOSURE_POSITIVE = {"earnings", "contract", "shareholder_return", "investment"}
 _DISCLOSURE_NEGATIVE = {"capital", "governance", "restructuring"}
 _EVENT_RISK_CATEGORIES = {"inflation", "policy", "labor"}
+_THEME_FOCUS_DEFAULT = {"automotive", "robotics", "physical_ai"}
+_THEME_GATE_MIN_SCORE = 2.5
+_THEME_GATE_MIN_NEWS = 1
+_AUTO_TRADE_MARKETS = {"KOSPI", "NASDAQ"}
+_SECTOR_THEME_HINTS = {
+    "자동차": {"automotive", "physical_ai"},
+    "자동차부품": {"automotive", "robotics", "physical_ai"},
+    "로봇": {"robotics", "physical_ai"},
+    "반도체": {"physical_ai", "robotics"},
+    "플랫폼": {"physical_ai"},
+    "가전": {"robotics", "physical_ai"},
+}
 
 
 def _normalize(value: str) -> str:
@@ -102,6 +117,8 @@ def _serialize_article(article: NewsArticle) -> dict:
         "source": article.source,
         "published": article.published.astimezone(_KST).strftime("%Y-%m-%d %H:%M KST"),
         "summary": article.summary[:240],
+        "theme_score": round(float(getattr(article, "theme_score", 0.0) or 0.0), 2),
+        "matched_themes": list(getattr(article, "matched_themes", []) or []),
     }
 
 
@@ -248,6 +265,62 @@ def _has_notable_flow(flow) -> bool:
     return same_direction_5d or same_direction_1d
 
 
+def _article_theme_metrics(articles: list[NewsArticle]) -> tuple[float, int, list[str], int]:
+    total_score = 0.0
+    total_hits = 0
+    themed_articles = 0
+    theme_set: set[str] = set()
+
+    for article in articles:
+        score = _safe_float(getattr(article, "theme_score", 0.0)) or 0.0
+        raw_hits = getattr(article, "theme_hit_count", 0) or 0
+        hit_count = int(raw_hits) if isinstance(raw_hits, (int, float)) else 0
+        matched_themes = [
+            str(theme).strip().lower()
+            for theme in (getattr(article, "matched_themes", []) or [])
+            if str(theme).strip()
+        ]
+        if score > 0 or hit_count > 0 or matched_themes:
+            themed_articles += 1
+        total_score += score
+        total_hits += max(hit_count, len(matched_themes))
+        theme_set.update(matched_themes)
+
+    return round(total_score, 2), total_hits, sorted(theme_set), themed_articles
+
+
+def _theme_alignment_bonus(sector: str, matched_themes: set[str]) -> float:
+    hints = _SECTOR_THEME_HINTS.get(sector, set())
+    if not hints or not matched_themes:
+        return 0.0
+    overlap = len(hints & matched_themes)
+    if overlap <= 0:
+        return 0.0
+    return 1.5 + overlap * 1.5
+
+
+def _keyword_gate_passed(
+    sector: str,
+    theme_score: float,
+    themed_article_count: int,
+    matched_themes: list[str],
+    *,
+    min_score: float = _THEME_GATE_MIN_SCORE,
+    min_news: int = _THEME_GATE_MIN_NEWS,
+) -> bool:
+    if themed_article_count < min_news:
+        return False
+    if theme_score < min_score:
+        return False
+    matched = set(matched_themes)
+    if not (_THEME_FOCUS_DEFAULT & matched):
+        return False
+    sector_hints = _SECTOR_THEME_HINTS.get(sector, set())
+    if sector_hints and not (sector_hints & matched):
+        return False
+    return True
+
+
 def _build_pick(
     entry: CompanyCatalogEntry,
     articles: list[NewsArticle],
@@ -262,8 +335,12 @@ def _build_pick(
     negative = sum(_score_keywords(text, _NEGATIVE_KEYWORDS) for text in texts)
     theme_boost = sum(1 for keyword in _THEME_BOOSTS.get(entry.sector, ()) if keyword.lower() in joined)
     recent_bonus = sum(1 for article in articles if (datetime.now(_KST) - article.published.astimezone(_KST)).total_seconds() <= 12 * 3600)
+    article_theme_score, article_theme_hits, matched_themes, themed_article_count = _article_theme_metrics(articles)
+    theme_alignment_bonus = _theme_alignment_bonus(entry.sector, set(matched_themes))
+    aggressive_theme_boost = min(article_theme_score, 16.0) * 1.6 + theme_alignment_bonus
 
     score = 48 + len(articles) * 8 + positive * 3 - negative * 4 + theme_boost * 2 + recent_bonus * 2
+    score += aggressive_theme_boost
     score += _market_adjustment(data, entry.sector)
     disclosure_score, disclosure_reasons, disclosure_risks, related_disclosures = _disclosure_adjustment(disclosures)
     flow_score, flow_reasons, flow_risks, serialized_flow = _flow_adjustment(investor_flow)
@@ -276,6 +353,11 @@ def _build_pick(
         f"관련 뉴스 {len(articles)}건",
         f"긍정 신호 {positive}건 / 부정 신호 {negative}건",
     ]
+    if article_theme_score > 0:
+        themes_text = ", ".join(matched_themes[:3]) if matched_themes else "theme"
+        reasons.append(
+            f"테마 점수 {article_theme_score:.1f}점 ({themes_text}, 키워드 {article_theme_hits}건)"
+        )
     if theme_boost:
         reasons.append(f"{entry.sector} 테마 키워드 반영")
 
@@ -298,6 +380,12 @@ def _build_pick(
     catalysts = [article.title for article in articles[:2]]
     catalysts.extend(item.title for item in related_disclosures[:1])
     catalysts.extend(event.name for event in upcoming_events[:1])
+    keyword_gate_passed = _keyword_gate_passed(
+        entry.sector,
+        article_theme_score,
+        themed_article_count,
+        matched_themes,
+    )
 
     return {
         "name": entry.name,
@@ -324,10 +412,19 @@ def _build_pick(
         "upcoming_events": [_serialize_calendar_event(event) for event in upcoming_events],
         "investor_flow": serialized_flow,
         "ai_signal": serialized_ai_signal,
+        "theme_score": round(article_theme_score, 2),
+        "theme_hit_count": article_theme_hits,
+        "matched_themes": matched_themes,
+        "keyword_gate_passed": keyword_gate_passed,
     }
 
 
-def generate_today_picks(data: DailyData, limit: int = 8, ai_signals: dict | None = None) -> dict:
+def generate_today_picks(
+    data: DailyData,
+    limit: int = 8,
+    auto_candidate_limit: int = 100,
+    ai_signals: dict | None = None,
+) -> dict:
     """뉴스에서 기업을 매칭해 오늘의 추천 종목을 생성한다."""
     now = datetime.now(_KST)
     matched: list[dict] = []
@@ -347,7 +444,7 @@ def generate_today_picks(data: DailyData, limit: int = 8, ai_signals: dict | Non
         ai_signal_map[item.get("code") or item.get("name")] = item
         ai_signal_map[item.get("name")] = item
 
-    for entry in get_company_catalog():
+    for entry in get_company_catalog(scope="live"):
         aliases = tuple(_normalize(alias) for alias in entry.aliases)
         related = []
         entry_disclosures = disclosure_map.get(entry.code, []) or disclosure_map.get(entry.name, [])
@@ -374,6 +471,20 @@ def generate_today_picks(data: DailyData, limit: int = 8, ai_signals: dict | Non
 
     matched.sort(key=lambda item: (item["score"], item["confidence"]), reverse=True)
 
+    auto_limit = max(1, int(auto_candidate_limit))
+    auto_candidates = [
+        item
+        for item in matched
+        if str(item.get("market") or "").upper() in _AUTO_TRADE_MARKETS
+    ][:auto_limit]
+    auto_candidate_market_counts = {
+        market: sum(
+            1 for item in auto_candidates
+            if str(item.get("market") or "").upper() == market
+        )
+        for market in sorted(_AUTO_TRADE_MARKETS)
+    }
+
     market_tone = "중립"
     if data.market.kospi_change_pct is not None and data.market.kospi_change_pct >= 1:
         market_tone = "국내 위험선호"
@@ -386,6 +497,10 @@ def generate_today_picks(data: DailyData, limit: int = 8, ai_signals: dict | Non
         "market_tone": market_tone,
         "strategy": "news-driven-picks-v1+openai-aux" if (ai_signals or {}).get("signals") else "news-driven-picks-v1",
         "picks": matched[:limit],
+        "auto_candidates": auto_candidates,
+        "auto_candidate_limit": auto_limit,
+        "auto_candidate_total": len(auto_candidates),
+        "auto_candidate_market_counts": auto_candidate_market_counts,
     }
 
 

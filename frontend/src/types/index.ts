@@ -161,6 +161,8 @@ export interface RelatedNewsItem {
   source: string;
   published: string;
   summary?: string;
+  theme_score?: number;
+  matched_themes?: string[];
 }
 
 export interface TodayPickItem {
@@ -175,6 +177,10 @@ export interface TodayPickItem {
   risks: string[];
   catalysts: string[];
   related_news: RelatedNewsItem[];
+  theme_score?: number;
+  theme_hit_count?: number;
+  matched_themes?: string[];
+  keyword_gate_passed?: boolean;
 }
 
 export interface TodayPicksData {
@@ -183,6 +189,10 @@ export interface TodayPicksData {
   market_tone?: string;
   strategy?: string;
   picks: TodayPickItem[];
+  auto_candidates?: TodayPickItem[];
+  auto_candidate_limit?: number;
+  auto_candidate_total?: number;
+  auto_candidate_market_counts?: Record<string, number>;
   error?: string;
 }
 
@@ -394,12 +404,17 @@ export interface PaperEngineConfig {
   max_positions_per_market: number;
   min_score: number;
   include_neutral: boolean;
+  theme_gate_enabled: boolean;
+  theme_min_score: number;
+  theme_min_news: number;
+  theme_focus: Array<'automotive' | 'robotics' | 'physical_ai'>;
   daily_buy_limit: number;
   daily_sell_limit: number;
   max_orders_per_symbol_per_day: number;
   rsi_min: number;
   rsi_max: number;
   volume_ratio_min: number;
+  min_entry_signals?: number;
   signal_interval: '1m' | '2m' | '5m' | '15m' | '30m' | '60m' | '90m' | '1d';
   signal_range: '1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y';
   stop_loss_pct: number;
@@ -415,6 +430,14 @@ export interface PaperEngineState {
   last_summary?: {
     executed_buy_count?: number;
     executed_sell_count?: number;
+    candidate_counts_by_market?: Record<string, number>;
+    skip_reason_counts?: Record<string, number>;
+    market_stats?: Record<string, {
+      candidate_count?: number;
+      executed_buy_count?: number;
+      executed_sell_count?: number;
+      skipped_count?: number;
+    }>;
   };
   config?: Partial<PaperEngineConfig>;
 }
