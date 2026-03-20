@@ -110,10 +110,35 @@ NEWS_CONFIG = {
             "real-world ai", "온디바이스 ai", "vision-language-action", "vla",
             "자율주행 ai", "로봇 ai",
         ],
+        "energy_lng": [
+            "lng", "액화천연가스", "천연가스", "natural gas", "cheniere", "eni",
+            "lng 운반선", "가스전", "가스 수출", "lpg", "pipeline",
+        ],
+        "defense": [
+            "방산", "국방", "탄약", "미사일", "군수", "방위산업", "defense",
+            "aerospace", "military", "drone", "드론",
+        ],
+        "semiconductor_ai": [
+            "ai 반도체", "hbm", "gpu", "npu", "asic", "파운드리",
+            "advanced packaging", "co-packaged optics", "chiplet",
+        ],
+        "biotech": [
+            "바이오", "신약", "임상", "임상3상", "fda", "허가", "pharma",
+            "biotech", "항암", "비만치료제",
+        ],
+        "finance_macro": [
+            "금리", "인하", "인상", "yield", "credit spread", "유동성",
+            "순이자마진", "npl", "자사주", "배당", "insurance",
+        ],
     },
     "theme_weights": {
         "automotive": 1.2,
         "robotics": 1.4,
         "physical_ai": 1.6,
+        "energy_lng": 1.3,
+        "defense": 1.2,
+        "semiconductor_ai": 1.4,
+        "biotech": 1.15,
+        "finance_macro": 1.1,
     },
 }
