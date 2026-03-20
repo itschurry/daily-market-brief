@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { usePaperTrading } from '../hooks/usePaperTrading';
-import type { PaperEngineConfig, PaperSkippedItem } from '../types';
+import type { PaperEngineConfig, PaperSkippedItem, PaperStrategyProfile } from '../types';
 
 const SKIP_REASON_LABELS: Record<string, string> = {
   entry_signal_not_matched: '매수신호 미충족',
@@ -71,6 +71,65 @@ function normalizeMarkets(markets?: Array<'KOSPI' | 'NASDAQ'>) {
 }
 
 const DEFAULT_THEME_FOCUS: Array<'automotive' | 'robotics' | 'physical_ai'> = ['automotive', 'robotics', 'physical_ai'];
+const DEFAULT_PAPER_STRATEGY_PROFILES: Record<'KOSPI' | 'NASDAQ', PaperStrategyProfile> = {
+  KOSPI: {
+    market: 'KOSPI',
+    max_positions: 5,
+    max_holding_days: 15,
+    rsi_min: 45,
+    rsi_max: 62,
+    volume_ratio_min: 1.0,
+    stop_loss_pct: 5,
+    take_profit_pct: null,
+    signal_interval: '1d',
+    signal_range: '6mo',
+  },
+  NASDAQ: {
+    market: 'NASDAQ',
+    max_positions: 5,
+    max_holding_days: 30,
+    rsi_min: 45,
+    rsi_max: 68,
+    volume_ratio_min: 1.2,
+    stop_loss_pct: null,
+    take_profit_pct: null,
+    signal_interval: '1d',
+    signal_range: '6mo',
+  },
+};
+
+function cloneDefaultProfiles(): Record<'KOSPI' | 'NASDAQ', PaperStrategyProfile> {
+  return {
+    KOSPI: { ...DEFAULT_PAPER_STRATEGY_PROFILES.KOSPI },
+    NASDAQ: { ...DEFAULT_PAPER_STRATEGY_PROFILES.NASDAQ },
+  };
+}
+
+function normalizeProfileMap(
+  profiles?: Partial<Record<'KOSPI' | 'NASDAQ', Partial<PaperStrategyProfile>>>,
+): Record<'KOSPI' | 'NASDAQ', PaperStrategyProfile> {
+  const base = cloneDefaultProfiles();
+  (['KOSPI', 'NASDAQ'] as const).forEach((market) => {
+    const raw = profiles?.[market];
+    if (!raw) return;
+    base[market] = {
+      ...base[market],
+      ...raw,
+      market,
+      signal_interval: (raw.signal_interval || base[market].signal_interval) as PaperStrategyProfile['signal_interval'],
+      signal_range: (raw.signal_range || base[market].signal_range) as PaperStrategyProfile['signal_range'],
+    };
+  });
+  return base;
+}
+
+function profileSignature(profiles?: Partial<Record<'KOSPI' | 'NASDAQ', Partial<PaperStrategyProfile>>>) {
+  const normalized = normalizeProfileMap(profiles);
+  return JSON.stringify({
+    KOSPI: normalized.KOSPI,
+    NASDAQ: normalized.NASDAQ,
+  });
+}
 
 export function PaperTradingTab() {
   const { account, engineState, status, lastError, refresh, reset, autoInvest, refreshEngineStatus, startEngine, stopEngine } = usePaperTrading();
@@ -78,23 +137,17 @@ export function PaperTradingTab() {
   const [seedUsd, setSeedUsd] = useState('10,000');
   const [paperDays, setPaperDays] = useState('7');
   const [autoMarket] = useState<'KOSPI' | 'NASDAQ'>('NASDAQ');
-  const [autoMaxPositions, setAutoMaxPositions] = useState('12');
+  const [autoMaxPositions, setAutoMaxPositions] = useState('5');
   const [autoMinScore, setAutoMinScore] = useState('50');
   const [autoIncludeNeutral, setAutoIncludeNeutral] = useState(true);
   const [engineIntervalSeconds, setEngineIntervalSeconds] = useState('300');
-  const [engineSignalInterval, setEngineSignalInterval] = useState<'1m' | '2m' | '5m' | '15m' | '30m' | '60m' | '90m' | '1d'>('15m');
-  const [engineSignalRange, setEngineSignalRange] = useState<'1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y'>('5d');
   const [engineRunKOSPI, setEngineRunKOSPI] = useState(true);
   const [engineRunNASDAQ, setEngineRunNASDAQ] = useState(true);
   const [engineDailyBuyLimit, setEngineDailyBuyLimit] = useState('100');
   const [engineDailySellLimit, setEngineDailySellLimit] = useState('100');
   const [engineMaxOrdersPerSymbol, setEngineMaxOrdersPerSymbol] = useState('3');
-  const [engineRsiMin, setEngineRsiMin] = useState('35');
-  const [engineRsiMax, setEngineRsiMax] = useState('78');
-  const [engineVolumeRatioMin, setEngineVolumeRatioMin] = useState('0.8');
-  const [engineStopLossPct, setEngineStopLossPct] = useState('5');
-  const [engineTakeProfitPct, setEngineTakeProfitPct] = useState('10');
-  const [engineMaxHoldingDays, setEngineMaxHoldingDays] = useState('10');
+  const [strategyEditMarket, setStrategyEditMarket] = useState<'KOSPI' | 'NASDAQ'>('KOSPI');
+  const [engineMarketProfiles, setEngineMarketProfiles] = useState<Record<'KOSPI' | 'NASDAQ', PaperStrategyProfile>>(cloneDefaultProfiles);
   const [themeGateEnabled, setThemeGateEnabled] = useState(true);
   const [themeMinScore, setThemeMinScore] = useState('2.5');
   const [themeMinNews, setThemeMinNews] = useState('1');
@@ -113,6 +166,19 @@ export function PaperTradingTab() {
     return ((account.equity_krw / initialTotalKrw) - 1) * 100;
   }, [account.equity_krw, initialTotalKrw]);
 
+  const activeProfile = engineMarketProfiles[strategyEditMarket];
+
+  function patchActiveProfile(patch: Partial<PaperStrategyProfile>) {
+    setEngineMarketProfiles((prev) => ({
+      ...prev,
+      [strategyEditMarket]: {
+        ...prev[strategyEditMarket],
+        ...patch,
+        market: strategyEditMarket,
+      },
+    }));
+  }
+
   const buildEngineConfig = (): PaperEngineConfig | null => {
     const markets: Array<'KOSPI' | 'NASDAQ'> = [];
     if (engineRunKOSPI) markets.push('KOSPI');
@@ -123,12 +189,38 @@ export function PaperTradingTab() {
     const parsedThemeScore = Number(themeMinScore);
     const parsedThemeNews = Number(themeMinNews);
     const parsedThemeBonus = Number(themePriorityBonus);
+    const maxPositionsPerMarket = Math.max(1, Math.min(20, Math.floor(Number(autoMaxPositions) || 5)));
+    const normalizedProfiles: Record<'KOSPI' | 'NASDAQ', PaperStrategyProfile> = {
+      KOSPI: {
+        ...engineMarketProfiles.KOSPI,
+        market: 'KOSPI',
+        max_positions: maxPositionsPerMarket,
+        max_holding_days: Math.max(1, Math.min(180, Math.floor(Number(engineMarketProfiles.KOSPI.max_holding_days) || 15))),
+        rsi_min: Math.max(10, Math.min(90, Number(engineMarketProfiles.KOSPI.rsi_min) || 45)),
+        rsi_max: Math.max(10, Math.min(90, Number(engineMarketProfiles.KOSPI.rsi_max) || 62)),
+        volume_ratio_min: Math.max(0.5, Math.min(5, Number(engineMarketProfiles.KOSPI.volume_ratio_min) || 1)),
+        stop_loss_pct: engineMarketProfiles.KOSPI.stop_loss_pct === null ? null : Math.max(1, Math.min(50, Number(engineMarketProfiles.KOSPI.stop_loss_pct) || 5)),
+        take_profit_pct: engineMarketProfiles.KOSPI.take_profit_pct === null ? null : Math.max(1, Math.min(100, Number(engineMarketProfiles.KOSPI.take_profit_pct) || 18)),
+      },
+      NASDAQ: {
+        ...engineMarketProfiles.NASDAQ,
+        market: 'NASDAQ',
+        max_positions: maxPositionsPerMarket,
+        max_holding_days: Math.max(1, Math.min(180, Math.floor(Number(engineMarketProfiles.NASDAQ.max_holding_days) || 30))),
+        rsi_min: Math.max(10, Math.min(90, Number(engineMarketProfiles.NASDAQ.rsi_min) || 45)),
+        rsi_max: Math.max(10, Math.min(90, Number(engineMarketProfiles.NASDAQ.rsi_max) || 68)),
+        volume_ratio_min: Math.max(0.5, Math.min(5, Number(engineMarketProfiles.NASDAQ.volume_ratio_min) || 1.2)),
+        stop_loss_pct: engineMarketProfiles.NASDAQ.stop_loss_pct === null ? null : Math.max(1, Math.min(50, Number(engineMarketProfiles.NASDAQ.stop_loss_pct) || 5)),
+        take_profit_pct: engineMarketProfiles.NASDAQ.take_profit_pct === null ? null : Math.max(1, Math.min(100, Number(engineMarketProfiles.NASDAQ.take_profit_pct) || 18)),
+      },
+    };
+    const primaryProfile = normalizedProfiles[strategyEditMarket];
     return {
       interval_seconds: Math.max(30, Math.min(3600, Math.floor(Number(engineIntervalSeconds) || 300))),
-      signal_interval: engineSignalInterval,
-      signal_range: engineSignalRange,
+      signal_interval: primaryProfile.signal_interval,
+      signal_range: primaryProfile.signal_range,
       markets,
-      max_positions_per_market: Math.max(1, Math.min(20, Math.floor(Number(autoMaxPositions) || 5))),
+      max_positions_per_market: maxPositionsPerMarket,
       min_score: Math.max(0, Math.min(100, Number(autoMinScore) || 50)),
       include_neutral: autoIncludeNeutral,
       theme_gate_enabled: themeGateEnabled,
@@ -139,12 +231,13 @@ export function PaperTradingTab() {
       daily_buy_limit: Math.max(1, Math.min(200, Math.floor(Number(engineDailyBuyLimit) || 20))),
       daily_sell_limit: Math.max(1, Math.min(200, Math.floor(Number(engineDailySellLimit) || 20))),
       max_orders_per_symbol_per_day: Math.max(1, Math.min(10, Math.floor(Number(engineMaxOrdersPerSymbol) || 1))),
-      rsi_min: Math.max(10, Math.min(90, Number(engineRsiMin) || 45)),
-      rsi_max: Math.max(10, Math.min(90, Number(engineRsiMax) || 68)),
-      volume_ratio_min: Math.max(0.5, Math.min(5, Number(engineVolumeRatioMin) || 1.2)),
-      stop_loss_pct: Math.max(1, Math.min(50, Number(engineStopLossPct) || 7)),
-      take_profit_pct: Math.max(1, Math.min(100, Number(engineTakeProfitPct) || 18)),
-      max_holding_days: Math.max(1, Math.min(180, Math.floor(Number(engineMaxHoldingDays) || 30))),
+      rsi_min: primaryProfile.rsi_min,
+      rsi_max: primaryProfile.rsi_max,
+      volume_ratio_min: primaryProfile.volume_ratio_min,
+      stop_loss_pct: primaryProfile.stop_loss_pct ?? 0,
+      take_profit_pct: primaryProfile.take_profit_pct ?? 0,
+      max_holding_days: primaryProfile.max_holding_days,
+      market_profiles: normalizedProfiles,
     };
   };
 
@@ -155,17 +248,10 @@ export function PaperTradingTab() {
     engineDailyBuyLimit,
     engineDailySellLimit,
     engineIntervalSeconds,
-    engineMaxHoldingDays,
     engineMaxOrdersPerSymbol,
-    engineRsiMax,
-    engineRsiMin,
     engineRunKOSPI,
     engineRunNASDAQ,
-    engineSignalInterval,
-    engineSignalRange,
-    engineStopLossPct,
-    engineTakeProfitPct,
-    engineVolumeRatioMin,
+    JSON.stringify(engineMarketProfiles),
     themeGateEnabled,
     themeMinNews,
     themePriorityBonus,
@@ -184,8 +270,6 @@ export function PaperTradingTab() {
     if (!engineState.running || !cfg || !applied) return false;
     return (
       cfg.interval_seconds !== applied.interval_seconds ||
-      cfg.signal_interval !== applied.signal_interval ||
-      cfg.signal_range !== applied.signal_range ||
       normalizeMarkets(cfg.markets) !== normalizeMarkets(applied.markets) ||
       cfg.max_positions_per_market !== applied.max_positions_per_market ||
       cfg.min_score !== applied.min_score ||
@@ -197,12 +281,7 @@ export function PaperTradingTab() {
       cfg.daily_buy_limit !== applied.daily_buy_limit ||
       cfg.daily_sell_limit !== applied.daily_sell_limit ||
       cfg.max_orders_per_symbol_per_day !== applied.max_orders_per_symbol_per_day ||
-      cfg.rsi_min !== applied.rsi_min ||
-      cfg.rsi_max !== applied.rsi_max ||
-      cfg.volume_ratio_min !== applied.volume_ratio_min ||
-      cfg.stop_loss_pct !== applied.stop_loss_pct ||
-      cfg.take_profit_pct !== applied.take_profit_pct ||
-      cfg.max_holding_days !== applied.max_holding_days
+      profileSignature(cfg.market_profiles) !== profileSignature(applied.market_profiles)
     );
   }, [desiredEngineConfig, engineState.config, engineState.running]);
 
@@ -217,8 +296,6 @@ export function PaperTradingTab() {
     if (!cfg) return;
 
     if (cfg.interval_seconds !== undefined) setEngineIntervalSeconds(String(cfg.interval_seconds));
-    if (cfg.signal_interval) setEngineSignalInterval(cfg.signal_interval);
-    if (cfg.signal_range) setEngineSignalRange(cfg.signal_range);
     if (cfg.max_positions_per_market !== undefined) setAutoMaxPositions(String(cfg.max_positions_per_market));
     if (cfg.min_score !== undefined) setAutoMinScore(String(cfg.min_score));
     if (cfg.include_neutral !== undefined) setAutoIncludeNeutral(cfg.include_neutral);
@@ -229,12 +306,34 @@ export function PaperTradingTab() {
     if (cfg.daily_buy_limit !== undefined) setEngineDailyBuyLimit(String(cfg.daily_buy_limit));
     if (cfg.daily_sell_limit !== undefined) setEngineDailySellLimit(String(cfg.daily_sell_limit));
     if (cfg.max_orders_per_symbol_per_day !== undefined) setEngineMaxOrdersPerSymbol(String(cfg.max_orders_per_symbol_per_day));
-    if (cfg.rsi_min !== undefined) setEngineRsiMin(String(cfg.rsi_min));
-    if (cfg.rsi_max !== undefined) setEngineRsiMax(String(cfg.rsi_max));
-    if (cfg.volume_ratio_min !== undefined) setEngineVolumeRatioMin(String(cfg.volume_ratio_min));
-    if (cfg.stop_loss_pct !== undefined) setEngineStopLossPct(String(cfg.stop_loss_pct));
-    if (cfg.take_profit_pct !== undefined) setEngineTakeProfitPct(String(cfg.take_profit_pct));
-    if (cfg.max_holding_days !== undefined) setEngineMaxHoldingDays(String(cfg.max_holding_days));
+    if (cfg.market_profiles) {
+      setEngineMarketProfiles(normalizeProfileMap(cfg.market_profiles));
+    } else {
+      setEngineMarketProfiles((prev) => ({
+        KOSPI: {
+          ...prev.KOSPI,
+          signal_interval: (cfg.signal_interval || prev.KOSPI.signal_interval) as PaperStrategyProfile['signal_interval'],
+          signal_range: (cfg.signal_range || prev.KOSPI.signal_range) as PaperStrategyProfile['signal_range'],
+          rsi_min: cfg.rsi_min ?? prev.KOSPI.rsi_min,
+          rsi_max: cfg.rsi_max ?? prev.KOSPI.rsi_max,
+          volume_ratio_min: cfg.volume_ratio_min ?? prev.KOSPI.volume_ratio_min,
+          stop_loss_pct: cfg.stop_loss_pct ?? prev.KOSPI.stop_loss_pct,
+          take_profit_pct: cfg.take_profit_pct ?? prev.KOSPI.take_profit_pct,
+          max_holding_days: cfg.max_holding_days ?? prev.KOSPI.max_holding_days,
+        },
+        NASDAQ: {
+          ...prev.NASDAQ,
+          signal_interval: (cfg.signal_interval || prev.NASDAQ.signal_interval) as PaperStrategyProfile['signal_interval'],
+          signal_range: (cfg.signal_range || prev.NASDAQ.signal_range) as PaperStrategyProfile['signal_range'],
+          rsi_min: cfg.rsi_min ?? prev.NASDAQ.rsi_min,
+          rsi_max: cfg.rsi_max ?? prev.NASDAQ.rsi_max,
+          volume_ratio_min: cfg.volume_ratio_min ?? prev.NASDAQ.volume_ratio_min,
+          stop_loss_pct: cfg.stop_loss_pct ?? prev.NASDAQ.stop_loss_pct,
+          take_profit_pct: cfg.take_profit_pct ?? prev.NASDAQ.take_profit_pct,
+          max_holding_days: cfg.max_holding_days ?? prev.NASDAQ.max_holding_days,
+        },
+      }));
+    }
     if (cfg.markets) {
       setEngineRunKOSPI(cfg.markets.includes('KOSPI'));
       setEngineRunNASDAQ(cfg.markets.includes('NASDAQ'));
@@ -245,21 +344,14 @@ export function PaperTradingTab() {
     engineState.config?.include_neutral,
     engineState.config?.interval_seconds,
     engineState.config?.markets?.join(','),
-    engineState.config?.max_holding_days,
     engineState.config?.max_orders_per_symbol_per_day,
     engineState.config?.max_positions_per_market,
     engineState.config?.min_score,
-    engineState.config?.rsi_max,
-    engineState.config?.rsi_min,
-    engineState.config?.signal_interval,
-    engineState.config?.signal_range,
-    engineState.config?.stop_loss_pct,
-    engineState.config?.take_profit_pct,
     engineState.config?.theme_gate_enabled,
     engineState.config?.theme_min_news,
     engineState.config?.theme_priority_bonus,
     engineState.config?.theme_min_score,
-    engineState.config?.volume_ratio_min,
+    JSON.stringify(engineState.config?.market_profiles || {}),
   ]);
 
   async function handleReset() {
@@ -504,8 +596,15 @@ export function PaperTradingTab() {
             <input className="backtest-input" type="number" min={30} max={3600} value={engineIntervalSeconds} onChange={(event) => setEngineIntervalSeconds(event.target.value)} />
           </label>
           <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>전략 편집 시장</span>
+            <select className="backtest-input" value={strategyEditMarket} onChange={(event) => setStrategyEditMarket(event.target.value as 'KOSPI' | 'NASDAQ')}>
+              <option value="KOSPI">KOSPI</option>
+              <option value="NASDAQ">NASDAQ</option>
+            </select>
+          </label>
+          <label style={{ display: 'grid', gap: 6 }}>
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>지표 봉 간격</span>
-            <select className="backtest-input" value={engineSignalInterval} onChange={(event) => setEngineSignalInterval(event.target.value as '1m' | '2m' | '5m' | '15m' | '30m' | '60m' | '90m' | '1d')}>
+            <select className="backtest-input" value={activeProfile.signal_interval} onChange={(event) => patchActiveProfile({ signal_interval: event.target.value as PaperStrategyProfile['signal_interval'] })}>
               <option value="1m">1m</option>
               <option value="2m">2m</option>
               <option value="5m">5m</option>
@@ -518,7 +617,7 @@ export function PaperTradingTab() {
           </label>
           <label style={{ display: 'grid', gap: 6 }}>
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>지표 조회 범위</span>
-            <select className="backtest-input" value={engineSignalRange} onChange={(event) => setEngineSignalRange(event.target.value as '1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y')}>
+            <select className="backtest-input" value={activeProfile.signal_range} onChange={(event) => patchActiveProfile({ signal_range: event.target.value as PaperStrategyProfile['signal_range'] })}>
               <option value="1d">1d</option>
               <option value="5d">5d</option>
               <option value="1mo">1mo</option>
@@ -530,24 +629,24 @@ export function PaperTradingTab() {
           <label style={{ display: 'grid', gap: 6 }}>
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>RSI 최소/최대</span>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <input className="backtest-input" type="number" min={10} max={90} value={engineRsiMin} onChange={(event) => setEngineRsiMin(event.target.value)} />
-              <input className="backtest-input" type="number" min={10} max={90} value={engineRsiMax} onChange={(event) => setEngineRsiMax(event.target.value)} />
+              <input className="backtest-input" type="number" min={10} max={90} value={activeProfile.rsi_min} onChange={(event) => patchActiveProfile({ rsi_min: Number(event.target.value) })} />
+              <input className="backtest-input" type="number" min={10} max={90} value={activeProfile.rsi_max} onChange={(event) => patchActiveProfile({ rsi_max: Number(event.target.value) })} />
             </div>
           </label>
           <label style={{ display: 'grid', gap: 6 }}>
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>최소 거래량 배수</span>
-            <input className="backtest-input" type="number" min={0.5} max={5} step={0.1} value={engineVolumeRatioMin} onChange={(event) => setEngineVolumeRatioMin(event.target.value)} />
+            <input className="backtest-input" type="number" min={0.5} max={5} step={0.1} value={activeProfile.volume_ratio_min} onChange={(event) => patchActiveProfile({ volume_ratio_min: Number(event.target.value) })} />
           </label>
           <label style={{ display: 'grid', gap: 6 }}>
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>손절/익절(%)</span>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <input className="backtest-input" type="number" min={1} max={50} value={engineStopLossPct} onChange={(event) => setEngineStopLossPct(event.target.value)} />
-              <input className="backtest-input" type="number" min={1} max={100} value={engineTakeProfitPct} onChange={(event) => setEngineTakeProfitPct(event.target.value)} />
+              <input className="backtest-input" type="number" min={1} max={50} value={activeProfile.stop_loss_pct ?? ''} onChange={(event) => patchActiveProfile({ stop_loss_pct: event.target.value === '' ? null : Number(event.target.value) })} />
+              <input className="backtest-input" type="number" min={1} max={100} value={activeProfile.take_profit_pct ?? ''} onChange={(event) => patchActiveProfile({ take_profit_pct: event.target.value === '' ? null : Number(event.target.value) })} />
             </div>
           </label>
           <label style={{ display: 'grid', gap: 6 }}>
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>최대 보유일</span>
-            <input className="backtest-input" type="number" min={1} max={180} value={engineMaxHoldingDays} onChange={(event) => setEngineMaxHoldingDays(event.target.value)} />
+            <input className="backtest-input" type="number" min={1} max={180} value={activeProfile.max_holding_days} onChange={(event) => patchActiveProfile({ max_holding_days: Number(event.target.value) })} />
           </label>
           <label style={{ display: 'grid', gap: 6 }}>
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>일일 매수/매도 제한</span>

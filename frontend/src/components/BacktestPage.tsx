@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { DEFAULT_BACKTEST_QUERY, loadBacktestQuery, saveBacktestQuery, useBacktest } from '../hooks/useBacktest';
+import { defaultBacktestQuery, loadBacktestQuery, saveBacktestQuery, useBacktest } from '../hooks/useBacktest';
 import type { BacktestData, BacktestQuery, BacktestTrade } from '../types';
 
 function formatMoney(value?: number | null, currency: 'KRW' | 'USD' = 'KRW') {
@@ -290,7 +290,7 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
   }
 
   function handleReset() {
-    const resetQuery = { ...DEFAULT_BACKTEST_QUERY };
+    const resetQuery = defaultBacktestQuery(draft.market_scope);
     setDraft(resetQuery);
     run(resetQuery);
   }
@@ -353,8 +353,7 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
                     className={`backtest-pill ${draft.market_scope === option.value ? 'active' : ''}`}
                     onClick={() => {
                       const nextMarket = option.value as BacktestQuery['market_scope'];
-                      const preset = marketCashPreset(nextMarket);
-                      setDraft((prev) => ({ ...prev, market_scope: nextMarket, initial_cash: preset.initialCash }));
+                      setDraft((prev) => ({ ...defaultBacktestQuery(nextMarket), lookback_days: prev.lookback_days }));
                     }}
                   >
                     {option.label}

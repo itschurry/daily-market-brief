@@ -8,8 +8,8 @@ import pytz
 
 from analyzer.technical_snapshot import evaluate_technical_snapshot, fetch_technical_snapshot
 from collectors.models import DailyData
-from config.company_catalog import get_company_catalog
 from config.portfolio import HOLDINGS
+from market_utils import lookup_company_listing, resolve_market
 
 _KST = pytz.timezone("Asia/Seoul")
 _ALLOWED_HORIZONS = {"short_term", "mid_term"}
@@ -119,18 +119,19 @@ def _infer_ticker(code: str, market: str) -> str:
 
 
 def _resolve_catalog_entry(code: str, name: str, market: str) -> dict:
-    catalog = get_company_catalog(scope="live")
     normalized_code = _normalize_code(code)
-    normalized_name = _normalize(name)
-    for entry in catalog:
-        if normalized_code and _normalize_code(entry.code) == normalized_code:
-            return {"name": entry.name, "code": entry.code, "market": entry.market, "sector": entry.sector}
-        if normalized_name and _normalize(entry.name) == normalized_name:
-            return {"name": entry.name, "code": entry.code, "market": entry.market, "sector": entry.sector}
+    listing = lookup_company_listing(code=normalized_code, name=name, scope="core")
+    if listing:
+        return {
+            "name": str(listing.get("name") or name or normalized_code),
+            "code": str(listing.get("code") or normalized_code or code),
+            "market": str(listing.get("market") or market).upper(),
+            "sector": str(listing.get("sector") or "미분류"),
+        }
     return {
-        "name": name,
+        "name": name or normalized_code or code,
         "code": normalized_code or code,
-        "market": (market or ("NASDAQ" if (normalized_code or "").isalpha() else "KOSPI")).upper(),
+        "market": resolve_market(code=normalized_code, name=name, market=market, scope="core"),
         "sector": "미분류",
     }
 

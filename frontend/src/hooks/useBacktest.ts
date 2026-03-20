@@ -1,20 +1,41 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { BacktestData, BacktestQuery } from '../types';
 
-export const DEFAULT_BACKTEST_QUERY: BacktestQuery = {
-  market_scope: 'kospi',
-  lookback_days: 1095,
-  initial_cash: 10_000_000,
-  max_positions: 5,
-  max_holding_days: 30,
-  rsi_min: 45,
-  rsi_max: 68,
-  volume_ratio_min: 1.2,
-  stop_loss_pct: 7,
-  take_profit_pct: 18,
+const BACKTEST_MARKET_PRESETS = {
+  kospi: {
+    initial_cash: 10_000_000,
+    max_positions: 5,
+    max_holding_days: 15,
+    rsi_min: 45,
+    rsi_max: 62,
+    volume_ratio_min: 1.0,
+    stop_loss_pct: 5,
+    take_profit_pct: null,
+  },
+  nasdaq: {
+    initial_cash: 10_000,
+    max_positions: 5,
+    max_holding_days: 30,
+    rsi_min: 45,
+    rsi_max: 68,
+    volume_ratio_min: 1.2,
+    stop_loss_pct: null,
+    take_profit_pct: null,
+  },
 };
 
-const BACKTEST_QUERY_STORAGE_KEY = 'backtest_query_v1';
+export function defaultBacktestQuery(marketScope: BacktestQuery['market_scope'] = 'kospi'): BacktestQuery {
+  const preset = BACKTEST_MARKET_PRESETS[marketScope];
+  return {
+    market_scope: marketScope,
+    lookback_days: 1095,
+    ...preset,
+  };
+}
+
+export const DEFAULT_BACKTEST_QUERY: BacktestQuery = defaultBacktestQuery('kospi');
+
+const BACKTEST_QUERY_STORAGE_KEY = 'backtest_query_v2';
 
 function buildQueryString(query: BacktestQuery) {
   const params = new URLSearchParams();
@@ -46,17 +67,19 @@ function readNullableNumber(value: unknown, fallback: number | null | undefined)
 
 function normalizeBacktestQuery(value: unknown): BacktestQuery {
   const raw = value && typeof value === 'object' ? (value as Partial<BacktestQuery>) : {};
+  const marketScope = raw.market_scope === 'nasdaq' ? 'nasdaq' : 'kospi';
+  const preset = defaultBacktestQuery(marketScope);
   return {
-    market_scope: raw.market_scope === 'nasdaq' ? 'nasdaq' : DEFAULT_BACKTEST_QUERY.market_scope,
-    lookback_days: readNumber(raw.lookback_days, DEFAULT_BACKTEST_QUERY.lookback_days),
-    initial_cash: readNumber(raw.initial_cash, DEFAULT_BACKTEST_QUERY.initial_cash),
-    max_positions: readNumber(raw.max_positions, DEFAULT_BACKTEST_QUERY.max_positions),
-    max_holding_days: readNumber(raw.max_holding_days, DEFAULT_BACKTEST_QUERY.max_holding_days),
-    rsi_min: readNumber(raw.rsi_min, DEFAULT_BACKTEST_QUERY.rsi_min),
-    rsi_max: readNumber(raw.rsi_max, DEFAULT_BACKTEST_QUERY.rsi_max),
-    volume_ratio_min: readNumber(raw.volume_ratio_min, DEFAULT_BACKTEST_QUERY.volume_ratio_min),
-    stop_loss_pct: readNullableNumber(raw.stop_loss_pct, DEFAULT_BACKTEST_QUERY.stop_loss_pct),
-    take_profit_pct: readNullableNumber(raw.take_profit_pct, DEFAULT_BACKTEST_QUERY.take_profit_pct),
+    market_scope: marketScope,
+    lookback_days: readNumber(raw.lookback_days, preset.lookback_days),
+    initial_cash: readNumber(raw.initial_cash, preset.initial_cash),
+    max_positions: readNumber(raw.max_positions, preset.max_positions),
+    max_holding_days: readNumber(raw.max_holding_days, preset.max_holding_days),
+    rsi_min: readNumber(raw.rsi_min, preset.rsi_min),
+    rsi_max: readNumber(raw.rsi_max, preset.rsi_max),
+    volume_ratio_min: readNumber(raw.volume_ratio_min, preset.volume_ratio_min),
+    stop_loss_pct: readNullableNumber(raw.stop_loss_pct, preset.stop_loss_pct),
+    take_profit_pct: readNullableNumber(raw.take_profit_pct, preset.take_profit_pct),
   };
 }
 

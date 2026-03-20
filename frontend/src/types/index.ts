@@ -400,6 +400,18 @@ export interface BacktestData {
     volume_ratio_min?: number;
     stop_loss_pct?: number | null;
     take_profit_pct?: number | null;
+    market_profiles?: Record<string, {
+      market?: string;
+      max_positions?: number;
+      max_holding_days?: number;
+      rsi_min?: number;
+      rsi_max?: number;
+      volume_ratio_min?: number;
+      stop_loss_pct?: number | null;
+      take_profit_pct?: number | null;
+      signal_interval?: string;
+      signal_range?: string;
+    }>;
   };
   symbols?: Array<{
     code: string;
@@ -410,6 +422,19 @@ export interface BacktestData {
   trades?: BacktestTrade[];
   equity_curve?: BacktestEquityPoint[];
   error?: string;
+}
+
+export interface PaperStrategyProfile {
+  market: 'KOSPI' | 'NASDAQ';
+  max_positions: number;
+  max_holding_days: number;
+  rsi_min: number;
+  rsi_max: number;
+  volume_ratio_min: number;
+  stop_loss_pct?: number | null;
+  take_profit_pct?: number | null;
+  signal_interval: '1m' | '2m' | '5m' | '15m' | '30m' | '60m' | '90m' | '1d';
+  signal_range: '1d' | '5d' | '1mo' | '3mo' | '6mo' | '1y';
 }
 
 export interface PaperPosition {
@@ -499,6 +524,7 @@ export interface PaperEngineConfig {
   stop_loss_pct: number;
   take_profit_pct: number;
   max_holding_days: number;
+  market_profiles?: Partial<Record<'KOSPI' | 'NASDAQ', PaperStrategyProfile>>;
 }
 
 export interface PaperSkippedItem {
