@@ -23,7 +23,81 @@ const SKIP_REASON_LABELS: Record<string, string> = {
 function labelSkipReason(reason?: string): string {
   if (!reason) return '알 수 없음';
   if (reason.startsWith('quote_error')) return '시세 조회 오류';
+  if (reason.startsWith('technicals_error:')) {
+    const detail = reason.slice('technicals_error:'.length).trim();
+    return `지표 오류 (${detail})`;
+  }
   return SKIP_REASON_LABELS[reason] ?? reason;
+}
+
+function SkipCodeBadge({ item }: { item: PaperSkippedItem }) {
+  const [hovered, setHovered] = useState(false);
+  const label = labelSkipReason(item.reason);
+  const display = item.code ?? '—';
+  return (
+    <span
+      style={{ position: 'relative', display: 'inline-block' }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <span style={{
+        display: 'inline-block',
+        padding: '1px 6px',
+        borderRadius: 4,
+        background: 'var(--bg-2)',
+        border: '1px solid var(--border)',
+        cursor: 'default',
+        fontSize: 11,
+        fontWeight: 600,
+        color: 'var(--text-2)',
+        userSelect: 'none',
+      }}>
+        {display}
+      </span>
+      {hovered && (
+        <span style={{
+          position: 'absolute',
+          bottom: 'calc(100% + 6px)',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#2a2a2a',
+          color: '#f0f0f0',
+          padding: '4px 9px',
+          borderRadius: 6,
+          fontSize: 11,
+          whiteSpace: 'nowrap',
+          zIndex: 200,
+          pointerEvents: 'none',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          border: '1px solid #444',
+        }}>
+          {label}
+          <span style={{
+            position: 'absolute',
+            top: '100%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 0,
+            height: 0,
+            borderLeft: '5px solid transparent',
+            borderRight: '5px solid transparent',
+            borderTop: '5px solid #444',
+          }} />
+          <span style={{
+            position: 'absolute',
+            top: 'calc(100% - 1px)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 0,
+            height: 0,
+            borderLeft: '5px solid transparent',
+            borderRight: '5px solid transparent',
+            borderTop: '5px solid #2a2a2a',
+          }} />
+        </span>
+      )}
+    </span>
+  );
 }
 
 function formatKrw(value?: number | null) {
@@ -154,8 +228,7 @@ export function PaperTradingTab() {
   const [themePriorityBonus, setThemePriorityBonus] = useState('2.0');
   const [statusMessage, setStatusMessage] = useState('');
   const [lastAutoInvestSkipped, setLastAutoInvestSkipped] = useState<PaperSkippedItem[]>([]);
-  const [showAutoInvestSkipDetail, setShowAutoInvestSkipDetail] = useState(false);
-  const [showEngineSkipDetail, setShowEngineSkipDetail] = useState(false);
+
 
   const initialTotalKrw = useMemo(() => {
     return (account.initial_cash_krw || 0) + ((account.initial_cash_usd || 0) * (account.fx_rate || 0));
@@ -262,8 +335,6 @@ export function PaperTradingTab() {
   const isKospiRunning = engineState.running && appliedMarkets.includes('KOSPI');
   const isNasdaqRunning = engineState.running && appliedMarkets.includes('NASDAQ');
   const candidateCountsByMarket = engineState.last_summary?.candidate_counts_by_market || {};
-  const skipReasonEntries = Object.entries(engineState.last_summary?.skip_reason_counts || {})
-    .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0));
   const isEngineConfigDirty = useMemo(() => {
     const cfg = desiredEngineConfig;
     const applied = engineState.config;
@@ -392,7 +463,6 @@ export function PaperTradingTab() {
     const executed = Array.isArray(payload.executed) ? payload.executed.length : 0;
     const skippedList: PaperSkippedItem[] = Array.isArray(payload.skipped) ? payload.skipped : [];
     setLastAutoInvestSkipped(skippedList);
-    setShowAutoInvestSkipDetail(false);
     if (executed === 0 && payload.message) {
       setStatusMessage(String(payload.message));
       return;
@@ -524,37 +594,19 @@ export function PaperTradingTab() {
             <div style={{ marginTop: 4 }}>
               최근 후보: KOSPI {candidateCountsByMarket.KOSPI ?? 0}건 / NASDAQ {candidateCountsByMarket.NASDAQ ?? 0}건
             </div>
-            {skipReasonEntries.length > 0 && (
+            {(engineState.last_summary?.skipped?.length ?? 0) > 0 && (
               <div style={{ marginTop: 6, borderTop: '1px solid var(--border)', paddingTop: 6 }}>
-                <div style={{ fontWeight: 700, color: 'var(--text-2)', marginBottom: 4 }}>스킵 이유 ({skipReasonEntries.reduce((s, [, c]) => s + Number(c), 0)}건)</div>
-                {skipReasonEntries.map(([reason, count]) => (
-                  <div key={reason} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 2 }}>
-                    <span style={{ color: 'var(--text-3)' }}>{labelSkipReason(reason)}</span>
-                    <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-2)' }}>{count}건</span>
-                  </div>
-                ))}
-                {(engineState.last_summary?.skipped?.length ?? 0) > 0 && (
-                  <button
-                    className="ghost-button"
-                    style={{ marginTop: 6, fontSize: 11, padding: '2px 8px' }}
-                    onClick={() => setShowEngineSkipDetail((v) => !v)}
-                  >
-                    종목별 상세 {showEngineSkipDetail ? '▲ 접기' : '▼ 펼치기'}
-                  </button>
-                )}
-                {showEngineSkipDetail && (
-                  <div style={{ marginTop: 6, display: 'grid', gap: 2, maxHeight: 200, overflowY: 'auto' }}>
-                    {(engineState.last_summary?.skipped ?? []).map((item, idx) => (
-                      <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, color: 'var(--text-4)' }}>
-                        <span style={{ fontWeight: 600, color: 'var(--text-2)' }}>{item.code ?? '—'}{item.market ? ` (${item.market})` : ''}</span>
-                        <span>{labelSkipReason(item.reason)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <div style={{ fontWeight: 700, color: 'var(--text-2)', marginBottom: 4 }}>
+                  스킵 이유 ({engineState.last_summary!.skipped!.length}건)
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {(engineState.last_summary?.skipped ?? []).map((item, idx) => (
+                    <SkipCodeBadge key={idx} item={item} />
+                  ))}
+                </div>
               </div>
             )}
-            {skipReasonEntries.length === 0 && (
+            {(engineState.last_summary?.skipped?.length ?? 0) === 0 && (
               <div style={{ marginTop: 4 }}>스킵: 없음</div>
             )}
             <div style={{ marginTop: 4, color: engineState.last_error ? 'var(--down)' : 'var(--text-4)' }}>
@@ -702,42 +754,16 @@ export function PaperTradingTab() {
           <button className="ghost-button" onClick={() => refreshEngineStatus()}>엔진 상태 새로고침</button>
           <button className="ghost-button" onClick={handleAutoInvest}>1회 자동매수 실행</button>
         </div>
-        {lastAutoInvestSkipped.length > 0 && (() => {
-          const autoInvestSkipCounts: Record<string, number> = {};
-          for (const item of lastAutoInvestSkipped) {
-            const key = item.reason ?? 'unknown';
-            autoInvestSkipCounts[key] = (autoInvestSkipCounts[key] ?? 0) + 1;
-          }
-          const sortedEntries = Object.entries(autoInvestSkipCounts).sort((a, b) => b[1] - a[1]);
-          return (
-            <div style={{ marginTop: 8, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--bg-soft)', fontSize: 12, color: 'var(--text-3)' }}>
-              <div style={{ fontWeight: 700, color: 'var(--text-2)', marginBottom: 6 }}>1회 자동매수 스킵 내역 ({lastAutoInvestSkipped.length}건)</div>
-              {sortedEntries.map(([reason, count]) => (
-                <div key={reason} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 2 }}>
-                  <span>{labelSkipReason(reason)}</span>
-                  <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-2)' }}>{count}건</span>
-                </div>
+        {lastAutoInvestSkipped.length > 0 && (
+          <div style={{ marginTop: 8, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--bg-soft)', fontSize: 12, color: 'var(--text-3)' }}>
+            <div style={{ fontWeight: 700, color: 'var(--text-2)', marginBottom: 6 }}>1회 자동매수 스킵 내역 ({lastAutoInvestSkipped.length}건)</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {lastAutoInvestSkipped.map((item, idx) => (
+                <SkipCodeBadge key={idx} item={item} />
               ))}
-              <button
-                className="ghost-button"
-                style={{ marginTop: 6, fontSize: 11, padding: '2px 8px' }}
-                onClick={() => setShowAutoInvestSkipDetail((v) => !v)}
-              >
-                종목별 상세 {showAutoInvestSkipDetail ? '▲ 접기' : '▼ 펼치기'}
-              </button>
-              {showAutoInvestSkipDetail && (
-                <div style={{ marginTop: 6, display: 'grid', gap: 2, maxHeight: 200, overflowY: 'auto' }}>
-                  {lastAutoInvestSkipped.map((item, idx) => (
-                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, color: 'var(--text-4)' }}>
-                      <span style={{ fontWeight: 600, color: 'var(--text-2)' }}>{item.code ?? '—'}</span>
-                      <span>{labelSkipReason(item.reason)}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
-          );
-        })()}
+          </div>
+        )}
       </div>
 
       {(statusMessage || lastError) && (

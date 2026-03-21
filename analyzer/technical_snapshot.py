@@ -2,17 +2,22 @@
 from __future__ import annotations
 
 import datetime
+import logging
 import time
 from typing import Any
 
 from broker.kis_client import KISAPIError, KISClient, KISConfigError
 from market_utils import lookup_company_listing, resolve_quote_market
 
+logger = logging.getLogger(__name__)
+
 _KST = datetime.timezone(datetime.timedelta(hours=9))
 _TECHNICAL_CACHE_TTL = 900
 _technical_cache: dict[str, dict[str, Any]] = {}
 _kis_client: KISClient | None = None
 _kis_client_disabled = False
+_kis_client_retry_after: float = 0.0
+_KIS_CLIENT_RETRY_INTERVAL = 60.0
 
 
 def _ema(values: list[float], period: int) -> list[float]:
@@ -310,19 +315,29 @@ def _lookback_days(range_: str) -> int:
 
 
 def _get_kis_client(timeout: float = 8.0) -> KISClient | None:
-    global _kis_client, _kis_client_disabled
+    global _kis_client, _kis_client_disabled, _kis_client_retry_after
     if _kis_client_disabled:
+        return None
+    if _kis_client_retry_after and time.time() < _kis_client_retry_after:
         return None
     if _kis_client is not None:
         return _kis_client
     if not KISClient.is_configured():
         _kis_client_disabled = True
+        logger.warning("KIS 클라이언트 설정 없음 — 지표 조회 비활성화")
         return None
     try:
         _kis_client = KISClient.from_env(timeout=timeout)
+        _kis_client_retry_after = 0.0
         return _kis_client
-    except (KISConfigError, KISAPIError):
+    except KISConfigError as exc:
         _kis_client_disabled = True
+        logger.warning("KIS 설정 오류로 지표 조회 비활성화: %s", exc)
+        return None
+    except KISAPIError as exc:
+        _kis_client = None
+        _kis_client_retry_after = time.time() + _KIS_CLIENT_RETRY_INTERVAL
+        logger.warning("KIS 클라이언트 초기화 실패 (%s초 후 재시도): %s", _KIS_CLIENT_RETRY_INTERVAL, exc)
         return None
 
 
@@ -350,6 +365,7 @@ def fetch_technical_snapshot(
 
     client = _get_kis_client(timeout=timeout)
     if client is None:
+        logger.debug("KIS 클라이언트 없음 — %s (%s) 지표 조회 불가", resolved_code, normalized_market)
         return None
 
     history_market = resolved_market.strip().upper()
@@ -376,15 +392,22 @@ def fetch_technical_snapshot(
                         start_date=start_date,
                         end_date=end_date,
                     )
-                except Exception:
+                except Exception as exc:
+                    logger.debug("KIS 해외 히스토리 조회 실패 %s/%s: %s", resolved_code, exchange, exc)
                     rows = []
                     continue
                 if rows:
                     break
-    except Exception:
+    except Exception as exc:
+        logger.warning("KIS 히스토리 조회 실패 %s (%s): %s", resolved_code, history_market, exc)
         rows = []
 
     snapshot = compute_technical_snapshot_from_history(rows)
-    if snapshot:
+    if not snapshot:
+        logger.debug(
+            "지표 계산 불가 %s (%s): 데이터 %d건 (최소 35건 필요)",
+            resolved_code, history_market, len(rows),
+        )
+    elif snapshot:
         _technical_cache[cache_key] = {"ts": now, "data": snapshot}
     return snapshot

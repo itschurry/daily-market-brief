@@ -483,7 +483,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
             if fallback:
                 return fallback, None
 
-        return None, primary_error
+        return None, primary_error or "data_insufficient_or_api_error"
 
     executed_buys: list[dict] = []
     executed_sells: list[dict] = []
