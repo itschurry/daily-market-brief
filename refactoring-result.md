@@ -257,3 +257,54 @@ api_server.py         ← api.routes.*
 | `api/routes/backtest.py` | 신규 | 백테스트 라우트 |
 | `report/market_brief.db` | 신규 | SQLite DB (22개 레코드, 384KB) |
 | `report/archive/` | 신규 | 마이그레이션된 기존 JSON 22개 보관 |
+
+---
+
+## 버그 수정 — 모의투자 지표 없음 오류 (2026-03-21)
+
+### 문제 증상
+
+모의투자 자동매매 엔진에서 매수 후보 종목(000270·042700·005930·TSLA·NVDA 등)이
+스킵 이유 **"지표 없음"(`technicals_unavailable`)** 또는 **"지표 오류"(`technicals_error: data_insufficient_or_api_error`)**
+로 스킵되어 매수가 실행되지 않음.
+
+### 원인 1 — Docker 컨테이너에 KIS 환경변수 미전달
+
+`docker-compose.yml`에 `.env` 파일 연결이 없어 컨테이너 내부에서 `KIS_APP_KEY` 등
+환경변수가 전달되지 않았고, KIS 클라이언트가 비활성화(`_kis_client_disabled = True`)되어
+모든 종목의 지표 조회가 `None`을 반환.
+
+**수정**: `docker-compose.yml`에 `env_file: .env` 추가.
+
+### 원인 2 — `_load_technicals`의 `(None, None)` 반환 버그
+
+지표 조회 실패 시 `_load_technicals()`의 마지막 반환이 `return None, primary_error`였는데,
+`primary_error`가 `None`인 경우 `(None, None)`을 반환하여 `tech_error` 체크를 통과한 뒤
+`technicals_unavailable`로 기록되는 경로가 존재했음.
+
+**수정**: `return None, primary_error or "data_insufficient_or_api_error"` 로 변경.
+
+### 원인 3 — Docker 컨테이너에서 REPORT_OUTPUT_DIR 경로 오류
+
+`.env`의 `REPORT_OUTPUT_DIR=./report`가 컨테이너 cwd(`/`)를 기준으로 `/report`로 해석되어
+실제 DB 경로 `/app/report`를 찾지 못해 리포트 로딩 실패.
+
+**수정**: `docker-compose.yml` `environment`에 `REPORT_OUTPUT_DIR=/app/report` 명시.
+
+### 추가 개선 — 모의투자 스킵 UI 개선
+
+기존: 이유별 카운트 + "종목별 상세 펼치기" 버튼
+변경: 종목 코드 칩 나열 + 마우스오버 시 말풍선으로 구체적 스킵 이유 표시
+
+- `SkipCodeBadge` 컴포넌트 추가 (`PaperTradingTab.tsx`)
+- 자동매매 엔진 스킵 섹션 및 1회 자동매수 스킵 섹션 두 곳 모두 적용
+- `technicals_error: data_insufficient_or_api_error` 같은 상세 메시지도 툴팁에 그대로 노출
+
+### 변경 파일
+
+| 파일 | 변경 종류 | 주요 내용 |
+|------|-----------|-----------|
+| `docker-compose.yml` | 수정 | `env_file: .env` 추가, `REPORT_OUTPUT_DIR=/app/report` 명시 |
+| `api/routes/trading.py` | 수정 | `_load_technicals` `(None, None)` 반환 버그 수정 |
+| `analyzer/technical_snapshot.py` | 수정 | KIS 재시도 인터벌·상세 로그 추가 |
+| `frontend/src/components/PaperTradingTab.tsx` | 수정 | 스킵 종목 칩 + 툴팁 UI (`SkipCodeBadge` 컴포넌트) |
