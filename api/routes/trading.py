@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import threading
 from pathlib import Path
@@ -35,6 +36,45 @@ from market_utils import normalize_market, resolve_market
 
 _DEFAULT_THEME_FOCUS = ["automotive", "robotics", "physical_ai"]
 _ALLOWED_THEME_FOCUS = set(_DEFAULT_THEME_FOCUS)
+
+_OPTIMIZED_PARAMS_PATH = Path(__file__).parent.parent.parent / "config" / "optimized_params.json"
+_OPTIMIZED_PARAMS_MAX_AGE_DAYS = 30
+
+
+def _load_optimized_params() -> dict | None:
+    """config/optimized_params.json을 읽어 반환한다.
+    파일이 없거나 30일 이상 오래된 경우 None 반환.
+    """
+    if not _OPTIMIZED_PARAMS_PATH.exists():
+        return None
+    try:
+        data = json.loads(_OPTIMIZED_PARAMS_PATH.read_text(encoding="utf-8"))
+        optimized_at = datetime.datetime.fromisoformat(data.get("optimized_at", "2000-01-01"))
+        age_days = (datetime.datetime.now(datetime.timezone.utc)
+                    - optimized_at.astimezone(datetime.timezone.utc)).days
+        if age_days > _OPTIMIZED_PARAMS_MAX_AGE_DAYS:
+            from loguru import logger
+            logger.warning("최적화 파라미터가 {}일 지났습니다. 재실행 권장.", age_days)
+        return data
+    except Exception as exc:
+        from loguru import logger
+        logger.warning("optimized_params.json 로드 실패: {}", exc)
+        return None
+
+
+def _get_symbol_optimized_params(code: str) -> dict:
+    """per_symbol에서 해당 종목의 신뢰할 수 있는 파라미터를 반환한다. 없으면 빈 dict."""
+    optimized = _load_optimized_params()
+    if not optimized:
+        return {}
+    symbol_data = optimized.get("per_symbol", {}).get(code, {})
+    if not symbol_data.get("is_reliable", False):
+        return {}
+    return {
+        k: symbol_data[k]
+        for k in ("stop_loss_pct", "take_profit_pct", "max_holding_days", "rsi_min", "rsi_max")
+        if k in symbol_data
+    }
 
 
 def _get_paper_engine() -> PaperExecutionEngine:
@@ -139,7 +179,7 @@ def _default_auto_trader_config() -> dict:
         for profile in default_strategy_profiles(["KOSPI", "NASDAQ"])
     }
     primary = profiles["KOSPI"]
-    return {
+    base = {
         "interval_seconds": 300,
         "markets": ["KOSPI", "NASDAQ"],
         "max_positions_per_market": int(primary["max_positions"]),
@@ -163,6 +203,17 @@ def _default_auto_trader_config() -> dict:
         "max_holding_days": primary["max_holding_days"],
         "market_profiles": profiles,
     }
+    # 몬테카를로 최적화 결과 오버레이
+    optimized = _load_optimized_params()
+    if optimized:
+        global_params = optimized.get("global_params", {})
+        _OPTIMIZABLE_KEYS = {"stop_loss_pct", "take_profit_pct", "max_holding_days", "rsi_min", "rsi_max"}
+        for key in _OPTIMIZABLE_KEYS:
+            if key in global_params and global_params[key] is not None:
+                base[key] = global_params[key]
+        from loguru import logger
+        logger.info("몬테카를로 최적 파라미터 적용: {}", global_params)
+    return base
 
 
 def _today_kst_str() -> str:
@@ -261,11 +312,14 @@ def _should_enter_by_indicators(technicals: dict, cfg: dict, market: str) -> boo
 def _should_exit_by_indicators(position: dict, technicals: dict, cfg: dict, market: str) -> str | None:
     if not isinstance(technicals, dict):
         return None
+    code = str(position.get("code") or "").upper()
+    symbol_params = _get_symbol_optimized_params(code)
+    effective_cfg = {**cfg, **symbol_params} if symbol_params else cfg
     return should_exit_from_snapshot(
         technicals,
         entry_price=float(position.get("avg_price_local") or 0.0) or None,
         holding_days=_position_holding_days(position),
-        profile=_auto_trader_profile(cfg, market),
+        profile=_auto_trader_profile(effective_cfg, market),
     )
 
 

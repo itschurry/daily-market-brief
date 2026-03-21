@@ -6,6 +6,8 @@
 """
 import asyncio
 import os
+import subprocess
+import sys
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -67,6 +69,28 @@ def _off_session_job():
     _run()
 
 
+def _run_optimization():
+    """몬테카를로 파라미터 최적화 — 일요일 새벽 2시에 실행."""
+    from pathlib import Path
+    script = str(Path(__file__).parent / "scripts" / "run_monte_carlo_optimizer.py")
+    logger.info("몬테카를로 최적화 시작: {}", script)
+    try:
+        result = subprocess.run(
+            [sys.executable, script],
+            timeout=3600,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            logger.info("몬테카를로 최적화 완료")
+        else:
+            logger.error("몬테카를로 최적화 실패 (rc={}): {}", result.returncode, result.stderr[-2000:])
+    except subprocess.TimeoutExpired:
+        logger.error("몬테카를로 최적화 타임아웃 (1시간 초과)")
+    except Exception:
+        logger.exception("몬테카를로 최적화 실행 중 예외 발생")
+
+
 def _log_schedule_policy() -> None:
     logger.info("장외 스케줄: 06:00-21:00 KST 매 정시")
     logger.info("한국장 스케줄: 09:00-15:30 KST, 30분 단위 (주말/한국 공휴일 제외)")
@@ -106,6 +130,15 @@ if __name__ == "__main__":
         CronTrigger(hour="6-21", minute=0, timezone=KST_TZ),
         max_instances=1,
         id="off_session",
+    )
+
+    # 몬테카를로 최적화: 매주 일요일 KST 02:00
+    scheduler.add_job(
+        _run_optimization,
+        CronTrigger(day_of_week="sun", hour=2, minute=0, timezone=KST_TZ),
+        max_instances=1,
+        misfire_grace_time=3600,
+        id="weekly_optimization",
     )
 
     logger.info("APScheduler 시작")

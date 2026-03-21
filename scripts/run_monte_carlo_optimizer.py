@@ -1,0 +1,263 @@
+"""몬테카를로 파라미터 최적화 실행 스크립트.
+
+실행 방법:
+  python3 scripts/run_monte_carlo_optimizer.py
+  python3 scripts/run_monte_carlo_optimizer.py --market KOSPI --top-n 20
+  python3 scripts/run_monte_carlo_optimizer.py --market NASDAQ --top-n 20
+  python3 scripts/run_monte_carlo_optimizer.py --symbols 005930,000660,NVDA,MSFT
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import sys
+from pathlib import Path
+
+# 프로젝트 루트를 sys.path에 추가
+_PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT))
+
+from loguru import logger
+
+from analyzer.monte_carlo import (
+    OptimizationResult,
+    ParamGrid,
+    SimulationConfig,
+    run_portfolio_optimization,
+)
+from config.backtest_universe import get_kospi100_universe, get_sp100_nasdaq_universe
+
+_OPTIMIZED_PARAMS_PATH = _PROJECT_ROOT / "config" / "optimized_params.json"
+
+# 파라미터 클램핑 범위
+_STOP_LOSS_RANGE = (2.0, 15.0)
+_TAKE_PROFIT_RANGE = (4.0, 30.0)
+_HOLDING_DAYS_RANGE = (3, 60)
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _fetch_kis_history(code: str, market: str, days: int) -> list[dict]:
+    """KIS API로 일봉 히스토리를 가져온다. 실패 시 빈 리스트 반환."""
+    try:
+        from broker.kis_client import KISClient
+        if not KISClient.is_configured():
+            return []
+        client = KISClient.from_env()
+        end = datetime.date.today().strftime("%Y%m%d")
+        start = (datetime.date.today() - datetime.timedelta(days=days)).strftime("%Y%m%d")
+        if market == "KOSPI":
+            return client.get_domestic_daily_history(code, start_date=start, end_date=end)
+        else:
+            return client.get_overseas_daily_history(code, exchange=market, start_date=start, end_date=end)
+    except Exception as exc:
+        logger.debug("{}/{}: KIS 조회 실패 — {}", code, market, exc)
+        return []
+
+
+def _fetch_yfinance_history(code: str, market: str, days: int) -> list[dict]:
+    """yfinance로 일봉 히스토리를 가져온다."""
+    try:
+        import yfinance as yf
+        ticker = f"{code}.KS" if market == "KOSPI" else code
+        period = f"{max(1, days // 365 + 1)}y"
+        df = yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=True)
+        if df is None or df.empty:
+            return []
+        rows = []
+        for date, row in df.iterrows():
+            close = float(row["Close"]) if hasattr(row["Close"], "__float__") else None
+            if close is None or close <= 0:
+                continue
+            rows.append({
+                "date": date.strftime("%Y%m%d"),
+                "close": close,
+                "high": float(row.get("High", close)),
+                "low": float(row.get("Low", close)),
+                "volume": float(row.get("Volume", 0)),
+            })
+        return rows
+    except Exception as exc:
+        logger.debug("{}/{}: yfinance 조회 실패 — {}", code, market, exc)
+        return []
+
+
+def _fetch_price_history(code: str, market: str, days: int) -> list[dict]:
+    """KIS 우선, 실패 시 yfinance 폴백으로 가격 데이터를 가져온다."""
+    rows = _fetch_kis_history(code, market, days)
+    if len(rows) >= 50:
+        return rows
+    logger.debug("{}/{}: KIS {} 건 — yfinance 폴백", code, market, len(rows))
+    return _fetch_yfinance_history(code, market, days)
+
+
+def _collect_price_data(
+    symbols: list[tuple[str, str]],
+    days: int,
+) -> dict[str, list[dict]]:
+    """종목 목록의 가격 데이터를 수집한다."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    price_data: dict[str, list[dict]] = {}
+    total = len(symbols)
+
+    def _task(code: str, market: str) -> tuple[str, list[dict]]:
+        return code, _fetch_price_history(code, market, days)
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(_task, code, mkt): (code, mkt) for code, mkt in symbols}
+        done = 0
+        for future in as_completed(futures):
+            code, mkt = futures[future]
+            done += 1
+            rows = future.result()[1]
+            price_data[code] = rows
+            logger.debug("[{}/{}] {} ({}) — {}건 수집", done, total, code, mkt, len(rows))
+
+    return price_data
+
+
+def _compute_global_params(results: list[OptimizationResult]) -> dict:
+    """신뢰 종목들의 파라미터 중앙값으로 글로벌 파라미터를 계산한다."""
+    import numpy as np
+    reliable = [r for r in results if r.is_reliable]
+    if not reliable:
+        reliable = results  # 모두 신뢰 없으면 전체 사용
+
+    return {
+        "stop_loss_pct": round(float(np.median([r.best_params["stop_loss_pct"] for r in reliable])), 1),
+        "take_profit_pct": round(float(np.median([r.best_params["take_profit_pct"] for r in reliable])), 1),
+        "max_holding_days": int(round(float(np.median([r.best_params["max_holding_days"] for r in reliable])))),
+        "rsi_min": round(float(np.median([r.best_params["rsi_min"] for r in reliable])), 1),
+        "rsi_max": round(float(np.median([r.best_params["rsi_max"] for r in reliable])), 1),
+    }
+
+
+def _save_results(results: list[OptimizationResult], sim_config: SimulationConfig) -> None:
+    """결과를 config/optimized_params.json에 저장한다."""
+    reliable = [r for r in results if r.is_reliable]
+    global_params = _compute_global_params(results) if results else {}
+
+    # 클램핑
+    if global_params:
+        global_params["stop_loss_pct"] = _clamp(global_params["stop_loss_pct"], *_STOP_LOSS_RANGE)
+        global_params["take_profit_pct"] = _clamp(global_params["take_profit_pct"], *_TAKE_PROFIT_RANGE)
+        global_params["max_holding_days"] = int(_clamp(global_params["max_holding_days"], *_HOLDING_DAYS_RANGE))
+
+    per_symbol = {}
+    for r in results:
+        params = {k: _clamp(v, *_STOP_LOSS_RANGE) if k == "stop_loss_pct"
+                  else _clamp(v, *_TAKE_PROFIT_RANGE) if k == "take_profit_pct"
+                  else int(_clamp(v, *_HOLDING_DAYS_RANGE)) if k == "max_holding_days"
+                  else v
+                  for k, v in r.best_params.items()}
+        per_symbol[r.symbol] = {
+            "market": r.market,
+            **params,
+            "sharpe_ratio": round(r.sharpe_ratio, 4),
+            "win_rate": round(r.win_rate, 4),
+            "validation_sharpe": round(r.validation_sharpe, 4),
+            "is_reliable": r.is_reliable,
+        }
+
+    output = {
+        "optimized_at": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).isoformat(timespec="seconds"),
+        "global_params": global_params,
+        "per_symbol": per_symbol,
+        "meta": {
+            "n_simulations": sim_config.n_simulations,
+            "method": sim_config.method,
+            "n_symbols_optimized": len(results),
+            "n_reliable": len(reliable),
+        },
+    }
+    _OPTIMIZED_PARAMS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _OPTIMIZED_PARAMS_PATH.write_text(
+        json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    logger.info("결과 저장: {}", _OPTIMIZED_PARAMS_PATH)
+
+
+def _build_symbol_list(args: argparse.Namespace) -> list[tuple[str, str]]:
+    """CLI 인자에 따라 최적화 대상 종목 목록을 반환한다."""
+    if args.symbols:
+        result = []
+        for s in args.symbols.split(","):
+            s = s.strip().upper()
+            if not s:
+                continue
+            # 숫자로만 이루어지면 KOSPI, 아니면 NASDAQ
+            market = "KOSPI" if s.isdigit() else "NASDAQ"
+            result.append((s, market))
+        return result
+
+    top_n = args.top_n
+    markets = [args.market] if args.market else ["KOSPI", "NASDAQ"]
+    symbols: list[tuple[str, str]] = []
+
+    if "KOSPI" in markets:
+        entries = get_kospi100_universe()[:top_n]
+        symbols += [(e["code"], "KOSPI") for e in entries]
+    if "NASDAQ" in markets:
+        entries = get_sp100_nasdaq_universe()[:top_n]
+        symbols += [(e["code"], "NASDAQ") for e in entries]
+
+    return symbols
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="몬테카를로 파라미터 최적화")
+    parser.add_argument("--market", choices=["KOSPI", "NASDAQ"], default=None,
+                        help="특정 시장만 실행 (기본: 양쪽)")
+    parser.add_argument("--top-n", type=int, default=20,
+                        help="시장별 상위 N개 종목 (기본: 20)")
+    parser.add_argument("--symbols", type=str, default=None,
+                        help="쉼표 구분 종목 코드 (예: 005930,NVDA)")
+    parser.add_argument("--simulations", type=int, default=5000,
+                        help="시뮬레이션 횟수 (기본: 5000)")
+    parser.add_argument("--method", choices=["bootstrap", "gbm"], default="bootstrap")
+    args = parser.parse_args()
+
+    symbols = _build_symbol_list(args)
+    if not symbols:
+        logger.error("최적화할 종목이 없습니다.")
+        sys.exit(1)
+
+    logger.info("=== 몬테카를로 최적화 시작: {}개 종목 ===", len(symbols))
+
+    sim_config = SimulationConfig(
+        n_simulations=args.simulations,
+        method=args.method,
+    )
+
+    # 가격 데이터 수집 (학습 252 + 검증 63 + 여유 50 = 365일)
+    required_days = sim_config.lookback_days + sim_config.validation_days + 50
+    logger.info("가격 데이터 수집 중 (최근 {}일)...", required_days)
+    price_data = _collect_price_data(symbols, required_days)
+
+    logger.info("파라미터 최적화 실행 중...")
+    results = run_portfolio_optimization(symbols, price_data, sim_config=sim_config)
+
+    if not results:
+        logger.error("최적화 결과가 없습니다.")
+        sys.exit(1)
+
+    reliable = [r for r in results if r.is_reliable]
+    logger.info("최적화 완료: {}개 종목, 신뢰할 수 있는 결과: {}개", len(results), len(reliable))
+
+    if reliable:
+        gp = _compute_global_params(results)
+        logger.info(
+            "글로벌 최적 파라미터 (신뢰 종목 중앙값): "
+            "stop_loss={stop_loss_pct}%, take_profit={take_profit_pct}%, "
+            "max_holding={max_holding_days}일, rsi={rsi_min}~{rsi_max}",
+            **gp,
+        )
+
+    _save_results(results, sim_config)
+
+
+if __name__ == "__main__":
+    main()
