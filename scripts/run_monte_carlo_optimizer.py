@@ -110,7 +110,11 @@ def _compute_global_params(results: list[OptimizationResult]) -> dict:
     }
 
 
-def _save_results(results: list[OptimizationResult], sim_config: SimulationConfig) -> None:
+def _save_results(
+    results: list[OptimizationResult],
+    sim_config: SimulationConfig,
+    name_map: dict[str, str] | None = None,
+) -> None:
     """결과를 config/optimized_params.json에 저장한다."""
     reliable = [r for r in results if r.is_reliable]
     global_params = _compute_global_params(results) if results else {}
@@ -129,6 +133,7 @@ def _save_results(results: list[OptimizationResult], sim_config: SimulationConfi
                   else v
                   for k, v in r.best_params.items()}
         per_symbol[r.symbol] = {
+            "name": (name_map or {}).get(r.symbol, r.symbol),
             "market": r.market,
             **params,
             "sharpe_ratio": float(round(r.sharpe_ratio, 4)),
@@ -155,29 +160,28 @@ def _save_results(results: list[OptimizationResult], sim_config: SimulationConfi
     logger.info("결과 저장: {}", _OPTIMIZED_PARAMS_PATH)
 
 
-def _build_symbol_list(args: argparse.Namespace) -> list[tuple[str, str]]:
-    """CLI 인자에 따라 최적화 대상 종목 목록을 반환한다."""
+def _build_symbol_list(args: argparse.Namespace) -> list[tuple[str, str, str]]:
+    """CLI 인자에 따라 최적화 대상 종목 목록을 반환한다. (code, market, name)"""
     if args.symbols:
         result = []
         for s in args.symbols.split(","):
             s = s.strip().upper()
             if not s:
                 continue
-            # 숫자로만 이루어지면 KOSPI, 아니면 NASDAQ
             market = "KOSPI" if s.isdigit() else "NASDAQ"
-            result.append((s, market))
+            result.append((s, market, s))
         return result
 
     top_n = args.top_n
     markets = [args.market] if args.market else ["KOSPI", "NASDAQ"]
-    symbols: list[tuple[str, str]] = []
+    symbols: list[tuple[str, str, str]] = []
 
     if "KOSPI" in markets:
         entries = get_kospi100_universe()[:top_n]
-        symbols += [(e["code"], "KOSPI") for e in entries]
+        symbols += [(e["code"], "KOSPI", e["name"]) for e in entries]
     if "NASDAQ" in markets:
         entries = get_sp100_nasdaq_universe()[:top_n]
-        symbols += [(e["code"], "NASDAQ") for e in entries]
+        symbols += [(e["code"], "NASDAQ", e["name"]) for e in entries]
 
     return symbols
 
@@ -204,7 +208,10 @@ def main() -> None:
         logger.error("최적화할 종목이 없습니다.")
         sys.exit(1)
 
-    logger.info("=== 몬테카를로 최적화 시작: {}개 종목 ===", len(symbols))
+    name_map = {code: name for code, _, name in symbols}
+    sym_pairs = [(code, market) for code, market, _ in symbols]
+
+    logger.info("=== 몬테카를로 최적화 시작: {}개 종목 ===", len(sym_pairs))
 
     sim_kwargs: dict = {"n_simulations": args.simulations, "method": args.method}
     if args.lookback_days is not None:
@@ -217,10 +224,10 @@ def main() -> None:
     min_rows = sim_config.lookback_days + sim_config.validation_days
     required_days = min_rows + 50
     logger.info("가격 데이터 수집 중 (최근 {}일, 최소 {}건)...", required_days, min_rows)
-    price_data = _collect_price_data(symbols, required_days, min_rows=min_rows)
+    price_data = _collect_price_data(sym_pairs, required_days, min_rows=min_rows)
 
     logger.info("파라미터 최적화 실행 중...")
-    results = run_portfolio_optimization(symbols, price_data, sim_config=sim_config)
+    results = run_portfolio_optimization(sym_pairs, price_data, sim_config=sim_config)
 
     if not results:
         logger.error("최적화 결과가 없습니다.")
@@ -238,7 +245,7 @@ def main() -> None:
             **gp,
         )
 
-    _save_results(results, sim_config)
+    _save_results(results, sim_config, name_map=name_map)
 
 
 if __name__ == "__main__":

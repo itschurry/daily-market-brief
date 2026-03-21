@@ -2,6 +2,29 @@ import { useEffect, useState } from 'react';
 import { defaultBacktestQuery, loadBacktestQuery, saveBacktestQuery, useBacktest } from '../hooks/useBacktest';
 import type { BacktestData, BacktestQuery, BacktestTrade } from '../types';
 
+const PARAM_LABELS: Record<string, string> = {
+  stop_loss_pct: '손절',
+  take_profit_pct: '익절',
+  max_holding_days: '최대보유일',
+  rsi_min: 'RSI 하한',
+  rsi_max: 'RSI 상한',
+  n_symbols_optimized: '최적화 종목수',
+  n_reliable: '신뢰 종목수',
+  n_simulations: '시뮬레이션 횟수',
+  method: '방법',
+};
+
+function paramLabel(key: string): string {
+  return PARAM_LABELS[key] ?? key;
+}
+
+function paramValue(key: string, val: unknown): string {
+  if (val === null || val === undefined) return '—';
+  if (key === 'stop_loss_pct' || key === 'take_profit_pct') return `${val}%`;
+  if (key === 'max_holding_days') return `${val}일`;
+  return String(val);
+}
+
 function formatMoney(value?: number | null, currency: 'KRW' | 'USD' = 'KRW') {
   if (value === undefined || value === null) return '—';
   const formatted = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(value);
@@ -630,8 +653,8 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
                   {Object.entries(optimizedParams.global_params as Record<string, unknown>).map(([key, val]) => (
                     <div key={key} style={{ padding: '10px 12px', background: 'var(--bg-soft)', borderRadius: 10, border: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: 11, color: 'var(--text-4)', marginBottom: 4 }}>{key}</div>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>{val === null ? '—' : String(val)}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-4)', marginBottom: 4 }}>{paramLabel(key)}</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-1)' }}>{paramValue(key, val)}</div>
                     </div>
                   ))}
                 </div>
@@ -643,12 +666,14 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
                     {Object.entries(optimizedParams.per_symbol as Record<string, Record<string, unknown>>)
                       .filter(([, sym]) => sym.is_reliable)
                       .map(([code, sym]) => (
-                        <div key={code} style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: 8, alignItems: 'center', padding: '8px 12px', background: 'var(--bg-soft)', borderRadius: 8, border: '1px solid var(--border)' }}>
-                          <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-1)' }}>{code}</div>
+                        <div key={code} style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: 8, alignItems: 'center', padding: '8px 12px', background: 'var(--bg-soft)', borderRadius: 8, border: '1px solid var(--border)' }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text-1)' }}>
+                            {typeof sym.name === 'string' ? sym.name : code}
+                          </div>
                           <div style={{ fontSize: 12, color: 'var(--text-3)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                             {(['stop_loss_pct', 'take_profit_pct', 'max_holding_days', 'rsi_min', 'rsi_max'] as const).map((k) =>
                               sym[k] !== undefined && sym[k] !== null
-                                ? <span key={k}><span style={{ color: 'var(--text-4)' }}>{k.replace(/_pct$/, '(%)')}: </span>{String(sym[k])}</span>
+                                ? <span key={k}><span style={{ color: 'var(--text-4)' }}>{paramLabel(k)}: </span>{paramValue(k, sym[k])}</span>
                                 : null
                             )}
                             <span style={{ color: 'var(--text-4)', fontSize: 11 }}>샤프={typeof sym.sharpe_ratio === 'number' ? sym.sharpe_ratio.toFixed(2) : '—'}</span>
