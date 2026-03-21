@@ -15,6 +15,7 @@ COPY --from=builder /build/dist /usr/share/nginx/html
 COPY generate_index.py /app/generate_index.py
 COPY api_server.py /app/api_server.py
 COPY market_utils.py /app/market_utils.py
+COPY api /app/api
 COPY analyzer /app/analyzer
 COPY broker /app/broker
 COPY collectors /app/collectors
