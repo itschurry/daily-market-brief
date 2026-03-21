@@ -11,4 +11,5 @@ services:
       - .env
     environment:
       - TZ=Asia/Seoul
+      - REPORT_OUTPUT_DIR=/app/report
     restart: unless-stopped
