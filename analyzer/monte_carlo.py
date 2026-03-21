@@ -104,25 +104,25 @@ def simulate_strategy(
     tp = 1.0 + take_profit_pct / 100.0
     hold_cap = min(max_holding_days, n_days)
 
-    # 각 경로에서 첫 번째로 손절/익절/기간만료 조건이 발생하는 날 찾기
-    hit_sl = paths <= sl          # (n_sim, n_days)
-    hit_tp = paths >= tp
+    p = paths[:, :hold_cap]  # (n_sim, hold_cap)
+    hit_sl = p <= sl
+    hit_tp = p >= tp
 
-    exit_returns = np.empty(n_sim)
-    holding_days_arr = np.empty(n_sim)
+    # 첫 번째 충족 인덱스를 numpy 벡터 연산으로 계산
+    def _first_hit(mask: np.ndarray) -> np.ndarray:
+        """mask에서 첫 True 인덱스, 없으면 hold_cap."""
+        any_hit = mask.any(axis=1)
+        idx = np.where(any_hit, np.argmax(mask, axis=1), hold_cap)
+        return idx
 
-    for i in range(n_sim):
-        sl_hit = hit_sl[i, :hold_cap].any()
-        tp_hit = hit_tp[i, :hold_cap].any()
-        sl_idx = int(np.argmax(hit_sl[i, :hold_cap])) if sl_hit else hold_cap
-        tp_idx = int(np.argmax(hit_tp[i, :hold_cap])) if tp_hit else hold_cap
+    sl_idx = _first_hit(hit_sl)
+    tp_idx = _first_hit(hit_tp)
 
-        exit_day = min(sl_idx, tp_idx)
-        if exit_day >= hold_cap:
-            exit_day = hold_cap - 1
+    exit_days = np.minimum(sl_idx, tp_idx)
+    exit_days = np.where(exit_days >= hold_cap, hold_cap - 1, exit_days)
 
-        exit_returns[i] = paths[i, exit_day] - 1.0
-        holding_days_arr[i] = exit_day + 1
+    exit_returns = paths[np.arange(n_sim), exit_days] - 1.0
+    holding_days_arr = exit_days + 1.0
 
     avg_holding = float(np.mean(holding_days_arr))
     win_mask = exit_returns > 0
@@ -137,8 +137,8 @@ def simulate_strategy(
         sharpe = 0.0
 
     # 최대낙폭: 경로별 고점 대비 최저점
-    cummax = np.maximum.accumulate(paths[:, :hold_cap], axis=1)
-    drawdowns = (paths[:, :hold_cap] - cummax) / cummax
+    cummax = np.maximum.accumulate(p, axis=1)
+    drawdowns = (p - cummax) / cummax
     max_dd = float(np.min(drawdowns)) * 100.0
 
     return {

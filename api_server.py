@@ -21,7 +21,7 @@ from api.routes.reports import (
     handle_reports,
     handle_today_picks,
 )
-from api.routes.optimization import handle_get_optimized_params, handle_run_optimization
+from api.routes.optimization import handle_get_optimized_params, handle_get_optimization_status, handle_run_optimization
 from api.routes.trading import (
     handle_paper_account,
     handle_paper_auto_invest,
@@ -86,6 +86,8 @@ class Handler(BaseHTTPRequestHandler):
             status, body = handle_paper_engine_status()
         elif path == "/api/optimized-params":
             status, body = handle_get_optimized_params()
+        elif path == "/api/optimization-status":
+            status, body = handle_get_optimization_status()
         else:
             self._json_resp(404, {})
             return

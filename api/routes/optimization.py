@@ -21,6 +21,13 @@ def handle_get_optimized_params() -> tuple[int, dict]:
         return 500, {"error": str(exc)}
 
 
+def handle_get_optimization_status() -> tuple[int, dict]:
+    """GET /api/optimization-status — 현재 실행 여부 반환."""
+    with _optimization_lock:
+        running = _optimization_running
+    return 200, {"running": running}
+
+
 def handle_run_optimization() -> tuple[int, dict]:
     """POST /api/run-optimization — 백그라운드 최적화 실행 트리거."""
     global _optimization_running
@@ -36,11 +43,14 @@ def handle_run_optimization() -> tuple[int, dict]:
             import sys
             from pathlib import Path
             script = str(Path(__file__).parent.parent.parent / "scripts" / "run_monte_carlo_optimizer.py")
-            subprocess.run(
-                [sys.executable, script],
-                timeout=3600,
-                capture_output=False,
-            )
+            log_path = Path("/tmp/optimization.log")
+            with log_path.open("w") as log_f:
+                subprocess.run(
+                    [sys.executable, script, "--simulations", "1000", "--top-n", "10"],
+                    timeout=3600,
+                    stdout=log_f,
+                    stderr=log_f,
+                )
         except Exception:
             pass
         finally:

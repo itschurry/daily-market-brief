@@ -286,12 +286,37 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
     saveBacktestQuery(draft);
   }, [draft]);
 
+  // 마운트 시: 서버 실행 상태 + 기존 결과 동시 조회
   useEffect(() => {
-    fetch('/api/optimized-params')
-      .then((r) => r.json())
-      .then((d) => { if (d?.status === 'ok') setOptimizedParams(d); })
-      .catch(() => {});
+    Promise.all([
+      fetch('/api/optimization-status').then((r) => r.json()).catch(() => ({ running: false })),
+      fetch('/api/optimized-params').then((r) => r.json()).catch(() => null),
+    ]).then(([statusData, paramsData]) => {
+      if (statusData?.running) {
+        setOptStatus('running');
+        setOptMessage('백그라운드에서 실행 중입니다. 완료까지 수 분 소요됩니다.');
+      }
+      if (paramsData?.status === 'ok') setOptimizedParams(paramsData);
+    });
   }, []);
+
+  // running 상태일 때 15초마다 폴링
+  useEffect(() => {
+    if (optStatus !== 'running') return;
+    const timer = setInterval(async () => {
+      try {
+        const s = await fetch('/api/optimization-status').then((r) => r.json());
+        if (!s?.running) {
+          clearInterval(timer);
+          const d = await fetch('/api/optimized-params').then((r) => r.json());
+          if (d?.status === 'ok') setOptimizedParams(d);
+          setOptStatus('idle');
+          setOptMessage('최적화 완료되었습니다.');
+        }
+      } catch { /* 무시 */ }
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [optStatus]);
 
   function patchDraft<K extends keyof BacktestQuery>(key: K, value: BacktestQuery[K]) {
     setDraft((prev) => ({ ...prev, [key]: value }));
