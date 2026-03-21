@@ -5,7 +5,6 @@
 - 환율 (USD/KRW): 네이버 금융 스크래핑
 - 미국 S&P 100, VIX, Brent유가: Yahoo Chart API
 - 기타 해외 지수/원자재: stooq.com
-- 보조 fallback: yfinance
 """
 from datetime import datetime, timedelta
 from typing import Optional, List
@@ -145,7 +144,7 @@ def _stooq_spot_fetch(symbol: str) -> Optional[dict]:
 
 
 # ──────────────────────────────────────────────
-# Yahoo Chart / yfinance fallback (VIX, Brent 등 stooq 미지원)
+# Yahoo Chart (VIX, Brent 등 stooq 미지원)
 # ──────────────────────────────────────────────
 
 def _yahoo_chart_fetch(symbol: str) -> Optional[dict]:
@@ -171,26 +170,6 @@ def _yahoo_chart_fetch(symbol: str) -> Optional[dict]:
         return {"current": current, "change_pct": change_pct}
     except Exception as e:
         logger.debug(f"Yahoo Chart 조회 실패 [{symbol}]: {e}")
-        return None
-
-
-def _yfinance_fetch(ticker: str) -> Optional[dict]:
-    """yfinance로 해외 데이터 조회 (fallback)."""
-    try:
-        import yfinance as yf
-        t = yf.Ticker(ticker)
-        hist = t.history(period="5d")
-        if hist.empty:
-            return None
-        closes = hist["Close"].dropna()
-        if len(closes) < 1:
-            return None
-        current = float(closes.iloc[-1])
-        prev = float(closes.iloc[-2]) if len(closes) >= 2 else current
-        change_pct = (current - prev) / prev * 100 if prev else 0.0
-        return {"current": current, "change_pct": change_pct}
-    except Exception as e:
-        logger.debug(f"yfinance 조회 실패 [{ticker}]: {e}")
         return None
 
 
@@ -229,7 +208,7 @@ def collect_market() -> MarketSnapshot:
         elif field == "btc_usd":
             snap.btc_usd = data["current"]
 
-    sp100 = _yahoo_chart_fetch("^OEX") or _yfinance_fetch("^OEX")
+    sp100 = _yahoo_chart_fetch("^OEX")
     if sp100:
         snap.sp100 = sp100["current"]
         snap.sp100_change_pct = sp100["change_pct"]
@@ -240,9 +219,9 @@ def collect_market() -> MarketSnapshot:
         if data and field == "wti_oil":
             snap.wti_oil = data["current"]
 
-    # Brent 유가, VIX — Yahoo Chart 우선, yfinance fallback
+    # Brent 유가, VIX — Yahoo Chart API
     for field, ticker in [("brent_oil", "BZ=F"), ("vix", "^VIX")]:
-        data = _yahoo_chart_fetch(ticker) or _yfinance_fetch(ticker)
+        data = _yahoo_chart_fetch(ticker)
         if data:
             if field == "brent_oil":
                 snap.brent_oil = data["current"]
@@ -263,11 +242,8 @@ def collect_holdings() -> List[HoldingPrice]:
     for h in HOLDINGS:
         data = None
         if h.ticker_kr:
-            # "005930.KS" → "005930"
             code = h.ticker_kr.split(".")[0]
             data = _naver_stock(code)
-        elif h.ticker_us:
-            data = _yfinance_fetch(h.ticker_us)
 
         if data is None:
             logger.warning(f"종목 조회 실패: {h.name}")

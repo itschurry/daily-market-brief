@@ -58,40 +58,14 @@ def _fetch_kis_history(code: str, market: str, days: int) -> list[dict]:
         return []
 
 
-def _fetch_yfinance_history(code: str, market: str, days: int) -> list[dict]:
-    """yfinance로 일봉 히스토리를 가져온다."""
-    try:
-        import yfinance as yf
-        ticker = f"{code}.KS" if market == "KOSPI" else code
-        period = f"{max(1, days // 365 + 1)}y"
-        df = yf.download(ticker, period=period, interval="1d", progress=False, auto_adjust=True)
-        if df is None or df.empty:
-            return []
-        rows = []
-        for date, row in df.iterrows():
-            close = float(row["Close"]) if hasattr(row["Close"], "__float__") else None
-            if close is None or close <= 0:
-                continue
-            rows.append({
-                "date": date.strftime("%Y%m%d"),
-                "close": close,
-                "high": float(row.get("High", close)),
-                "low": float(row.get("Low", close)),
-                "volume": float(row.get("Volume", 0)),
-            })
-        return rows
-    except Exception as exc:
-        logger.debug("{}/{}: yfinance 조회 실패 — {}", code, market, exc)
-        return []
-
 
 def _fetch_price_history(code: str, market: str, days: int, min_rows: int = 80) -> list[dict]:
-    """KIS 우선, 실패 시 yfinance 폴백으로 가격 데이터를 가져온다."""
+    """KIS API로 가격 데이터를 가져온다. min_rows에 못 미치면 빈 리스트 반환."""
     rows = _fetch_kis_history(code, market, days)
     if len(rows) >= min_rows:
         return rows
-    logger.debug("{}/{}: KIS {} 건 (필요 {} 건) — yfinance 폴백", code, market, len(rows), min_rows)
-    return _fetch_yfinance_history(code, market, days)
+    logger.debug("{}/{}: KIS {} 건 (필요 {} 건) — 데이터 부족", code, market, len(rows), min_rows)
+    return []
 
 
 def _collect_price_data(
