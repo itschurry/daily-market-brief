@@ -12,7 +12,6 @@ RUN apk add --no-cache python3 py3-pip tzdata
 COPY requirements.txt /app/requirements.txt
 RUN python3 -m pip install --no-cache-dir --break-system-packages -r /app/requirements.txt
 COPY --from=builder /build/dist /usr/share/nginx/html
-COPY generate_index.py /app/generate_index.py
 COPY api_server.py /app/api_server.py
 COPY market_utils.py /app/market_utils.py
 COPY api /app/api

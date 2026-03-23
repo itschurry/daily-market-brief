@@ -28,9 +28,6 @@ export function usePaperTrading() {
   const [lastError, setLastError] = useState<string>('');
 
   const refresh = useCallback(async (refreshQuotes = true) => {
-    if ((account.initial_cash_krw + account.initial_cash_usd) <= 0) {
-      setStatus('loading');
-    }
     try {
       const res = await fetch(`/api/paper/account?refresh=${refreshQuotes ? '1' : '0'}`, { cache: 'no-store' });
       const payload: PaperAccountData = await res.json();
@@ -43,7 +40,7 @@ export function usePaperTrading() {
       setLastError('모의계좌 정보를 불러오지 못했습니다.');
       return null;
     }
-  }, [account.initial_cash_krw, account.initial_cash_usd]);
+  }, []);
 
   const placeOrder = useCallback(async (params: {
     side: 'buy' | 'sell';

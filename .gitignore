@@ -24,7 +24,8 @@ frontend/.vite/
 frontend/.cache/
 
 # --- Logs ---
-logs/
+logs/*
+!logs/.gitkeep
 *.log
 
 # --- Generated reports/artifacts ---
