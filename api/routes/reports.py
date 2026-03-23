@@ -48,79 +48,62 @@ def _load_report_json(suffix: str, date: str | None = None, latest: bool = True)
     return load_report(date, suffix) or {}
 
 
-def _get_analysis() -> dict:
+def _get_cached_payload(cache_bucket: dict, loader, missing_payload: dict) -> dict:
     now = time.time()
-    if _cache._analysis_cache["data"] is not None and now - _cache._analysis_cache["ts"] < _cache.REPORT_CACHE_TTL:
-        return _cache._analysis_cache["data"]
-    data = load_latest_report("analysis")
+    if cache_bucket["data"] is not None and now - cache_bucket["ts"] < _cache.REPORT_CACHE_TTL:
+        return cache_bucket["data"]
+    data = loader()
     if not data:
-        return {"error": "분석 결과가 없습니다. run_once.py를 먼저 실행하세요."}
-    _cache._analysis_cache["data"] = data
-    _cache._analysis_cache["ts"] = now
+        return missing_payload
+    cache_bucket["data"] = data
+    cache_bucket["ts"] = now
     return data
+
+
+def _get_cached_report(cache_bucket: dict, suffix: str, missing_payload: dict) -> dict:
+    return _get_cached_payload(cache_bucket, lambda: load_latest_report(suffix), missing_payload)
+
+
+def _get_analysis() -> dict:
+    return _get_cached_report(
+        _cache._analysis_cache,
+        "analysis",
+        {"error": "분석 결과가 없습니다. run_once.py를 먼저 실행하세요."},
+    )
 
 
 def _get_recommendations() -> dict:
-    now = time.time()
-    if _cache._recommendation_cache["data"] is not None and now - _cache._recommendation_cache["ts"] < _cache.REPORT_CACHE_TTL:
-        return _cache._recommendation_cache["data"]
-    data = load_latest_report("recommendations")
-    if not data:
-        return {"error": "추천 결과가 없습니다. run_once.py를 먼저 실행하세요.", "recommendations": []}
-    _cache._recommendation_cache["data"] = data
-    _cache._recommendation_cache["ts"] = now
-    return data
+    return _get_cached_report(
+        _cache._recommendation_cache,
+        "recommendations",
+        {"error": "추천 결과가 없습니다. run_once.py를 먼저 실행하세요.", "recommendations": []},
+    )
 
 
 def _get_today_picks() -> dict:
-    now = time.time()
-    if _cache._today_picks_cache["data"] is not None and now - _cache._today_picks_cache["ts"] < _cache.REPORT_CACHE_TTL:
-        return _cache._today_picks_cache["data"]
-    data = load_latest_report("today_picks")
+    data = _get_cached_report(_cache._today_picks_cache, "today_picks", {})
     if not data:
         fallback = _fallback_today_picks()
         if fallback.get("picks"):
             return fallback
         return {"error": "오늘의 추천 결과가 없습니다.", "picks": [], "auto_candidates": []}
-    _cache._today_picks_cache["data"] = data
-    _cache._today_picks_cache["ts"] = now
     return data
 
 
 def _get_ai_signals() -> dict:
-    now = time.time()
-    if _cache._ai_signals_cache["data"] is not None and now - _cache._ai_signals_cache["ts"] < _cache.REPORT_CACHE_TTL:
-        return _cache._ai_signals_cache["data"]
-    data = load_latest_report("ai_signals")
-    if not data:
-        return {"signals": []}
-    _cache._ai_signals_cache["data"] = data
-    _cache._ai_signals_cache["ts"] = now
-    return data
+    return _get_cached_report(_cache._ai_signals_cache, "ai_signals", {"signals": []})
 
 
 def _get_macro() -> dict:
-    now = time.time()
-    if _cache._macro_cache["data"] is not None and now - _cache._macro_cache["ts"] < _cache.REPORT_CACHE_TTL:
-        return _cache._macro_cache["data"]
-    data = load_latest_report("macro")
-    if not data:
-        return {"error": "거시 지표 결과가 없습니다."}
-    _cache._macro_cache["data"] = data
-    _cache._macro_cache["ts"] = now
-    return data
+    return _get_cached_report(_cache._macro_cache, "macro", {"error": "거시 지표 결과가 없습니다."})
 
 
 def _get_market_context() -> dict:
-    now = time.time()
-    if _cache._market_context_cache["data"] is not None and now - _cache._market_context_cache["ts"] < _cache.REPORT_CACHE_TTL:
-        return _cache._market_context_cache["data"]
-    data = load_latest_report("market_context")
-    if not data:
-        return {"error": "시장 컨텍스트 결과가 없습니다."}
-    _cache._market_context_cache["data"] = data
-    _cache._market_context_cache["ts"] = now
-    return data
+    return _get_cached_report(
+        _cache._market_context_cache,
+        "market_context",
+        {"error": "시장 컨텍스트 결과가 없습니다."},
+    )
 
 
 def _get_market_dashboard() -> dict:
