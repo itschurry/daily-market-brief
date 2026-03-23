@@ -35,6 +35,7 @@ class ExecutionEngine(Protocol):
         initial_cash_krw: float | None = None,
         initial_cash_usd: float | None = None,
         paper_days: int | None = None,
+        seed_positions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -80,6 +81,7 @@ class PaperExecutionEngine:
         initial_cash_krw: float | None = None,
         initial_cash_usd: float | None = None,
         paper_days: int | None = None,
+        seed_positions: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             seed_krw = float(initial_cash_krw if initial_cash_krw is not None else self.config.default_initial_cash_krw)
@@ -89,6 +91,11 @@ class PaperExecutionEngine:
             seed_usd = max(0.0, seed_usd)
             days = max(1, min(365, days))
             self._state = self._new_state(seed_krw, seed_usd, days)
+            if seed_positions:
+                self._state["positions"] = self._build_seed_positions(seed_positions)
+                self._refresh_positions(self._state)
+            self._state["starting_equity_krw"] = self._baseline_equity_krw(self._state)
+            self._state["updated_at"] = _now_iso()
             self._persist(self._state)
             return self._build_snapshot(self._state)
 
@@ -282,6 +289,7 @@ class PaperExecutionEngine:
         cash_krw = float(state["cash_krw"])
         cash_usd = float(state["cash_usd"])
         equity_krw = cash_krw + (cash_usd * fx_rate) + total_market_value_krw
+        starting_equity_krw = float(state.get("starting_equity_krw") or self._baseline_equity_krw(state))
         created_at = state["created_at"]
         paper_days = int(state.get("paper_days") or self.config.default_paper_days)
         days_elapsed = _days_elapsed(created_at)
@@ -301,6 +309,7 @@ class PaperExecutionEngine:
             "market_value_krw": round(total_market_value_krw, 2),
             "market_value_usd": round(total_market_value_usd, 4),
             "equity_krw": round(equity_krw, 2),
+            "starting_equity_krw": round(starting_equity_krw, 2),
             "fx_rate": round(fx_rate, 4),
             "realized_pnl_krw": round(float(state["realized_pnl_krw"]), 2),
             "realized_pnl_usd": round(float(state["realized_pnl_usd"]), 4),
@@ -349,6 +358,7 @@ class PaperExecutionEngine:
 
     def _new_state(self, initial_cash_krw: float, initial_cash_usd: float, paper_days: int) -> dict[str, Any]:
         now = _now_iso()
+        fx_rate = _to_float(self.fx_provider()) or 1300.0
         return {
             "created_at": now,
             "updated_at": now,
@@ -357,6 +367,7 @@ class PaperExecutionEngine:
             "initial_cash_usd": initial_cash_usd,
             "cash_krw": initial_cash_krw,
             "cash_usd": initial_cash_usd,
+            "starting_equity_krw": initial_cash_krw + (initial_cash_usd * fx_rate),
             "realized_pnl_krw": 0.0,
             "realized_pnl_usd": 0.0,
             "total_fees_krw": 0.0,
@@ -364,6 +375,34 @@ class PaperExecutionEngine:
             "positions": {},
             "orders": [],
         }
+
+    def _build_seed_positions(self, seed_positions: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        now = _now_iso()
+        positions: dict[str, dict[str, Any]] = {}
+        for raw in seed_positions:
+            market = str(raw.get("market") or "").strip().upper()
+            code = str(raw.get("code") or "").strip().upper()
+            quantity = int(raw.get("quantity") or 0)
+            avg_price_local = _to_float(raw.get("avg_price_local"))
+            if market not in {"KOSPI", "NASDAQ"} or not code or quantity <= 0 or avg_price_local is None or avg_price_local <= 0:
+                continue
+            fx_rate = 1.0 if market == "KOSPI" else (_to_float(self.fx_provider()) or 1300.0)
+            key = f"{market}:{code}"
+            positions[key] = {
+                "code": code,
+                "name": str(raw.get("name") or code),
+                "market": market,
+                "currency": "KRW" if market == "KOSPI" else "USD",
+                "quantity": quantity,
+                "entry_ts": str(raw.get("entry_ts") or now),
+                "avg_price_local": avg_price_local,
+                "avg_price_krw": avg_price_local * fx_rate,
+                "last_price_local": avg_price_local,
+                "last_price_krw": avg_price_local * fx_rate,
+                "fx_rate": fx_rate,
+                "updated_at": now,
+            }
+        return positions
 
     def _load_state(self) -> dict[str, Any]:
         payload = _read_json(self.config.state_path)
@@ -387,11 +426,23 @@ class PaperExecutionEngine:
         payload.setdefault("initial_cash_usd", self.config.default_initial_cash_usd)
         payload.setdefault("cash_krw", payload["initial_cash_krw"])
         payload.setdefault("cash_usd", payload["initial_cash_usd"])
+        payload.setdefault("starting_equity_krw", self._baseline_equity_krw(payload))
         payload.setdefault("realized_pnl_krw", 0.0)
         payload.setdefault("realized_pnl_usd", 0.0)
         payload.setdefault("total_fees_krw", 0.0)
         payload.setdefault("total_fees_usd", 0.0)
         return payload
+
+    def _baseline_equity_krw(self, state: dict[str, Any]) -> float:
+        fx_rate = _to_float(self.fx_provider()) or 1300.0
+        seed_cash_krw = float(state.get("initial_cash_krw") or 0.0)
+        seed_cash_usd = float(state.get("initial_cash_usd") or 0.0)
+        seed_positions_krw = sum(
+            float(item.get("avg_price_krw") or 0.0) * float(item.get("quantity") or 0.0)
+            for item in (state.get("positions") or {}).values()
+            if isinstance(item, dict)
+        )
+        return seed_cash_krw + (seed_cash_usd * fx_rate) + seed_positions_krw
 
     def _persist(self, state: dict[str, Any]) -> None:
         self.config.state_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { PaperAccountData, PaperEngineConfig, PaperEngineState } from '../types';
+import type { PaperAccountData, PaperEngineConfig, PaperEngineState, PaperSeedPositionInput } from '../types';
 
 const EMPTY_ACCOUNT: PaperAccountData = {
   mode: 'paper',
@@ -11,6 +11,7 @@ const EMPTY_ACCOUNT: PaperAccountData = {
   market_value_krw: 0,
   market_value_usd: 0,
   equity_krw: 0,
+  starting_equity_krw: 0,
   fx_rate: 0,
   realized_pnl_krw: 0,
   realized_pnl_usd: 0,
@@ -79,6 +80,7 @@ export function usePaperTrading() {
     initial_cash_krw?: number;
     initial_cash_usd?: number;
     paper_days?: number;
+    seed_positions?: PaperSeedPositionInput[];
   }) => {
     try {
       const res = await fetch('/api/paper/reset', {

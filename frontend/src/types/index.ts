@@ -491,6 +491,7 @@ export interface PaperAccountData {
   market_value_krw: number;
   market_value_usd: number;
   equity_krw: number;
+  starting_equity_krw?: number;
   fx_rate: number;
   realized_pnl_krw: number;
   realized_pnl_usd: number;
@@ -499,6 +500,14 @@ export interface PaperAccountData {
   positions: PaperPosition[];
   orders: PaperOrderEvent[];
   error?: string;
+}
+
+export interface PaperSeedPositionInput {
+  code: string;
+  name?: string;
+  market: 'KOSPI' | 'NASDAQ';
+  quantity: number;
+  avg_price_local: number;
 }
 
 export interface PaperEngineConfig {

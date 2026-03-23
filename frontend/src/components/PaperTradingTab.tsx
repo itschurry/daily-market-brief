@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { usePaperTrading } from '../hooks/usePaperTrading';
-import type { PaperEngineConfig, PaperSkippedItem, PaperStrategyProfile } from '../types';
+import type { PaperEngineConfig, PaperSeedPositionInput, PaperSkippedItem, PaperStrategyProfile } from '../types';
 
 const SKIP_REASON_LABELS: Record<string, string> = {
   entry_signal_not_matched: '매수신호 미충족',
@@ -116,6 +116,16 @@ function withCommaDigits(raw: string) {
   return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(Number(digits));
 }
 
+function withCommaDecimal(raw: string, maxFractionDigits = 4) {
+  const cleaned = raw.replace(/,/g, '').replace(/[^\d.]/g, '');
+  if (!cleaned) return '';
+  const hasDot = cleaned.includes('.');
+  const [intRaw, fractionRaw = ''] = cleaned.split('.', 2);
+  const normalizedInt = intRaw ? new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(Number(intRaw)) : '0';
+  if (!hasDot) return normalizedInt;
+  return `${normalizedInt}.${fractionRaw.slice(0, maxFractionDigits)}`;
+}
+
 function parseCommaNumber(value: string) {
   const normalized = value.replace(/,/g, '').trim();
   if (!normalized) return 0;
@@ -179,6 +189,26 @@ function cloneDefaultProfiles(): Record<'KOSPI' | 'NASDAQ', PaperStrategyProfile
   };
 }
 
+type SeedHoldingFormRow = {
+  id: string;
+  market: 'KOSPI' | 'NASDAQ';
+  code: string;
+  name: string;
+  quantity: string;
+  avgPriceLocal: string;
+};
+
+function createSeedHoldingRow(seed?: Partial<PaperSeedPositionInput> & { name?: string }): SeedHoldingFormRow {
+  return {
+    id: `seed-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    market: seed?.market || 'KOSPI',
+    code: seed?.code || '',
+    name: seed?.name || '',
+    quantity: seed?.quantity ? formatIntegerInput(seed.quantity) : '',
+    avgPriceLocal: seed?.avg_price_local ? withCommaDecimal(String(seed.avg_price_local)) : '',
+  };
+}
+
 function normalizeProfileMap(
   profiles?: Partial<Record<'KOSPI' | 'NASDAQ', Partial<PaperStrategyProfile>>>,
 ): Record<'KOSPI' | 'NASDAQ', PaperStrategyProfile> {
@@ -210,6 +240,8 @@ export function PaperTradingTab() {
   const [seedKrw, setSeedKrw] = useState('10,000,000');
   const [seedUsd, setSeedUsd] = useState('10,000');
   const [paperDays, setPaperDays] = useState('7');
+  const [seedHoldings, setSeedHoldings] = useState<SeedHoldingFormRow[]>([]);
+  const [seedHoldingsDirty, setSeedHoldingsDirty] = useState(false);
   const [autoMarket] = useState<'KOSPI' | 'NASDAQ'>('NASDAQ');
   const [autoMaxPositions, setAutoMaxPositions] = useState('5');
   const [autoMinScore, setAutoMinScore] = useState('50');
@@ -231,8 +263,8 @@ export function PaperTradingTab() {
   const [optApplyStatus, setOptApplyStatus] = useState<'idle' | 'loading' | 'applied' | 'error'>('idle');
 
   const initialTotalKrw = useMemo(() => {
-    return (account.initial_cash_krw || 0) + ((account.initial_cash_usd || 0) * (account.fx_rate || 0));
-  }, [account.initial_cash_krw, account.initial_cash_usd, account.fx_rate]);
+    return account.starting_equity_krw || 0;
+  }, [account.starting_equity_krw]);
 
   const runningReturnPct = useMemo(() => {
     if (!initialTotalKrw) return 0;
@@ -363,6 +395,17 @@ export function PaperTradingTab() {
   }, [account.initial_cash_krw, account.initial_cash_usd, account.paper_days]);
 
   useEffect(() => {
+    if (seedHoldingsDirty) return;
+    setSeedHoldings(account.positions.map((position) => createSeedHoldingRow({
+      market: position.market,
+      code: position.code,
+      name: position.name,
+      quantity: position.quantity,
+      avg_price_local: position.avg_price_local,
+    })));
+  }, [account.positions, seedHoldingsDirty]);
+
+  useEffect(() => {
     const cfg = engineState.config;
     if (!cfg) return;
 
@@ -458,17 +501,72 @@ export function PaperTradingTab() {
     }
   }
 
+  function handleAddSeedHolding() {
+    setSeedHoldingsDirty(true);
+    setSeedHoldings((prev) => [...prev, createSeedHoldingRow()]);
+  }
+
+  function handleSeedHoldingChange(id: string, patch: Partial<SeedHoldingFormRow>) {
+    setSeedHoldingsDirty(true);
+    setSeedHoldings((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }
+
+  function handleRemoveSeedHolding(id: string) {
+    setSeedHoldingsDirty(true);
+    setSeedHoldings((prev) => prev.filter((item) => item.id !== id));
+  }
+
+  function buildSeedHoldingsPayload():
+    | { ok: true; items: PaperSeedPositionInput[] }
+    | { ok: false; error: string } {
+    const items: PaperSeedPositionInput[] = [];
+    for (let index = 0; index < seedHoldings.length; index += 1) {
+      const row = seedHoldings[index];
+      const code = row.code.trim().toUpperCase();
+      const name = row.name.trim();
+      const quantity = Math.floor(parseCommaNumber(row.quantity));
+      const avgPriceLocal = parseCommaNumber(row.avgPriceLocal);
+      const isBlank = !code && !name && quantity <= 0 && avgPriceLocal <= 0;
+      if (isBlank) continue;
+      if (!code) {
+        return { ok: false, error: `보유 종목 ${index + 1}행: 종목코드를 입력해 주세요.` };
+      }
+      if (quantity <= 0) {
+        return { ok: false, error: `보유 종목 ${index + 1}행: 수량은 1 이상이어야 합니다.` };
+      }
+      if (avgPriceLocal <= 0) {
+        return { ok: false, error: `보유 종목 ${index + 1}행: 평균단가는 0보다 커야 합니다.` };
+      }
+      items.push({
+        market: row.market,
+        code,
+        name,
+        quantity,
+        avg_price_local: avgPriceLocal,
+      });
+    }
+    return { ok: true, items };
+  }
+
   async function handleReset() {
+    const seedPayload = buildSeedHoldingsPayload();
+    if (!seedPayload.ok) {
+      setStatusMessage(seedPayload.error);
+      return;
+    }
     const result = await reset({
       initial_cash_krw: parseCommaNumber(seedKrw),
       initial_cash_usd: parseCommaNumber(seedUsd),
       paper_days: Math.max(1, Math.min(365, Math.floor(parseCommaNumber(paperDays)))),
+      seed_positions: seedPayload.items,
     });
     if (!result.ok) {
       setStatusMessage(result.error || '초기화 실패');
       return;
     }
-    setStatusMessage('모의계좌를 초기화했습니다.');
+    setSeedHoldings(seedPayload.items.map((item) => createSeedHoldingRow(item)));
+    setSeedHoldingsDirty(false);
+    setStatusMessage(`모의계좌를 초기화했습니다. 시작 보유 종목 ${seedPayload.items.length}건 반영.`);
   }
 
   async function handleAutoInvest() {
@@ -637,6 +735,52 @@ export function PaperTradingTab() {
             <span style={{ fontSize: 12, color: 'var(--text-3)' }}>모의투자 기간 (일)</span>
             <input className="backtest-input" inputMode="numeric" value={paperDays} onChange={(event) => setPaperDays(withCommaDigits(event.target.value))} />
           </label>
+        </div>
+        <div style={{ display: 'grid', gap: 10, padding: '12px 14px', borderRadius: 14, border: '1px solid var(--border)', background: 'var(--bg-soft)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-1)' }}>시작 보유 종목</div>
+              <div style={{ fontSize: 12, color: 'var(--text-4)', marginTop: 4 }}>초기화 적용 시 아래 종목이 시작 포지션으로 들어갑니다. 현금은 위 자금과 별도로 유지됩니다.</div>
+            </div>
+            <button className="ghost-button" onClick={handleAddSeedHolding}>종목 추가</button>
+          </div>
+          {seedHoldings.length === 0 && (
+            <div style={{ fontSize: 13, color: 'var(--text-4)' }}>추가된 시작 보유 종목이 없습니다.</div>
+          )}
+          {seedHoldings.length > 0 && (
+            <div style={{ display: 'grid', gap: 10 }}>
+              {seedHoldings.map((row, index) => (
+                <div key={row.id} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, alignItems: 'end', padding: '12px', borderRadius: 12, border: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>시장</span>
+                    <select className="backtest-input" value={row.market} onChange={(event) => handleSeedHoldingChange(row.id, { market: event.target.value as 'KOSPI' | 'NASDAQ' })}>
+                      <option value="KOSPI">KOSPI</option>
+                      <option value="NASDAQ">NASDAQ</option>
+                    </select>
+                  </label>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>종목코드</span>
+                    <input className="backtest-input" value={row.code} onChange={(event) => handleSeedHoldingChange(row.id, { code: event.target.value.toUpperCase() })} placeholder={row.market === 'KOSPI' ? '005930' : 'AAPL'} />
+                  </label>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>종목명</span>
+                    <input className="backtest-input" value={row.name} onChange={(event) => handleSeedHoldingChange(row.id, { name: event.target.value })} placeholder="삼성전자" />
+                  </label>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>수량</span>
+                    <input className="backtest-input" inputMode="numeric" value={row.quantity} onChange={(event) => handleSeedHoldingChange(row.id, { quantity: withCommaDigits(event.target.value) })} placeholder="160" />
+                  </label>
+                  <label style={{ display: 'grid', gap: 6 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-3)' }}>평균 매수가</span>
+                    <input className="backtest-input" inputMode="decimal" value={row.avgPriceLocal} onChange={(event) => handleSeedHoldingChange(row.id, { avgPriceLocal: withCommaDecimal(event.target.value, row.market === 'NASDAQ' ? 4 : 0) })} placeholder={row.market === 'NASDAQ' ? '182.35' : '187,193'} />
+                  </label>
+                  <button className="ghost-button" onClick={() => handleRemoveSeedHolding(row.id)} style={{ alignSelf: 'end' }}>
+                    {index + 1}행 삭제
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div>
           <button className="ghost-button" onClick={handleReset}>초기 자금/기간 적용</button>

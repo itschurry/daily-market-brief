@@ -102,6 +102,47 @@ def _infer_pick_market(code: str, market: str, name: str = "") -> str:
     return resolve_market(code=code, name=name, market=market, scope="core")
 
 
+def _parse_seed_positions(raw) -> list[dict]:
+    if raw in (None, ""):
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("seed_positions는 배열이어야 합니다.")
+    parsed: list[dict] = []
+    for idx, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"seed_positions[{idx}] 형식이 올바르지 않습니다.")
+        market = str(item.get("market") or "").strip().upper()
+        code = str(item.get("code") or "").strip().upper()
+        name = str(item.get("name") or "").strip()
+        try:
+            quantity = int(item.get("quantity") or 0)
+        except (TypeError, ValueError):
+            quantity = 0
+        avg_price_raw = item.get("avg_price_local")
+        try:
+            avg_price_local = float(avg_price_raw) if avg_price_raw not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            avg_price_local = 0.0
+
+        if market not in {"KOSPI", "NASDAQ"}:
+            raise ValueError(f"seed_positions[{idx}] market은 KOSPI/NASDAQ만 허용합니다.")
+        if not code:
+            raise ValueError(f"seed_positions[{idx}] code가 필요합니다.")
+        if quantity <= 0:
+            raise ValueError(f"seed_positions[{idx}] quantity는 1 이상이어야 합니다.")
+        if avg_price_local <= 0:
+            raise ValueError(f"seed_positions[{idx}] avg_price_local은 0보다 커야 합니다.")
+
+        parsed.append({
+            "market": market,
+            "code": code,
+            "name": name,
+            "quantity": quantity,
+            "avg_price_local": avg_price_local,
+        })
+    return parsed
+
+
 def _normalize_theme_focus(raw) -> list[str]:
     if not isinstance(raw, list):
         return list(_DEFAULT_THEME_FOCUS)
@@ -826,6 +867,7 @@ def handle_paper_reset(payload: dict) -> tuple[int, dict]:
         initial_cash_krw_raw = payload.get("initial_cash_krw")
         initial_cash_usd_raw = payload.get("initial_cash_usd")
         paper_days_raw = payload.get("paper_days")
+        seed_positions = _parse_seed_positions(payload.get("seed_positions"))
         initial_cash_krw = float(initial_cash_krw_raw) if initial_cash_krw_raw not in (None, "") else None
         initial_cash_usd = float(initial_cash_usd_raw) if initial_cash_usd_raw not in (None, "") else None
         paper_days = int(paper_days_raw) if paper_days_raw not in (None, "") else None
@@ -836,8 +878,11 @@ def handle_paper_reset(payload: dict) -> tuple[int, dict]:
                 initial_cash_krw=initial_cash_krw,
                 initial_cash_usd=initial_cash_usd,
                 paper_days=paper_days,
+                seed_positions=seed_positions,
             ),
         }
+    except ValueError as exc:
+        return 400, {"ok": False, "error": str(exc)}
     except Exception as exc:
         return 500, {"ok": False, "error": str(exc)}
 
