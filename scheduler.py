@@ -2,7 +2,7 @@
 
 - 한국장 정규장: KST 09:00-15:30, 30분 단위 cron
 - 미국장 정규장: ET 09:30-16:00, 30분 단위 cron
-- 장외: KST 06:00-21:00, 매 정시 cron
+- 장외: KST 06:00-21:00, 1시간 단위 기준, 한국장 정규장은 제외
 """
 import asyncio
 import os
@@ -62,8 +62,15 @@ def _us_market_job():
 
 
 def _off_session_job():
-    """장외 슬롯 핸들러 (KST 매 정시)."""
+    """장외 슬롯 핸들러.
+
+    한국장 거래일의 정규장 슬롯과 겹치면 스킵한다.
+    """
     now_utc = datetime.now(timezone.utc)
+    if is_market_half_hour_slot("KR", now_utc):
+        now_kst = now_utc.astimezone(KST_ZONE)
+        logger.info(f"장외 슬롯 스킵(한국장 정규장과 중복): {now_kst:%H:%M} KST")
+        return
     now_kst = now_utc.astimezone(KST_ZONE)
     logger.info(f"장외 슬롯 실행: {now_kst:%H:%M} KST")
     _run()
@@ -92,7 +99,7 @@ def _run_optimization():
 
 
 def _log_schedule_policy() -> None:
-    logger.info("장외 스케줄: 06:00-21:00 KST 매 정시")
+    logger.info("장외 스케줄: 06:00-21:00 KST 매 정시, 한국장 정규장과 중복 시 스킵")
     logger.info("한국장 스케줄: 09:00-15:30 KST, 30분 단위 (주말/한국 공휴일 제외)")
     logger.info("미국장 스케줄: 09:30-16:00 ET, 30분 단위 (주말/미국 거래소 휴장일 제외)")
 
@@ -124,7 +131,7 @@ if __name__ == "__main__":
         id="us_market",
     )
 
-    # 장외: KST 06:00-21:00 매 정시
+    # 장외: KST 06:00-21:00 매 정시, 한국장 정규장과 중복 시 핸들러에서 스킵
     scheduler.add_job(
         _off_session_job,
         CronTrigger(hour="6-21", minute=0, timezone=KST_TZ),
@@ -144,4 +151,3 @@ if __name__ == "__main__":
     logger.info("APScheduler 시작")
     _log_schedule_policy()
     scheduler.start()
-

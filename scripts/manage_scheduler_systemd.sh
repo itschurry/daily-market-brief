@@ -98,7 +98,7 @@ install_service() {
   echo "Unit: $UNIT_PATH"
   echo "Stdout log: $LOG_DIR/scheduler.systemd.out.log"
   echo "Stderr log: $LOG_DIR/scheduler.systemd.err.log"
-  echo "Schedule policy: KR 09:00-15:30 KST every 30m, US 09:30-16:00 ET every 30m, off-session every 3h"
+  echo "Schedule policy: KR 09:00-15:30 KST every 30m, US 09:30-16:00 ET every 30m, off-session hourly"
 }
 
 uninstall_service() {
