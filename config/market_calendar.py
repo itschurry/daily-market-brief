@@ -84,6 +84,17 @@ def is_market_trading_day(market: str, now: datetime | None = None) -> bool:
     return local_dt.date() not in calendar
 
 
+def is_market_open(market: str, now: datetime | None = None) -> bool:
+    """현재 시각이 정규장(개장~폐장) 내인지 판정."""
+    normalized = _normalize_market(market)
+    if not is_market_trading_day(normalized, now):
+        return False
+    local_dt = get_market_local_dt(normalized, now)
+    minutes = local_dt.hour * 60 + local_dt.minute
+    window = SESSION_WINDOWS[normalized]
+    return window.open_minutes <= minutes < window.close_minutes
+
+
 def is_market_half_hour_slot(market: str, now: datetime | None = None) -> bool:
     normalized = _normalize_market(market)
     if not is_market_trading_day(normalized, now):

@@ -185,6 +185,8 @@ def _resolve_stock_quote(code: str, market: str = "") -> dict:
         raise ValueError("code required")
 
     listing = lookup_company_listing(code=normalized_input, name=normalized_input, scope="core")
+    if not listing:
+        listing = lookup_company_listing(code=normalized_input, name=normalized_input, scope="live")
     resolved_code = str((listing or {}).get("code") or normalized_input).strip().upper()
     resolved_name = str((listing or {}).get("name") or normalized_input).strip()
     resolved_market = str((listing or {}).get("market") or market or "").strip()

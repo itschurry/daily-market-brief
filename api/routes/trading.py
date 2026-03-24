@@ -31,6 +31,7 @@ from analyzer.shared_strategy import (
     should_exit_from_snapshot,
 )
 from broker.execution_engine import EngineConfig, PaperExecutionEngine
+from config.market_calendar import is_market_open
 from config.settings import LOGS_DIR
 from market_utils import normalize_market, resolve_market
 
@@ -396,6 +397,10 @@ def _auto_invest_picks(
     if target_market not in _SUPPORTED_AUTO_TRADE_MARKETS:
         return {"ok": False, "error": "market은 NASDAQ/KOSPI만 허용합니다."}
 
+    calendar_market = "KR" if target_market == "KOSPI" else "US"
+    if not is_market_open(calendar_market):
+        return {"ok": False, "error": f"{target_market} 정규장 시간이 아닙니다. 장중에만 거래가 가능합니다."}
+
     filter_cfg = {
         "min_score": min_score,
         "include_neutral": include_neutral,
@@ -586,7 +591,15 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
     markets = [m for m in cfg.get("markets", ["KOSPI", "NASDAQ"]) if m in {"KOSPI", "NASDAQ"}]
     candidate_counts_by_market: dict[str, int] = {market: 0 for market in markets}
 
+    _MARKET_TO_CALENDAR = {"KOSPI": "KR", "NASDAQ": "US"}
+
     for market in markets:
+        calendar_market = _MARKET_TO_CALENDAR.get(market, market)
+        if not is_market_open(calendar_market):
+            skipped.append({"code": "*", "market": market, "reason": "market_closed"})
+            candidate_counts_by_market[market] = 0
+            continue
+
         account = engine.get_account(refresh_quotes=True)
         market_positions = [
             position for position in account.get("positions", [])

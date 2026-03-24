@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from market_utils import lookup_company_listing
+
 
 class ExecutionEngine(Protocol):
     """주문 실행 엔진 공통 인터페이스."""
@@ -345,7 +347,12 @@ class PaperExecutionEngine:
             unrealized_krw = (last_price_krw - avg_price_krw) * quantity
             base_cost_krw = avg_price_krw * quantity
             unrealized_pct = (unrealized_krw / base_cost_krw * 100) if base_cost_krw > 0 else 0.0
-            position["name"] = str(quote.get("name") or position.get("name") or code)
+            resolved_name = quote.get("name") or position.get("name") or ""
+            if not resolved_name or resolved_name == code:
+                catalog = lookup_company_listing(code=code, scope="core") or lookup_company_listing(code=code, scope="live")
+                if catalog and catalog.get("name"):
+                    resolved_name = catalog["name"]
+            position["name"] = str(resolved_name or code)
             position["last_price_local"] = last_price_local
             position["last_price_krw"] = last_price_krw
             position["fx_rate"] = fx_rate
