@@ -686,4 +686,7 @@ def run_portfolio_optimization(
                 len(results), len(filtered_results),
                 (1 - len(filtered_results) / max(1, len(results))) * 100)
 
-    return filtered_results  # Phase 3: 신뢰도가 높은 결과만 반환
+    # 신뢰 가능 결과가 없어도 전체 결과를 반환한다.
+    # is_reliable 필드가 각 결과에 포함되어 있으므로 호출자가 필터링할 수 있고,
+    # _save_results()가 빈 리스트로 조기 종료되는 것을 방지한다.
+    return results

@@ -280,8 +280,30 @@ def main() -> None:
         sym_pairs, price_data, sim_config=sim_config)
 
     if not results:
-        logger.error("최적화 결과가 없습니다.")
-        sys.exit(1)
+        logger.warning("1차 최적화 결과가 없습니다. 완화된 필터로 재시도합니다.")
+        relaxed_grid = ParamGrid(
+            stop_loss_pct=[5.0, 10.0],
+            take_profit_pct=[12.0, 20.0],
+            max_holding_days=[15, 25],
+            rsi_min=[30.0],
+            rsi_max=[80.0],
+            volume_ratio_min=[0.6],
+            adx_min=[5.0],
+            mfi_min=[0.0],
+            mfi_max=[100.0],
+            bb_pct_min=[0.0],
+            bb_pct_max=[1.0],
+            stoch_k_min=[0.0],
+            stoch_k_max=[100.0],
+        )
+        results = run_portfolio_optimization(
+            sym_pairs, price_data, param_grid=relaxed_grid, sim_config=sim_config
+        )
+
+    if not results:
+        logger.error("최적화 결과가 없어 빈 결과 파일을 저장합니다.")
+        _save_results([], sim_config, name_map=name_map)
+        return
 
     reliable = [r for r in results if r.is_reliable]
     logger.info("최적화 완료: {}개 종목, 신뢰할 수 있는 결과: {}개",

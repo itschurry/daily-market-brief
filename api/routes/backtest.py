@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 
 import api.cache as _cache
 from analyzer.candidate_selector import (
@@ -14,6 +15,10 @@ from analyzer.shared_strategy import (
     serialize_strategy_profiles,
 )
 from config.settings import REPORT_OUTPUT_DIR
+
+
+_OPTIMIZED_PARAMS_PATH = Path(
+    __file__).parent.parent.parent / "config" / "optimized_params.json"
 
 
 def _config_cache_key(config: BacktestConfig) -> str:
@@ -212,7 +217,20 @@ def _get_kospi_backtest() -> dict:
 def handle_backtest_run(query: dict) -> tuple[int, dict]:
     try:
         config = _parse_backtest_config(query)
-        return 200, _run_backtest(config)
+        result = _run_backtest(config)
+
+        # 백테스트 직후 최적화 결과 파일이 없으면 백그라운드 최적화를 자동 시작한다.
+        if not _OPTIMIZED_PARAMS_PATH.exists():
+            try:
+                from api.routes.optimization import handle_run_optimization
+
+                _, optimization_payload = handle_run_optimization()
+                if isinstance(result, dict):
+                    result["optimization"] = optimization_payload
+            except Exception:
+                pass
+
+        return 200, result
     except Exception as e:
         return 500, {"error": str(e)}
 

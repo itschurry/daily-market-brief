@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from math import sqrt
 from typing import Any
-
-import requests
 
 from analyzer.candidate_selector import (
     CandidateSelectionConfig,
@@ -382,54 +379,35 @@ def _available_market_slots(
     }
 
 
-def _get_backtest_universe(markets: tuple[str, ...]) -> list[tuple[str, str, str, str]]:
+def _get_backtest_universe(markets: tuple[str, ...]) -> list[tuple[str, str, str]]:
     universe = []
     allowed_markets = set(markets)
     if "KOSPI" in allowed_markets:
         for entry in get_kospi100_universe():
-            universe.append((entry["code"], entry["name"], entry["market"], _ticker_for_entry(
-                entry["code"], entry["market"])))
+            universe.append((entry["code"], entry["name"], entry["market"]))
     if "NASDAQ" in allowed_markets:
         for entry in get_sp100_universe():
-            universe.append((entry["code"], entry["name"], entry["market"], _ticker_for_entry(
-                entry["code"], entry["market"])))
+            universe.append((entry["code"], entry["name"], entry["market"]))
     return universe
 
 
 def _load_histories(
-    universe: list[tuple[str, str, str, str]],
+    universe: list[tuple[str, str, str]],
     lookback_days: int,
     base_currency: str,
 ) -> dict[str, list[dict[str, Any]]]:
     cutoff_date = (datetime.now() - timedelta(days=lookback_days)).date()
     histories: dict[str, list[dict[str, Any]]] = {}
-    fx_lookup = _load_usdkrw_lookup(cutoff_date)
-    convert_us_to_krw = base_currency == "KRW"
-    domestic_count = sum(1 for _, _, market,
-                         _ in universe if market == "KOSPI")
-    use_kis_for_domestic = domestic_count <= 80 and _get_kis_client() is not None
 
-    def _load_one(entry: tuple[str, str, str, str]) -> tuple[str, list[dict[str, Any]]]:
-        code, name, market, ticker = entry
+    def _load_one(entry: tuple[str, str, str]) -> tuple[str, list[dict[str, Any]]]:
+        code, name, market = entry
         if market == "KOSPI":
-            rows = _fetch_kis_daily_history(
-                code, name, market, cutoff_date) if use_kis_for_domestic else []
-            if len(rows) < 80:
-                rows = _fetch_naver_daily_history(
-                    code, name, market, cutoff_date)
+            rows = _fetch_kis_daily_history(code, name, market, cutoff_date)
         else:
-            rows = _fetch_yahoo_daily_history(
-                code,
-                name,
-                ticker,
-                market,
-                cutoff_date,
-                fx_lookup,
-                convert_to_krw=convert_us_to_krw,
-            )
+            rows = _fetch_kis_overseas_daily_history(code, name, market, cutoff_date)
         return f"{market}:{code}", rows
 
-    max_workers = 18 if len(universe) > 100 else 8
+    max_workers = 8
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(_load_one, entry) for entry in universe]
         for future in as_completed(futures):
@@ -438,98 +416,6 @@ def _load_histories(
                 continue
             histories[code] = rows
     return histories
-
-
-def _fetch_naver_daily_history(
-    code: str,
-    name: str,
-    market: str,
-    cutoff_date,
-) -> list[dict[str, Any]]:
-    try:
-        response = requests.get(
-            "https://fchart.stock.naver.com/sise.nhn",
-            params={
-                "symbol": code,
-                "timeframe": "day",
-                "count": "800",
-                "requestType": "0",
-            },
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=10,
-        )
-        response.raise_for_status()
-        text = response.content.decode("euc-kr", "replace")
-    except Exception:
-        return []
-
-    raw_rows = []
-    for line in text.splitlines():
-        if 'item data="' not in line:
-            continue
-        item = line.split('item data="', 1)[1].split('"', 1)[0]
-        parts = item.split("|")
-        if len(parts) != 6:
-            continue
-        try:
-            date = datetime.strptime(parts[0], "%Y%m%d").date()
-            close = float(parts[4])
-            volume = float(parts[5])
-        except ValueError:
-            continue
-        if date < cutoff_date:
-            continue
-        raw_rows.append((date, close, volume))
-
-    if len(raw_rows) < 80:
-        return []
-
-    rows = []
-    valid_closes: list[float] = []
-    valid_volumes: list[float] = []
-    for date, close, volume in raw_rows:
-        valid_closes.append(close)
-        valid_volumes.append(volume)
-        sma20 = sum(valid_closes[-20:]) / \
-            20 if len(valid_closes) >= 20 else None
-        sma60 = sum(valid_closes[-60:]) / \
-            60 if len(valid_closes) >= 60 else None
-        volume_avg20 = sum(valid_volumes[-20:]) / \
-            20 if len(valid_volumes) >= 20 else None
-        volume_ratio = (volume / volume_avg20) if volume_avg20 else None
-        rsi14 = _rsi(valid_closes, 14)
-        ema12 = _ema(valid_closes, 12)
-        ema26 = _ema(valid_closes, 26)
-        macd_series = [fast - slow for fast,
-                       slow in zip(ema12[-len(ema26):], ema26)]
-        signal_series = _ema(macd_series, 9)
-        macd = macd_series[-1] if macd_series else None
-        macd_signal = signal_series[-1] if signal_series else None
-        macd_hist = (
-            (macd - macd_signal)
-            if macd is not None and macd_signal is not None
-            else None
-        )
-        rows.append(
-            {
-                "date": date,
-                "code": code,
-                "name": name,
-                "market": market,
-                "currency": "KRW",
-                "close": close,
-                "trade_price": close,
-                "volume": volume,
-                "sma20": sma20,
-                "sma60": sma60,
-                "volume_ratio": volume_ratio,
-                "rsi14": rsi14,
-                "macd": macd,
-                "macd_signal": macd_signal,
-                "macd_hist": macd_hist,
-            }
-        )
-    return rows
 
 
 def _get_kis_client() -> KISClient | None:
@@ -634,75 +520,58 @@ def _fetch_kis_daily_history(
     return rows
 
 
-def _fetch_yahoo_daily_history(
+def _fetch_kis_overseas_daily_history(
     code: str,
     name: str,
-    ticker: str,
     market: str,
     cutoff_date,
-    fx_lookup,
-    convert_to_krw: bool,
 ) -> list[dict[str, Any]]:
+    """KIS API로 해외(NASDAQ 등) 일봉 히스토리를 가져온다."""
+    client = _get_kis_client()
+    if client is None:
+        return []
+
     try:
-        response = requests.get(
-            f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
-            params={
-                "range": "5y",
-                "interval": "1d",
-                "includePrePost": "false",
-                "events": "div,splits",
-            },
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=10,
+        raw_rows = client.get_overseas_daily_history(
+            code,
+            exchange=market,
+            start_date=cutoff_date.strftime("%Y%m%d"),
+            end_date=datetime.now().strftime("%Y%m%d"),
         )
-        response.raise_for_status()
-        payload = response.json()
-        result = (payload.get("chart", {}).get("result") or [None])[0]
-        if not result:
-            return []
-        timestamps = result.get("timestamp") or []
-        quote = (result.get("indicators", {}).get("quote") or [{}])[0]
-        closes = quote.get("close") or []
-        volumes = quote.get("volume") or []
     except Exception:
         return []
 
-    raw_rows = []
-    for ts, close, volume in zip(timestamps, closes, volumes):
-        if close is None or volume is None:
+    parsed_rows = []
+    for item in raw_rows:
+        try:
+            date = datetime.strptime(str(item["date"]), "%Y%m%d").date()
+            close = float(item["close"])
+            volume = float(item.get("volume") or 0)
+        except (KeyError, TypeError, ValueError):
             continue
-        date = datetime.utcfromtimestamp(ts).date()
         if date < cutoff_date:
             continue
-        trade_price = float(close)
-        if convert_to_krw:
-            fx_rate = fx_lookup(date)
-            if fx_rate is None:
-                continue
-            trade_price = float(close) * fx_rate
-        raw_rows.append((date, float(close), float(volume), trade_price))
+        parsed_rows.append((date, close, volume))
 
-    if len(raw_rows) < 80:
+    if len(parsed_rows) < 80:
         return []
+
+    parsed_rows.sort(key=lambda x: x[0])
 
     rows = []
     valid_closes: list[float] = []
     valid_volumes: list[float] = []
-    for date, close, volume, trade_price in raw_rows:
+    for date, close, volume in parsed_rows:
         valid_closes.append(close)
         valid_volumes.append(volume)
-        sma20 = sum(valid_closes[-20:]) / \
-            20 if len(valid_closes) >= 20 else None
-        sma60 = sum(valid_closes[-60:]) / \
-            60 if len(valid_closes) >= 60 else None
-        volume_avg20 = sum(valid_volumes[-20:]) / \
-            20 if len(valid_volumes) >= 20 else None
+        sma20 = sum(valid_closes[-20:]) / 20 if len(valid_closes) >= 20 else None
+        sma60 = sum(valid_closes[-60:]) / 60 if len(valid_closes) >= 60 else None
+        volume_avg20 = sum(valid_volumes[-20:]) / 20 if len(valid_volumes) >= 20 else None
         volume_ratio = (volume / volume_avg20) if volume_avg20 else None
         rsi14 = _rsi(valid_closes, 14)
         ema12 = _ema(valid_closes, 12)
         ema26 = _ema(valid_closes, 26)
-        macd_series = [fast - slow for fast,
-                       slow in zip(ema12[-len(ema26):], ema26)]
+        macd_series = [fast - slow for fast, slow in zip(ema12[-len(ema26):], ema26)]
         signal_series = _ema(macd_series, 9)
         macd = macd_series[-1] if macd_series else None
         macd_signal = signal_series[-1] if signal_series else None
@@ -719,7 +588,7 @@ def _fetch_yahoo_daily_history(
                 "market": market,
                 "currency": "USD",
                 "close": close,
-                "trade_price": trade_price,
+                "trade_price": close,
                 "volume": volume,
                 "sma20": sma20,
                 "sma60": sma60,
@@ -731,57 +600,6 @@ def _fetch_yahoo_daily_history(
             }
         )
     return rows
-
-
-def _load_usdkrw_lookup(cutoff_date):
-    try:
-        response = requests.get(
-            "https://query1.finance.yahoo.com/v8/finance/chart/KRW=X",
-            params={
-                "range": "5y",
-                "interval": "1d",
-                "includePrePost": "false",
-            },
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=10,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        result = (payload.get("chart", {}).get("result") or [None])[0]
-        if not result:
-            raise ValueError("FX history missing")
-        timestamps = result.get("timestamp") or []
-        closes = ((result.get("indicators", {}).get(
-            "quote") or [{}])[0]).get("close") or []
-    except Exception:
-        return lambda _date: None
-
-    dates: list[Any] = []
-    values: list[float] = []
-    for ts, close in zip(timestamps, closes):
-        if close is None:
-            continue
-        date = datetime.utcfromtimestamp(ts).date()
-        if date < cutoff_date - timedelta(days=10):
-            continue
-        dates.append(date)
-        values.append(float(close))
-
-    def lookup(target_date):
-        if not dates:
-            return None
-        idx = bisect_right(dates, target_date) - 1
-        if idx < 0:
-            return None
-        return values[idx]
-
-    return lookup
-
-
-def _ticker_for_entry(code: str, market: str) -> str:
-    if market == "KOSPI":
-        return f"{code}.KS"
-    return code
 
 
 def _should_enter(row: dict[str, Any], cfg: BacktestConfig) -> bool:

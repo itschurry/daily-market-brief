@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import os
 from pathlib import Path
 
 from api.routes.trading import _load_optimized_params
@@ -21,7 +22,7 @@ def _is_running() -> bool:
     if _OPT_RUNNING_FLAG.exists():
         try:
             pid = int(_OPT_RUNNING_FLAG.read_text().strip())
-            Path(f"/proc/{pid}").stat()  # PID가 살아있으면 예외 없이 통과
+            os.kill(pid, 0)  # PID가 살아있으면 예외 없이 통과
             return True
         except Exception:
             _OPT_RUNNING_FLAG.unlink(missing_ok=True)
@@ -58,7 +59,8 @@ def handle_run_optimization() -> tuple[int, dict]:
         proc = None
         try:
             import sys
-            script = str(Path(__file__).parent.parent.parent / "scripts" / "run_monte_carlo_optimizer.py")
+            script = str(Path(__file__).parent.parent.parent /
+                         "scripts" / "run_monte_carlo_optimizer.py")
             log_path = Path("/tmp/optimization.log")
             with log_path.open("w") as log_f:
                 proc = subprocess.Popen(
