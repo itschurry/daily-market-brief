@@ -468,6 +468,11 @@ def _auto_invest_picks(
             skipped.append({"code": code, "reason": "insufficient_cash"})
             continue
 
+        # 몬테카를로 최적 파라미터 로드
+        symbol_params = _get_symbol_optimized_params(code)
+        sl = symbol_params.get("stop_loss_pct")
+        tp = symbol_params.get("take_profit_pct")
+
         order_result = engine.place_order(
             side="buy",
             code=code,
@@ -475,6 +480,8 @@ def _auto_invest_picks(
             quantity=quantity,
             order_type="market",
             limit_price=None,
+            stop_loss_pct=sl,
+            take_profit_pct=tp,
         )
         if not order_result.get("ok"):
             skipped.append({"code": code, "reason": order_result.get("error") or "order_failed"})
@@ -689,12 +696,20 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
             if quantity <= 0:
                 skipped.append({"code": code, "name": cand_name, "market": market, "reason": "insufficient_cash"})
                 continue
+            
+            # 몬테카를로 최적 파라미터 로드
+            symbol_params = _get_symbol_optimized_params(code)
+            sl = symbol_params.get("stop_loss_pct")
+            tp = symbol_params.get("take_profit_pct")
+
             result = engine.place_order(
                 side="buy",
                 code=code,
                 market=market,
                 quantity=quantity,
                 order_type="market",
+                stop_loss_pct=sl,
+                take_profit_pct=tp,
             )
             if result.get("ok"):
                 buy_count += 1

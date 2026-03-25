@@ -1,243 +1,104 @@
-# daily-market-brief
+# daily-market-brief 📈
 
-리포트 우선(read-first) 투자 보조 앱입니다.
+**"데이터는 넘쳐나지만 정보는 부족한 시대, 읽는 것만으로 전략이 세워지는 리포트 우선(Read-first) 투자 보조 앱"**
 
-이 프로젝트는 매크로/시장/뉴스/공시/일정/수급을 수집해 하루치 분석과 추천을 생성하고, 결과를 웹앱에서 읽기 쉽게 제공합니다.
-실시간 데이터는 보조 참고용이며, 기본 사용 흐름은 "리포트 생성 후 나중에 읽고 판단"입니다.
+이 프로젝트는 매크로 지표, 시장 데이터, 뉴스, 공시, 수급을 자동으로 수집하여 AI(OpenAI/Gemini)가 분석한 **실행 가능한 투자 플레이북**을 생성합니다. 실시간 시세에 휘둘리는 대신, 정제된 리포트를 통해 냉철한 의사결정을 내릴 수 있도록 돕습니다.
 
-## 핵심 기능
+---
 
-- 미국 + 한국 거시 지표 수집
-  - 미국: FRED
-  - 한국: ECOS
-- 핵심 경제 일정 / 공시 / 수급 수집
-  - 경제 일정: BLS 공식 캘린더
-  - 공시: DART
-  - 수급: 네이버 금융 종목별 외국인·기관 동향
-- 시장 데이터 수집
-  - KOSPI, KOSDAQ, S&P100, NASDAQ, USD/KRW, WTI, Gold, BTC
-- AI 분석 및 추천 생성
-  - 분석 결과/추천/거시/시장 컨텍스트를 JSON 캐시로 저장
-- React 웹앱에서 리포트 중심 UX 제공
-  - 기본 진입: 오늘 리포트
-  - 실시간 시장 화면은 보조 참고용
+## 🚀 핵심 특징
 
-## 프로젝트 구조
+### 1. 하이브리드 분석 엔진 (Quant + AI)
+- **정량적 필터링**: 수급(외국인/기관), 주요 공시, 기술적 지표(SMA, RSI, MACD 등)를 기반으로 유망 종목 후보군을 1차 선별합니다.
+- **정성적 해석**: 선별된 후보군과 거시 맥락을 AI에게 전달하여, 단순 요약이 아닌 '투자 논거(Thesis)'와 '리스크'를 도출합니다.
 
-- 파이프라인: [main.py](main.py)
-- 1회 실행: [run_once.py](run_once.py)
-- 스케줄러 실행: [scheduler.py](scheduler.py)
-- API 서버: [api_server.py](api_server.py)
-- 거시 수집(미국+한국): [collectors/macro_collector.py](collectors/macro_collector.py), [collectors/ecos_collector.py](collectors/ecos_collector.py)
-- 경제 일정 수집: [collectors/calendar_collector.py](collectors/calendar_collector.py)
-- 공시 수집: [collectors/disclosure_collector.py](collectors/disclosure_collector.py)
-- 수급 수집: [collectors/flow_collector.py](collectors/flow_collector.py)
-- 프론트엔드: [frontend](frontend)
-- Docker 실행 진입: [Dockerfile](Dockerfile), [docker-compose.yml](docker-compose.yml), [entrypoint.sh](entrypoint.sh)
+### 2. 시장 컨텍스트 빌더 (Macro Signals)
+- CPI, 고용지표, 장단기 금리차, 달러 인덱스 등을 분석하여 현재 시장을 **Risk-On / Risk-Off / Neutral** 국면으로 자동 분류합니다.
+- AI가 분석을 시작하기 전, 현재의 거시적 위치를 정확히 인지하도록 가이드를 제공합니다.
 
-## 환경 변수
+### 3. 구조화된 전술 플레이북 (Tactical Playbook)
+- 서술형 리포트와 함께 JSON 구조의 플레이북을 생성합니다.
+- **단기/중기 바이어스**, **선호/기피 섹터**, **진입 규칙(Gating Rules)** 등 즉각적인 행동 지침을 제공합니다.
 
-샘플 파일: [.env.example](.env.example)
+### 4. 리포트 최적화 UX (Frontend)
+- **동적 목차 생성**: AI 리포트 본문을 분석하여 실시간 네비게이션 목차를 생성합니다.
+- **스마트 링크**: 뉴스 소스 및 종목 정보로의 연결을 자동화합니다.
+- **멀티 채널 전송**: 생성된 리포트를 웹앱뿐만 아니라 텔레그램, 이메일로도 받아볼 수 있습니다.
 
-필수(권장)
+---
 
-- OPENAI_API_KEY
-- OPENAI_SIGNAL_MODEL (선택, 기본값: OPENAI_MODEL)
-- FRED_API_KEY
-- ECOS_API_KEY
-- DART_API_KEY
+## 🛠 기술 스택
 
-선택
+- **Backend**: Python 3.12 (Native `http.server` 기반 경량 API)
+- **Frontend**: React 19, TypeScript, Vite, TailwindCSS
+- **AI**: OpenAI (GPT-4o/o1), Google Gemini
+- **Data Sources**: 
+  - Macro: FRED (US), ECOS (KR)
+  - Market: Yahoo Finance, Naver Finance
+  - Disclosure: DART (KR)
+  - News: RSS Feeds & Web Scraping
+- **Infrastructure**: Docker, Docker Compose, Nginx
 
-- KIS_APP_KEY, KIS_APP_SECRET
-- KIS_ACCOUNT_CANO, KIS_ACCOUNT_ACNT_PRDT_CD
-- TELEGRAM_BOT_TOKEN
-- TELEGRAM_CHAT_ID
-- REPORT_WEB_URL
-- SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, REPORT_RECIPIENT
-- DELIVERY_METHOD (telegram / email / both / none)
-- REPORT_OUTPUT_DIR (기본: ./report)
+---
 
-로컬에서는 .env를 생성해 사용하세요.
+## 📦 프로젝트 구조
 
-## 로컬 실행
+```text
+.
+├── analyzer/           # AI 분석 및 전략 수립 엔진 (핵심 로직)
+│   ├── market_context_builder.py  # 거시 지표 기반 국면 판단
+│   ├── openai_analyzer.py         # LLM 기반 리포트/플레이북 생성
+│   └── technical_snapshot.py      # 기술적 지표 계산
+├── collectors/         # 데이터 수집 모듈 (Macro, News, Flow, etc.)
+├── api/                # 경량 API 서버 구현부
+├── frontend/           # React 기반 리포트 중심 웹앱
+├── scripts/            # 백테스트 및 유틸리티 스크립트
+├── main.py             # 전체 리포트 생성 파이프라인
+├── scheduler.py        # 자동화 스케줄러
+└── api_server.py       # API 서버 실행 진입점
+```
 
-### 1) 백엔드 의존성 설치
+---
 
+## ⚙️ 설치 및 실행
+
+### 1. 환경 설정
+`.env.example` 파일을 복사하여 `.env`를 생성하고 필요한 API 키를 입력하세요.
+- `OPENAI_API_KEY`, `FRED_API_KEY`, `DART_API_KEY`, `ECOS_API_KEY` 필수.
+
+### 2. 로컬 실행
 ```bash
+# 1) 의존성 설치
 pip install -r requirements.txt
-```
+cd frontend && npm install && cd ..
 
-### 2) 프론트엔드 설치/빌드
-
-```bash
-cd frontend
-npm install
-npm run build
-cd ..
-```
-
-### 3) 리포트 1회 생성
-
-```bash
+# 2) 리포트 1회 생성 (데이터 수집 및 AI 분석)
 python3 run_once.py
-```
 
-### 4) API + 웹앱 실행
-
-```bash
+# 3) API 및 웹 서버 실행
 python3 api_server.py
 ```
 
-별도 터미널에서 정적 웹은 nginx/docker 기준으로 제공됩니다. 로컬 단독 개발 시에는 frontend dev 서버를 사용해도 됩니다.
-
-### 5) 한국투자증권 Open API 연결 테스트
-
-`.env`에 아래 값을 넣은 뒤 테스트할 수 있습니다.
-
-- `KIS_APP_KEY`
-- `KIS_APP_SECRET`
-- `KIS_ACCOUNT_CANO`, `KIS_ACCOUNT_ACNT_PRDT_CD`
-- `KIS_ACCOUNT_ACNT_PRDT_CD`를 비워두면 기본값 `01`로 처리합니다.
-- 현재 KIS 연동 코드는 실전 투자 서버만 사용합니다.
-
-토큰 발급만 확인:
-
-```bash
-.venv/bin/python scripts/test_kis_connection.py --token-only
-```
-
-토큰 발급 + 국내 현재가 조회 테스트:
-
-```bash
-.venv/bin/python scripts/test_kis_connection.py --symbol 005930
-```
-
-관련 코드:
-
-- [broker/kis_client.py](broker/kis_client.py)
-- [scripts/test_kis_connection.py](scripts/test_kis_connection.py)
-
-잔고 조회:
-
-```bash
-.venv/bin/python scripts/test_kis_account.py balance
-```
-
-주문 가능 금액/수량 조회:
-
-```bash
-.venv/bin/python scripts/test_kis_account.py orderable --symbol 005930 --price 70000
-```
-
-실전 지정가 매수 주문:
-
-```bash
-.venv/bin/python scripts/test_kis_account.py buy --symbol 005930 --qty 1 --price 70000 --confirm
-```
-
-관련 코드:
-
-- [scripts/test_kis_account.py](scripts/test_kis_account.py)
-
-## KOSPI100 + S&P100 가상 백테스트
-
-최근 3년 KOSPI100과 S&P100 종목 일봉을 바탕으로, 미국 종목은 USD/KRW 환율을 반영해 원화 기준으로 가상 자금 백테스트를 돌릴 수 있습니다.
-
-```bash
-.venv/bin/python scripts/run_kospi_backtest.py
-```
-
-옵션 예시:
-
-```bash
-.venv/bin/python scripts/run_kospi_backtest.py --initial-cash 10000000 --max-positions 5 --max-holding-days 30
-```
-
-결과 파일:
-
-- [report/kospi_backtest_latest.json](report/kospi_backtest_latest.json)
-
-## Docker 실행
-
+### 3. Docker 실행
 ```bash
 docker compose up --build -d
 ```
+- 접속 주소: `http://localhost:8080`
 
-접속
+---
 
-- 웹앱: http://localhost:8080
+## 📊 주요 기능 상세
 
-컨테이너는 nginx(정적 프론트) + python API 서버를 함께 실행합니다.
+### 한국투자증권(KIS) 연동
+실제 계좌와 연동하여 잔고 조회 및 주문이 가능합니다 (상세 설정은 `README.md` 원본 참고).
 
-## 스케줄러 사용
-
-현재 [scheduler.py](scheduler.py)는 아래 규칙으로 실행됩니다.
-
-- 한국장 정규장: `09:00-15:30 KST`, 30분 간격
-- 미국장 정규장: `09:30-16:00 ET`, 30분 간격
-- 장외 시간: `06:00-21:00 KST`, 1시간 간격
-- 한국/미국 모두 주말과 공휴일은 장중 슬롯에서 제외
-
+### 가상 백테스트
+최근 3년 데이터를 바탕으로 KOSPI100/S&P100 종목에 대한 가상 전략 검증이 가능합니다.
 ```bash
-pip install -r requirements.txt
-python3 scheduler.py
+python scripts/run_kospi_backtest.py
 ```
 
-수동 실행만 원하면 [run_once.py](run_once.py)만 사용하세요.
+---
 
-Ubuntu에서 systemd 서비스로 백그라운드 실행이 필요하면 관리 스크립트를 사용할 수 있습니다.
-
-```bash
-./scripts/manage_scheduler_systemd.sh install
-./scripts/manage_scheduler_systemd.sh status
-./scripts/manage_scheduler_systemd.sh logs
-```
-
-중지/제거:
-
-```bash
-./scripts/manage_scheduler_systemd.sh stop
-./scripts/manage_scheduler_systemd.sh uninstall
-```
-
-## 생성 산출물
-
-리포트 결과는 [report](report) 디렉토리에 JSON 캐시로 저장됩니다.
-
-- *_analysis.json
-- *_ai_signals.json
-- *_recommendations.json
-- *_macro.json
-- *_calendar.json
-- *_disclosures.json
-- *_investor_flows.json
-- *_market_context.json
-
-## API 엔드포인트
-
-- GET /api/live-market
-- GET /api/analysis
-- GET /api/recommendations
-- GET /api/macro/latest
-- GET /api/market-context/latest
-- GET /api/stock-search?q=키워드
-- GET /api/stock/{code}
-
-구현 참고: [api_server.py](api_server.py)
-
-## 사용 흐름 권장
-
-1. 스케줄러 또는 run_once로 리포트 생성
-2. 웹앱 접속 후 오늘 리포트 탭부터 확인
-3. 의사결정 보드에서 행동 포인트 정리
-4. 실시간 시장 탭은 보조 확인 용도로 사용
-
-## 보안 주의
-
-- .env, API 키는 절대 커밋하지 마세요.
-- 현재 [.gitignore](.gitignore)에 .env 및 생성 산출물 제외 규칙이 포함되어 있습니다.
-
-## 라이선스
-
-개인 용도라면 없어도 되지만, 공개 저장소라면 LICENSE 추가를 권장합니다.
+## ⚠️ 면책 조항 (Disclaimer)
+본 서비스에서 제공하는 모든 정보는 투자 참고용이며, 최종 투자 판단의 책임은 사용자 본인에게 있습니다. AI 분석은 오류가 있을 수 있으므로 반드시 원본 데이터를 재확인하시기 바랍니다.

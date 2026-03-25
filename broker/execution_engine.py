@@ -28,6 +28,8 @@ class ExecutionEngine(Protocol):
         quantity: int,
         order_type: str = "market",
         limit_price: float | None = None,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -110,6 +112,8 @@ class PaperExecutionEngine:
         quantity: int,
         order_type: str = "market",
         limit_price: float | None = None,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
     ) -> dict[str, Any]:
         normalized_side = side.strip().lower()
         normalized_market = market.strip().upper()
@@ -185,6 +189,15 @@ class PaperExecutionEngine:
                 next_qty = prev_qty + quantity
                 avg_price_local = (prev_cost_local + notional_local) / max(next_qty, 1)
                 avg_price_krw = avg_price_local * fx_rate
+                
+                # 기존 설정값이 있고 이번 주문에 명시되지 않았으면 기존값 유지
+                final_sl = _to_float(stop_loss_pct)
+                if final_sl is None and position:
+                    final_sl = _to_float(position.get("stop_loss_pct"))
+                final_tp = _to_float(take_profit_pct)
+                if final_tp is None and position:
+                    final_tp = _to_float(position.get("take_profit_pct"))
+
                 state["positions"][position_key] = {
                     "code": normalized_code,
                     "name": str(quote.get("name") or normalized_code),
@@ -196,6 +209,8 @@ class PaperExecutionEngine:
                     "avg_price_krw": avg_price_krw,
                     "last_price_local": executed_local,
                     "last_price_krw": executed_krw,
+                    "stop_loss_pct": final_sl,
+                    "take_profit_pct": final_tp,
                     "fx_rate": fx_rate,
                     "updated_at": now,
                 }
@@ -371,6 +386,68 @@ class PaperExecutionEngine:
             position["unrealized_pnl_krw"] = unrealized_krw
             position["unrealized_pnl_pct"] = unrealized_pct
             position["updated_at"] = _now_iso()
+
+            # 자동 청산(Liquidation) 체크
+            sl = _to_float(position.get("stop_loss_pct"))
+            tp = _to_float(position.get("take_profit_pct"))
+            liquidation_reason = None
+            if sl is not None and unrealized_pct <= -sl:
+                liquidation_reason = "stop_loss"
+            elif tp is not None and unrealized_pct >= tp:
+                liquidation_reason = "take_profit"
+
+            if liquidation_reason:
+                now = _now_iso()
+                fee_rate = self.config.sell_fee_rate
+                notional_local = last_price_local * quantity
+                notional_krw = last_price_krw * quantity
+                fee_local = max(0.0, notional_local * fee_rate)
+                fee_krw = max(0.0, notional_krw * fee_rate)
+                
+                proceeds_local = notional_local - fee_local
+                proceeds_krw = notional_krw - fee_krw
+                realized_local = (last_price_local - avg_price_local) * quantity - fee_local
+                realized_krw = (last_price_krw - avg_price_krw) * quantity - fee_krw
+
+                if market == "KOSPI":
+                    state["cash_krw"] = float(state["cash_krw"]) + proceeds_krw
+                    state["realized_pnl_krw"] = float(state["realized_pnl_krw"]) + realized_krw
+                    state["total_fees_krw"] = float(state["total_fees_krw"]) + fee_krw
+                else:
+                    state["cash_usd"] = float(state["cash_usd"]) + proceeds_local
+                    state["realized_pnl_usd"] = float(state["realized_pnl_usd"]) + realized_local
+                    state["total_fees_usd"] = float(state["total_fees_usd"]) + fee_local
+
+                event = {
+                    "order_id": f"paper-liq-{uuid.uuid4().hex[:8]}",
+                    "ts": now,
+                    "side": "sell",
+                    "order_type": "market",
+                    "code": code,
+                    "name": position["name"],
+                    "market": market,
+                    "quantity": quantity,
+                    "filled_price_local": round(last_price_local, 4),
+                    "filled_price_krw": round(last_price_krw, 4),
+                    "fx_rate": round(fx_rate, 4),
+                    "notional_local": round(notional_local, 4),
+                    "notional_krw": round(notional_krw, 2),
+                    "fee_local": round(fee_local, 4),
+                    "fee_krw": round(fee_krw, 2),
+                    "realized_pnl_local": round(realized_local, 4),
+                    "realized_pnl_krw": round(realized_krw, 2),
+                    "status": "filled",
+                    "note": f"Auto-liquidation ({liquidation_reason})",
+                }
+                state["orders"].insert(0, event)
+                state["positions"].pop(key, None)
+
+                notifier = self.config.order_notifier
+                if notifier is not None:
+                    try:
+                        notifier(event, self._build_snapshot(state))
+                    except Exception:
+                        pass
 
     def _new_state(self, initial_cash_krw: float, initial_cash_usd: float, paper_days: int) -> dict[str, Any]:
         now = _now_iso()
