@@ -59,6 +59,8 @@ def handle_run_optimization() -> tuple[int, dict]:
         proc = None
         try:
             import sys
+            import logging
+            _logger = logging.getLogger(__name__)
             script = str(Path(__file__).parent.parent.parent /
                          "scripts" / "run_monte_carlo_optimizer.py")
             log_path = Path("/tmp/optimization.log")
@@ -67,15 +69,28 @@ def handle_run_optimization() -> tuple[int, dict]:
                     [sys.executable, script,
                      "--simulations", "1000",
                      "--top-n", "10",
-                     "--lookback-days", "60",
-                     "--validation-days", "20"],
+                     "--lookback-days", "120",
+                     "--validation-days", "40"],
                     stdout=log_f,
                     stderr=log_f,
                 )
                 _OPT_RUNNING_FLAG.write_text(str(proc.pid))
                 proc.wait(timeout=3600)
-        except Exception:
-            pass
+                if proc.returncode != 0:
+                    _logger.error(
+                        "최적화 프로세스가 비정상 종료되었습니다 (returncode=%d). "
+                        "로그: %s", proc.returncode, log_path
+                    )
+        except subprocess.TimeoutExpired:
+            import logging
+            logging.getLogger(__name__).error(
+                "최적화 프로세스가 1시간 제한시간을 초과했습니다.")
+            if proc is not None:
+                proc.kill()
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(
+                "최적화 실행 중 예외 발생: %s", exc, exc_info=True)
         finally:
             _OPT_RUNNING_FLAG.unlink(missing_ok=True)
             with _optimization_lock:

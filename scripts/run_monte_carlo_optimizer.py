@@ -63,12 +63,74 @@ def _fetch_kis_history(code: str, market: str, days: int) -> list[dict]:
         return []
 
 
+def _fetch_yahoo_history(code: str, market: str, days: int) -> list[dict]:
+    """Yahoo Finance Chart API로 일봉 OHLCV를 가져온다. 실패 시 빈 리스트 반환.
+
+    KOSPI 종목은 '{code}.KS' 형식으로 조회한다.
+    """
+    try:
+        import urllib.request
+        import urllib.parse
+        import json as _json
+
+        ticker = f"{code}.KS" if market == "KOSPI" else code
+        # days → Yahoo range 문자열 (6mo ≈ 126일, 1y ≈ 252일, 2y ≈ 504일)
+        if days <= 130:
+            range_str = "6mo"
+        elif days <= 260:
+            range_str = "1y"
+        else:
+            range_str = "2y"
+
+        url = (
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(ticker)}"
+            f"?range={range_str}&interval=1d&includeAdjustedClose=false"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = _json.loads(resp.read().decode())
+
+        result = payload["chart"]["result"][0]
+        timestamps = result.get("timestamp", [])
+        quote = result["indicators"]["quote"][0]
+        opens = quote.get("open", [])
+        highs = quote.get("high", [])
+        lows = quote.get("low", [])
+        closes = quote.get("close", [])
+        volumes = quote.get("volume", [])
+
+        rows: list[dict] = []
+        for i, ts in enumerate(timestamps):
+            c = closes[i] if i < len(closes) else None
+            if c is None:
+                continue
+            rows.append({
+                "close": float(c),
+                "high": float(highs[i]) if i < len(highs) and highs[i] is not None else float(c),
+                "low": float(lows[i]) if i < len(lows) and lows[i] is not None else float(c),
+                "volume": float(volumes[i]) if i < len(volumes) and volumes[i] is not None else 0.0,
+            })
+        return rows
+    except Exception as exc:
+        logger.debug("{}/{}: Yahoo Finance 조회 실패 — {}", code, market, exc)
+        return []
+
+
 def _fetch_price_history(code: str, market: str, days: int, min_rows: int = 80) -> list[dict]:
-    """KIS API로 가격 데이터를 가져온다. min_rows에 못 미치면 빈 리스트 반환."""
+    """KIS API로 가격 데이터를 가져온다. 부족하면 Yahoo Finance로 폴백한다."""
     rows = _fetch_kis_history(code, market, days)
     if len(rows) >= min_rows:
         return rows
-    logger.debug("{}/{}: KIS {} 건 (필요 {} 건) — 데이터 부족",
+    logger.debug("{}/{}: KIS {} 건 (필요 {} 건) — Yahoo Finance 폴백 시도",
+                 code, market, len(rows), min_rows)
+    rows = _fetch_yahoo_history(code, market, days)
+    if len(rows) >= min_rows:
+        logger.debug("{}/{}: Yahoo Finance {} 건 수집 성공", code, market, len(rows))
+        return rows
+    logger.debug("{}/{}: Yahoo Finance {} 건 (필요 {} 건) — 데이터 부족",
                  code, market, len(rows), min_rows)
     return []
 

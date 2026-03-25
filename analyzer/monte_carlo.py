@@ -84,12 +84,11 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 # ============================================================
 # 검증 신뢰도 기준
 # ============================================================
-# Phase 2-2: 최소 신호 기준 및 신뢰도 임계값 문서화
-# - 검증 구간 진입 신호 수가 이 값 미만이면 신뢰도 불인정
-# - Iteration 1에서 fallback 제거 후 명시적 기준 적용
-_MIN_ENTRY_SIGNALS = 10  # 검증 신뢰도 최소 필수 진입 신호 수
-_MIN_SHARPE_RELIABLE = 0.1  # Sharpe Ratio > 0.1일 때만 is_reliable=True
-# (1 이상이 아닌 0.1 기준: 신뢰도 양성만 충분)
+# - 훈련 구간 진입 필터 콤보 스킵 기준: 너무 희소한 진입 조건 제거
+# - 검증 구간 신뢰도는 _MIN_VALIDATION_SIGNALS 기준 사용 (별도 분리)
+_MIN_ENTRY_SIGNALS = 5        # 훈련 구간 진입 신호 최소값 (조건을 너무 좁히지 않도록)
+_MIN_VALIDATION_SIGNALS = 3   # 검증 구간 최소 신호 수 (단기 검증 구간 대응)
+_MIN_SHARPE_RELIABLE = 0.1    # Sharpe Ratio > 0.1일 때만 is_reliable=True
 
 
 def _compute_rsi(closes: np.ndarray, period: int = 14) -> np.ndarray:
@@ -413,12 +412,12 @@ def _should_use_result(result: OptimizationResult) -> bool:
     최적화 결과의 신뢰도 필터 (Phase 3)
 
     자동 탈락 조건:
-    - validation_trades < _MIN_ENTRY_SIGNALS (검증 신호 부족)
+    - validation_trades < _MIN_VALIDATION_SIGNALS (검증 신호 부족)
     - validation_sharpe <= 0 (검증 구간에서 음수 Sharpe)
     - max_drawdown_pct < -40% (과도한 낙폭)
     - trade_count < 10 (훈련 구간 거래 표본 부족)
     """
-    if result.validation_trades < _MIN_ENTRY_SIGNALS:
+    if result.validation_trades < _MIN_VALIDATION_SIGNALS:
         return False  # 검증 신호 부족
     if result.validation_sharpe <= 0.0:
         return False  # 검증 구간 부정적
@@ -588,8 +587,8 @@ def optimize_params(
     validation_signals = len(val_entry_idx)
     reliability_reason = "passed"
 
-    # Phase 2-1: fallback 제거 - 신호 부족 시 명시적으로 검증 실패 처리
-    if validation_signals < _MIN_ENTRY_SIGNALS:
+    # 검증 구간 신호가 _MIN_VALIDATION_SIGNALS 미만이면 신뢰도 부족으로 처리
+    if validation_signals < _MIN_VALIDATION_SIGNALS:
         validation_sharpe = 0.0
         reliability_reason = "insufficient_signals"
     else:
@@ -623,7 +622,7 @@ def optimize_params(
         optimized_at=datetime.datetime.now(
             datetime.timezone.utc).isoformat(timespec="seconds"),
         is_reliable=(validation_sharpe >
-                     0.1 and validation_signals >= _MIN_ENTRY_SIGNALS),
+                     0.1 and validation_signals >= _MIN_VALIDATION_SIGNALS),
         reliability_reason=reliability_reason,
     )
 
