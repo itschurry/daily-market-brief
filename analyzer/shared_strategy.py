@@ -26,24 +26,24 @@ _DEFAULT_PROFILES: dict[str, StrategyProfile] = {
     "KOSPI": StrategyProfile(
         market="KOSPI",
         max_positions=5,
-        max_holding_days=15,
-        rsi_min=45.0,
-        rsi_max=62.0,
-        volume_ratio_min=1.0,
-        stop_loss_pct=5.0,
-        take_profit_pct=None,
+        max_holding_days=25,
+        rsi_min=38.0,
+        rsi_max=72.0,
+        volume_ratio_min=0.8,
+        stop_loss_pct=7.0,
+        take_profit_pct=15.0,
         signal_interval="1d",
         signal_range="6mo",
     ),
     "NASDAQ": StrategyProfile(
         market="NASDAQ",
         max_positions=5,
-        max_holding_days=30,
-        rsi_min=45.0,
-        rsi_max=68.0,
-        volume_ratio_min=1.2,
-        stop_loss_pct=None,
-        take_profit_pct=None,
+        max_holding_days=40,
+        rsi_min=38.0,
+        rsi_max=75.0,
+        volume_ratio_min=1.0,
+        stop_loss_pct=8.0,
+        take_profit_pct=20.0,
         signal_interval="1d",
         signal_range="6mo",
     ),
@@ -144,22 +144,30 @@ def profile_from_mapping(market: str, payload: Mapping[str, Any] | None) -> Stra
     raw = payload or {}
     return build_strategy_profile(
         market,
-        max_positions=raw.get("max_positions", default_strategy_profile(market).max_positions),
-        max_holding_days=raw.get("max_holding_days", default_strategy_profile(market).max_holding_days),
+        max_positions=raw.get(
+            "max_positions", default_strategy_profile(market).max_positions),
+        max_holding_days=raw.get(
+            "max_holding_days", default_strategy_profile(market).max_holding_days),
         rsi_min=raw.get("rsi_min", default_strategy_profile(market).rsi_min),
         rsi_max=raw.get("rsi_max", default_strategy_profile(market).rsi_max),
-        volume_ratio_min=raw.get("volume_ratio_min", default_strategy_profile(market).volume_ratio_min),
-        stop_loss_pct=raw.get("stop_loss_pct", default_strategy_profile(market).stop_loss_pct),
-        take_profit_pct=raw.get("take_profit_pct", default_strategy_profile(market).take_profit_pct),
-        signal_interval=raw.get("signal_interval", default_strategy_profile(market).signal_interval),
-        signal_range=raw.get("signal_range", default_strategy_profile(market).signal_range),
+        volume_ratio_min=raw.get(
+            "volume_ratio_min", default_strategy_profile(market).volume_ratio_min),
+        stop_loss_pct=raw.get(
+            "stop_loss_pct", default_strategy_profile(market).stop_loss_pct),
+        take_profit_pct=raw.get(
+            "take_profit_pct", default_strategy_profile(market).take_profit_pct),
+        signal_interval=raw.get(
+            "signal_interval", default_strategy_profile(market).signal_interval),
+        signal_range=raw.get(
+            "signal_range", default_strategy_profile(market).signal_range),
     )
 
 
 def should_enter_from_snapshot(snapshot: Mapping[str, Any] | None, profile: StrategyProfile) -> bool:
     if not snapshot:
         return False
-    close = _read_snapshot_value(snapshot, "current_price", "close", "trade_price")
+    close = _read_snapshot_value(
+        snapshot, "current_price", "close", "trade_price")
     sma20 = snapshot.get("sma20")
     sma60 = snapshot.get("sma60")
     volume_ratio = snapshot.get("volume_ratio")
@@ -180,8 +188,7 @@ def should_enter_from_snapshot(snapshot: Mapping[str, Any] | None, profile: Stra
         and float(close) > float(sma20) > float(sma60)
         and float(volume_ratio) >= profile.volume_ratio_min
         and profile.rsi_min <= float(rsi14) <= profile.rsi_max
-        and float(macd_hist) > 0
-        and float(macd) > float(macd_signal)
+        and (float(macd_hist) > 0 or float(macd) > float(macd_signal))
     )
 
 
@@ -194,8 +201,10 @@ def should_exit_from_snapshot(
 ) -> str | None:
     if not snapshot:
         return None
-    price = _read_snapshot_value(snapshot, "trade_price", "current_price", "close")
-    close = _read_snapshot_value(snapshot, "close", "current_price", "trade_price")
+    price = _read_snapshot_value(
+        snapshot, "trade_price", "current_price", "close")
+    close = _read_snapshot_value(
+        snapshot, "close", "current_price", "trade_price")
     sma20 = snapshot.get("sma20")
     rsi14 = snapshot.get("rsi14")
     macd = snapshot.get("macd")
@@ -218,12 +227,13 @@ def should_exit_from_snapshot(
         and ((float(price) / float(entry_price)) - 1) * 100 >= profile.take_profit_pct
     ):
         return "익절"
-    if close is not None and sma20 is not None and float(close) < float(sma20):
+    if close is not None and sma20 is not None and float(close) < float(sma20) * 0.99:
         return "20일선 이탈"
-    if macd is not None and macd_signal is not None and macd_hist is not None:
-        if float(macd) < float(macd_signal) and float(macd_hist) < 0:
+    if (price is not None and entry_price and macd is not None and macd_signal is not None and macd_hist is not None):
+        pnl_pct = ((float(price) / float(entry_price)) - 1) * 100
+        if float(macd) < float(macd_signal) and float(macd_hist) < 0 and pnl_pct < -2.0:
             return "MACD 약세 전환"
-    if rsi14 is not None and float(rsi14) >= 75:
+    if rsi14 is not None and float(rsi14) >= 82:
         return "RSI 과열"
     return None
 
@@ -231,7 +241,8 @@ def should_exit_from_snapshot(
 def entry_score_from_snapshot(snapshot: Mapping[str, Any] | None, profile: StrategyProfile | None = None) -> float:
     if not snapshot:
         return 0.0
-    close = _read_snapshot_value(snapshot, "close", "current_price", "trade_price")
+    close = _read_snapshot_value(
+        snapshot, "close", "current_price", "trade_price")
     sma20 = snapshot.get("sma20")
     sma60 = snapshot.get("sma60")
     volume_ratio = snapshot.get("volume_ratio")
@@ -239,9 +250,40 @@ def entry_score_from_snapshot(snapshot: Mapping[str, Any] | None, profile: Strat
     macd_hist = snapshot.get("macd_hist")
     if None in {close, sma20, sma60, volume_ratio, rsi14, macd_hist}:
         return 0.0
-    trend_score = ((float(close) / float(sma20)) - 1) * 100 + ((float(sma20) / float(sma60)) - 1) * 100
+
+    trend_score = ((float(close) / float(sma20)) - 1) * 100 + \
+        ((float(sma20) / float(sma60)) - 1) * 100
     rsi_score = max(0.0, 70 - abs(57.0 - float(rsi14)))
-    return round(trend_score + float(volume_ratio) * 2.5 + float(macd_hist) * 12 + rsi_score * 0.1, 4)
+    base_score = trend_score + \
+        float(volume_ratio) * 2.5 + float(macd_hist) * 12 + rsi_score * 0.1
+
+    # Phase 3: 새 지표 점수 추가
+    new_indicator_score = 0.0
+
+    adx14 = snapshot.get("adx14")
+    if adx14 is not None:
+        if float(adx14) >= 25:
+            new_indicator_score += 2.0
+        elif float(adx14) < 15:
+            new_indicator_score -= 2.0
+
+    bb_pct = snapshot.get("bb_pct")
+    if bb_pct is not None and float(bb_pct) < 0.2:
+        new_indicator_score += 1.5
+
+    obv_trend = snapshot.get("obv_trend")
+    if obv_trend == "up":
+        new_indicator_score += 1.0
+    elif obv_trend == "down":
+        new_indicator_score -= 1.5
+
+    stoch_k = snapshot.get("stoch_k")
+    stoch_d = snapshot.get("stoch_d")
+    if stoch_k is not None and stoch_d is not None:
+        if float(stoch_k) < 25 and float(stoch_d) < 25:
+            new_indicator_score += 1.0
+
+    return round(base_score + new_indicator_score, 4)
 
 
 def _normalize_signal_interval(value: str | None) -> str:

@@ -35,7 +35,8 @@ _THEME_BOOSTS = {
     "플랫폼": ("ai 에이전트", "멀티모달", "physical ai"),
     "가전": ("가전", "냉장고", "가정용 ai", "비스포크"),
 }
-_DISCLOSURE_POSITIVE = {"earnings", "contract", "shareholder_return", "investment"}
+_DISCLOSURE_POSITIVE = {"earnings", "contract",
+                        "shareholder_return", "investment"}
 _DISCLOSURE_NEGATIVE = {"capital", "governance", "restructuring"}
 _EVENT_RISK_CATEGORIES = {"inflation", "policy", "labor"}
 _THEME_GATE_MIN_SCORE = 2.5
@@ -96,9 +97,9 @@ def _market_adjustment(data: DailyData, sector: str) -> float:
 
 
 def _signal_from_score(score: float) -> str:
-    if score >= 72:
+    if score >= 68:
         return "추천"
-    if score >= 56:
+    if score >= 52:
         return "중립"
     return "회피"
 
@@ -180,8 +181,10 @@ def _ai_signal_adjustment(ai_signal: dict | None) -> tuple[float, list[str], lis
         return 0.0, [], [], None
 
     score = max(-4.0, min(4.0, _safe_float(ai_signal.get("score_adjustment")) or 0.0))
-    reasons = [str(item).strip() for item in ai_signal.get("reasons", []) if str(item).strip()][:2]
-    risks = [str(item).strip() for item in ai_signal.get("risks", []) if str(item).strip()][:2]
+    reasons = [str(item).strip() for item in ai_signal.get(
+        "reasons", []) if str(item).strip()][:2]
+    risks = [str(item).strip()
+             for item in ai_signal.get("risks", []) if str(item).strip()][:2]
     summary = str(ai_signal.get("summary", "")).strip()
     if summary and not reasons:
         reasons.append(f"AI 해석: {summary}")
@@ -239,10 +242,14 @@ def _apply_playbook_overlay(
     playbook: dict | None,
     playbook_candidate: dict | None,
 ) -> tuple[float, list[str], list[str], dict]:
-    favored = {str(item).strip().lower() for item in (playbook or {}).get("favored_sectors", []) if str(item).strip()}
-    avoided = {str(item).strip().lower() for item in (playbook or {}).get("avoided_sectors", []) if str(item).strip()}
-    invalid_setups = [str(item).strip().lower() for item in (playbook or {}).get("invalid_setups", []) if str(item).strip()]
-    short_term_bias = str((playbook or {}).get("short_term_bias", "neutral")).strip().lower()
+    favored = {str(item).strip().lower() for item in (
+        playbook or {}).get("favored_sectors", []) if str(item).strip()}
+    avoided = {str(item).strip().lower() for item in (
+        playbook or {}).get("avoided_sectors", []) if str(item).strip()}
+    invalid_setups = [str(item).strip().lower() for item in (
+        playbook or {}).get("invalid_setups", []) if str(item).strip()]
+    short_term_bias = str((playbook or {}).get(
+        "short_term_bias", "neutral")).strip().lower()
 
     next_score = score
     gate_status = "passed"
@@ -271,8 +278,10 @@ def _apply_playbook_overlay(
     if playbook_candidate:
         horizon = str(playbook_candidate.get("horizon", "short_term"))
         ai_thesis = str(playbook_candidate.get("thesis", "")).strip()
-        technical_view = str(playbook_candidate.get("technical_view", "")).strip()
-        setup_quality = str(playbook_candidate.get("setup_quality", "mixed")).strip().lower() or "mixed"
+        technical_view = str(playbook_candidate.get(
+            "technical_view", "")).strip()
+        setup_quality = str(playbook_candidate.get(
+            "setup_quality", "mixed")).strip().lower() or "mixed"
         technical_snapshot = playbook_candidate.get("technical_snapshot")
         action = str(playbook_candidate.get("action", "watch")).strip().lower()
         confidence = _safe_float(playbook_candidate.get("confidence")) or 60.0
@@ -282,8 +291,10 @@ def _apply_playbook_overlay(
             reasons.append(f"플레이북 논리: {ai_thesis}")
         if technical_view:
             reasons.append(f"기술해석: {technical_view}")
-        reasons.extend(str(item).strip() for item in playbook_candidate.get("reasons", []) if str(item).strip())
-        risks.extend(str(item).strip() for item in playbook_candidate.get("risks", []) if str(item).strip())
+        reasons.extend(str(item).strip() for item in playbook_candidate.get(
+            "reasons", []) if str(item).strip())
+        risks.extend(str(item).strip() for item in playbook_candidate.get(
+            "risks", []) if str(item).strip())
 
         if action == "buy":
             next_score += 4.0
@@ -295,7 +306,8 @@ def _apply_playbook_overlay(
             alignment -= 18.0
             gate_reasons.append("플레이북에서 보류/제외 후보로 분류")
 
-        thesis_blob = " ".join([ai_thesis] + [str(item) for item in playbook_candidate.get("reasons", [])]).lower()
+        thesis_blob = " ".join([ai_thesis] + [str(item)
+                               for item in playbook_candidate.get("reasons", [])]).lower()
         if any(rule in thesis_blob for rule in invalid_setups):
             gate_reasons.append("플레이북 금지 셋업과 충돌")
             alignment -= 18.0
@@ -352,7 +364,8 @@ def _calendar_adjustment(data: DailyData, entry: CompanyCatalogEntry) -> tuple[f
         upcoming_events.append(event)
 
     if upcoming_events and entry.sector in {"반도체", "플랫폼", "2차전지", "자동차", "가전"}:
-        high_impact = any(event.importance == "높음" for event in upcoming_events)
+        high_impact = any(event.importance ==
+                          "높음" for event in upcoming_events)
         score -= 1.5 if high_impact else 0.5
         event_names = ", ".join(event.name for event in upcoming_events[:2])
         risks.append(f"주요 일정({event_names}) 전후로 단기 변동성 확대 가능성")
@@ -485,7 +498,8 @@ def _extract_dynamic_us_ticker_entries(
     dollar_mentioned: set[str] = set()
 
     for article in news:
-        raw_text = " ".join([article.title or "", article.summary or "", article.body or ""])
+        raw_text = " ".join(
+            [article.title or "", article.summary or "", article.body or ""])
         if not raw_text:
             continue
         has_us_context = _has_us_market_context(raw_text)
@@ -505,7 +519,8 @@ def _extract_dynamic_us_ticker_entries(
                 or token in existing_codes
             ):
                 continue
-            resolved_market = resolve_market(code=token, name=token, scope="core")
+            resolved_market = resolve_market(
+                code=token, name=token, scope="core")
             if resolved_market in {"KOSPI", "KOSDAQ"}:
                 continue
             if not resolved_market:
@@ -547,19 +562,29 @@ def _build_pick(
     joined = " ".join(texts)
     positive = sum(_score_keywords(text, _POSITIVE_KEYWORDS) for text in texts)
     negative = sum(_score_keywords(text, _NEGATIVE_KEYWORDS) for text in texts)
-    theme_boost = sum(1 for keyword in _THEME_BOOSTS.get(entry.sector, ()) if keyword.lower() in joined)
-    recent_bonus = sum(1 for article in articles if (datetime.now(_KST) - article.published.astimezone(_KST)).total_seconds() <= 12 * 3600)
-    article_theme_score, article_theme_hits, matched_themes, themed_article_count = _article_theme_metrics(articles)
-    theme_alignment_bonus = _theme_alignment_bonus(entry.sector, set(matched_themes))
-    aggressive_theme_boost = min(article_theme_score, 16.0) * 1.6 + theme_alignment_bonus
+    theme_boost = sum(1 for keyword in _THEME_BOOSTS.get(
+        entry.sector, ()) if keyword.lower() in joined)
+    recent_bonus = sum(1 for article in articles if (datetime.now(
+        _KST) - article.published.astimezone(_KST)).total_seconds() <= 12 * 3600)
+    article_theme_score, article_theme_hits, matched_themes, themed_article_count = _article_theme_metrics(
+        articles)
+    theme_alignment_bonus = _theme_alignment_bonus(
+        entry.sector, set(matched_themes))
+    aggressive_theme_boost = min(
+        article_theme_score, 16.0) * 1.6 + theme_alignment_bonus
 
-    score = 48 + len(articles) * 8 + positive * 3 - negative * 4 + theme_boost * 2 + recent_bonus * 2
+    score = 48 + len(articles) * 8 + positive * 3 - negative * \
+        4 + theme_boost * 2 + recent_bonus * 2
     score += aggressive_theme_boost
     score += _market_adjustment(data, entry.sector)
-    disclosure_score, disclosure_reasons, disclosure_risks, related_disclosures = _disclosure_adjustment(disclosures)
-    flow_score, flow_reasons, flow_risks, serialized_flow = _flow_adjustment(investor_flow)
-    ai_score, ai_reasons, ai_risks, serialized_ai_signal = _ai_signal_adjustment(ai_signal)
-    calendar_score, calendar_reasons, calendar_risks, upcoming_events = _calendar_adjustment(data, entry)
+    disclosure_score, disclosure_reasons, disclosure_risks, related_disclosures = _disclosure_adjustment(
+        disclosures)
+    flow_score, flow_reasons, flow_risks, serialized_flow = _flow_adjustment(
+        investor_flow)
+    ai_score, ai_reasons, ai_risks, serialized_ai_signal = _ai_signal_adjustment(
+        ai_signal)
+    calendar_score, calendar_reasons, calendar_risks, upcoming_events = _calendar_adjustment(
+        data, entry)
     score += disclosure_score + flow_score + ai_score + calendar_score
 
     reasons = [
@@ -567,7 +592,8 @@ def _build_pick(
         f"긍정 신호 {positive}건 / 부정 신호 {negative}건",
     ]
     if article_theme_score > 0:
-        themes_text = ", ".join(matched_themes[:3]) if matched_themes else "theme"
+        themes_text = ", ".join(
+            matched_themes[:3]) if matched_themes else "theme"
         reasons.append(
             f"테마 점수 {article_theme_score:.1f}점 ({themes_text}, 키워드 {article_theme_hits}건)"
         )
@@ -579,7 +605,8 @@ def _build_pick(
         risks.append("부정 기사 비중이 높아 변동성 확대 가능성")
     if data.market_context and data.market_context.dollar_signal == "강세":
         risks.append("달러 강세 국면으로 위험자산 변동성 확대 가능성")
-    reasons = reasons[:2] + disclosure_reasons + flow_reasons + ai_reasons + reasons[2:]
+    reasons = reasons[:2] + disclosure_reasons + \
+        flow_reasons + ai_reasons + reasons[2:]
     reasons.extend(calendar_reasons)
     if data.market_context:
         reasons.append(f"거시 컨텍스트: {data.market_context.summary}")
@@ -622,7 +649,8 @@ def _build_pick(
             min(
                 92,
                 round(
-                    max(45, min(92, 42 + len(articles) * 9 + abs(positive - negative) * 5)) * 0.75
+                    max(45, min(92, 42 + len(articles) * 9 +
+                        abs(positive - negative) * 5)) * 0.75
                     + ((_safe_float((serialized_ai_signal or {}).get("confidence")) or 60.0) * 0.25)
                 ),
             ),
@@ -678,7 +706,8 @@ def generate_today_picks(
         ai_signal_map[item.get("name")] = item
 
     catalog_entries = get_company_catalog(scope="live")
-    existing_codes = {entry.code.upper() for entry in catalog_entries if entry.code}
+    existing_codes = {entry.code.upper()
+                      for entry in catalog_entries if entry.code}
     dynamic_entries = _extract_dynamic_us_ticker_entries(
         data.news,
         existing_codes=existing_codes,
@@ -688,10 +717,13 @@ def generate_today_picks(
     for entry in all_entries:
         aliases = tuple(_normalize(alias) for alias in entry.aliases)
         related = []
-        entry_disclosures = disclosure_map.get(entry.code, []) or disclosure_map.get(entry.name, [])
+        entry_disclosures = disclosure_map.get(
+            entry.code, []) or disclosure_map.get(entry.name, [])
         entry_flow = flow_map.get(entry.code) or flow_map.get(entry.name)
-        entry_ai_signal = ai_signal_map.get(entry.code) or ai_signal_map.get(entry.name)
-        entry_playbook_candidate = playbook_candidate_map.get(entry.code) or playbook_candidate_map.get(entry.name)
+        entry_ai_signal = ai_signal_map.get(
+            entry.code) or ai_signal_map.get(entry.name)
+        entry_playbook_candidate = playbook_candidate_map.get(
+            entry.code) or playbook_candidate_map.get(entry.name)
         for article in data.news:
             text = _article_text(article)
             if any(_alias_in_text(alias, text) for alias in aliases):
@@ -715,7 +747,8 @@ def generate_today_picks(
 
     matched.sort(
         key=lambda item: (
-            {"passed": 2, "caution": 1, "blocked": 0}.get(str(item.get("gate_status", "passed")), 0),
+            {"passed": 2, "caution": 1, "blocked": 0}.get(
+                str(item.get("gate_status", "passed")), 0),
             item["score"],
             item["confidence"],
         ),
@@ -804,13 +837,19 @@ def build_watchlist_actions(
     for watch in watchlist_items:
         key = watch.get("code") or watch.get("name")
         current_pick = pick_map.get(key) or pick_map.get(watch.get("name"))
-        current_rec = recommendation_map.get(key) or recommendation_map.get(watch.get("name"))
-        previous_pick = previous_pick_map.get(key) or previous_pick_map.get(watch.get("name"))
-        previous_rec = previous_recommendation_map.get(key) or previous_recommendation_map.get(watch.get("name"))
-        current_ai_signal = ai_signal_map.get(key) or ai_signal_map.get(watch.get("name"))
-        previous_ai_signal = previous_ai_signal_map.get(key) or previous_ai_signal_map.get(watch.get("name"))
+        current_rec = recommendation_map.get(
+            key) or recommendation_map.get(watch.get("name"))
+        previous_pick = previous_pick_map.get(
+            key) or previous_pick_map.get(watch.get("name"))
+        previous_rec = previous_recommendation_map.get(
+            key) or previous_recommendation_map.get(watch.get("name"))
+        current_ai_signal = ai_signal_map.get(
+            key) or ai_signal_map.get(watch.get("name"))
+        previous_ai_signal = previous_ai_signal_map.get(
+            key) or previous_ai_signal_map.get(watch.get("name"))
 
-        score, score_notes = _external_watchlist_score(current_pick, current_rec)
+        score, score_notes = _external_watchlist_score(
+            current_pick, current_rec)
         reasons = []
         risks = []
         technical_reasons = []
@@ -839,7 +878,8 @@ def build_watchlist_actions(
                 investor_flow = current_pick.get("investor_flow") or {}
             serialized_ai_signal = current_pick.get("ai_signal")
             gate_status = str(current_pick.get("gate_status", gate_status))
-            gate_reasons = list(current_pick.get("gate_reasons", gate_reasons) or [])
+            gate_reasons = list(current_pick.get(
+                "gate_reasons", gate_reasons) or [])
             horizon = str(current_pick.get("horizon", horizon))
             playbook_alignment = current_pick.get("playbook_alignment")
             ai_thesis = current_pick.get("ai_thesis")
@@ -850,12 +890,15 @@ def build_watchlist_actions(
             risks.extend(current_rec.get("risks", []))
             if not gate_reasons:
                 gate_status = str(current_rec.get("gate_status", gate_status))
-                gate_reasons = list(current_rec.get("gate_reasons", gate_reasons) or [])
+                gate_reasons = list(current_rec.get(
+                    "gate_reasons", gate_reasons) or [])
                 horizon = str(current_rec.get("horizon", horizon))
-                playbook_alignment = current_rec.get("playbook_alignment", playbook_alignment)
+                playbook_alignment = current_rec.get(
+                    "playbook_alignment", playbook_alignment)
                 ai_thesis = current_rec.get("ai_thesis", ai_thesis)
         if not current_pick and current_ai_signal:
-            ai_score, ai_reasons, ai_risks, serialized_ai_signal = _ai_signal_adjustment(current_ai_signal)
+            ai_score, ai_reasons, ai_risks, serialized_ai_signal = _ai_signal_adjustment(
+                current_ai_signal)
             score += ai_score
             reasons.extend(ai_reasons)
             risks.extend(ai_risks)
@@ -898,7 +941,8 @@ def build_watchlist_actions(
             if volume_ratio is not None:
                 if volume_ratio >= 1.5:
                     score += 1.5
-                    technical_reasons.append(f"거래량이 20일 평균 대비 {volume_ratio:.2f}배")
+                    technical_reasons.append(
+                        f"거래량이 20일 평균 대비 {volume_ratio:.2f}배")
                 elif volume_ratio <= 0.7:
                     score -= 0.5
                     technical_risks.append("거래량이 줄어 추세 신뢰도가 낮음")
@@ -967,11 +1011,13 @@ def build_watchlist_actions(
         changed_from_yesterday = None
         previous_score = None
         if previous_pick or previous_rec:
-            previous_score, _ = _external_watchlist_score(previous_pick, previous_rec)
+            previous_score, _ = _external_watchlist_score(
+                previous_pick, previous_rec)
         if previous_score is None and previous_ai_signal:
             previous_score = 50.0
         if previous_score is not None and not previous_pick and previous_ai_signal:
-            previous_ai_score, _, _, _ = _ai_signal_adjustment(previous_ai_signal)
+            previous_ai_score, _, _, _ = _ai_signal_adjustment(
+                previous_ai_signal)
             previous_score += previous_ai_score
         if previous_signal is not None or previous_score is not None:
             changed_from_yesterday = {

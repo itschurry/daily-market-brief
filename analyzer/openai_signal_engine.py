@@ -46,11 +46,13 @@ def _collect_candidates(data: DailyData, limit: int) -> list[dict]:
         aliases = tuple(_normalize(alias) for alias in entry.aliases)
         related_articles = []
         for article in data.news:
-            text = " ".join([article.title, article.summary, article.body]).lower()
+            text = " ".join(
+                [article.title, article.summary, article.body]).lower()
             if any(alias in text for alias in aliases):
                 related_articles.append(article)
 
-        disclosures = disclosure_map.get(entry.code, []) or disclosure_map.get(entry.name, [])
+        disclosures = disclosure_map.get(
+            entry.code, []) or disclosure_map.get(entry.name, [])
         flow = flow_map.get(entry.code) or flow_map.get(entry.name)
         if not related_articles and not disclosures and not _has_notable_flow(flow):
             continue
@@ -65,13 +67,15 @@ def _collect_candidates(data: DailyData, limit: int) -> list[dict]:
             }
         )
 
-    candidates.sort(key=lambda item: (item["priority"], item["entry"].name), reverse=True)
+    candidates.sort(key=lambda item: (
+        item["priority"], item["entry"].name), reverse=True)
     return candidates[:limit]
 
 
 def _format_candidate(item: dict) -> str:
     entry: CompanyCatalogEntry = item["entry"]
-    lines = [f"- 종목: {entry.name} ({entry.code}, {entry.market}, {entry.sector})"]
+    lines = [
+        f"- 종목: {entry.name} ({entry.code}, {entry.market}, {entry.sector})"]
 
     if item["articles"]:
         lines.append("  뉴스:")
@@ -81,7 +85,8 @@ def _format_candidate(item: dict) -> str:
     if item["disclosures"]:
         lines.append("  공시:")
         for disclosure in item["disclosures"]:
-            lines.append(f"  - [{disclosure.importance}/{disclosure.category}] {disclosure.title}")
+            lines.append(
+                f"  - [{disclosure.importance}/{disclosure.category}] {disclosure.title}")
 
     flow = item["flow"]
     if flow:
@@ -97,15 +102,20 @@ def _format_candidate(item: dict) -> str:
 def _build_prompt(data: DailyData, candidates: list[dict]) -> str:
     market_lines = []
     if data.market.kospi is not None:
-        market_lines.append(f"KOSPI {data.market.kospi:,.2f} ({data.market.kospi_change_pct:+.2f}%)")
+        market_lines.append(
+            f"KOSPI {data.market.kospi:,.2f} ({data.market.kospi_change_pct:+.2f}%)")
     if data.market.kosdaq is not None:
-        market_lines.append(f"KOSDAQ {data.market.kosdaq:,.2f} ({data.market.kosdaq_change_pct:+.2f}%)")
+        market_lines.append(
+            f"KOSDAQ {data.market.kosdaq:,.2f} ({data.market.kosdaq_change_pct:+.2f}%)")
     if data.market.nasdaq is not None:
-        market_lines.append(f"NASDAQ {data.market.nasdaq:,.2f} ({data.market.nasdaq_change_pct:+.2f}%)")
+        market_lines.append(
+            f"NASDAQ {data.market.nasdaq:,.2f} ({data.market.nasdaq_change_pct:+.2f}%)")
     if data.market.sp100 is not None:
-        market_lines.append(f"S&P100 {data.market.sp100:,.2f} ({data.market.sp100_change_pct:+.2f}%)")
+        market_lines.append(
+            f"S&P100 {data.market.sp100:,.2f} ({data.market.sp100_change_pct:+.2f}%)")
 
-    candidate_blocks = "\n\n".join(_format_candidate(item) for item in candidates)
+    candidate_blocks = "\n\n".join(_format_candidate(item)
+                                   for item in candidates)
     return f"""당신은 국내외 주식 단기 이벤트 해석 보조 엔진입니다.
 
 아래 시장/뉴스/공시/수급 근거만 사용해서 종목별 보조신호를 JSON으로 반환하세요.
@@ -114,7 +124,7 @@ def _build_prompt(data: DailyData, candidates: list[dict]) -> str:
 규칙:
 - 반드시 JSON object만 반환
 - signals 배열만 포함
-- score_adjustment 는 -4.0 이상 4.0 이하 숫자
+- score_adjustment 는 -5.0 이상 5.0 이하 숫자
 - action_bias 는 추천, 중립, 회피 중 하나
 - risk_level 는 낮음, 중간, 높음 중 하나
 - reasons 와 risks 는 각 0~2개 문자열
@@ -163,7 +173,7 @@ def _normalize_signal_item(item: dict, allowed: dict[str, CompanyCatalogEntry]) 
         score_adjustment = float(item.get("score_adjustment", 0.0))
     except (TypeError, ValueError):
         score_adjustment = 0.0
-    score_adjustment = max(-4.0, min(4.0, round(score_adjustment, 1)))
+    score_adjustment = max(-5.0, min(5.0, round(score_adjustment, 1)))
 
     action_bias = str(item.get("action_bias", "중립")).strip()
     if action_bias not in {"추천", "중립", "회피"}:
@@ -179,8 +189,10 @@ def _normalize_signal_item(item: dict, allowed: dict[str, CompanyCatalogEntry]) 
         confidence = 60
     confidence = max(35, min(95, confidence))
 
-    reasons = [str(value).strip() for value in item.get("reasons", []) if str(value).strip()][:2]
-    risks = [str(value).strip() for value in item.get("risks", []) if str(value).strip()][:2]
+    reasons = [str(value).strip() for value in item.get(
+        "reasons", []) if str(value).strip()][:2]
+    risks = [str(value).strip()
+             for value in item.get("risks", []) if str(value).strip()][:2]
     summary = str(item.get("summary", "")).strip()[:120]
 
     return {
@@ -243,7 +255,8 @@ async def generate_stock_aux_signals(data: DailyData, limit: int = 10) -> dict:
             }
         except RateLimitError as exc:
             wait = 15 + attempt * 10
-            logger.warning(f"OpenAI 보조신호 RateLimit (시도 {attempt + 1}): {exc} — {wait}초 대기")
+            logger.warning(
+                f"OpenAI 보조신호 RateLimit (시도 {attempt + 1}): {exc} — {wait}초 대기")
             if attempt < 2:
                 await asyncio.sleep(wait)
         except APIError as exc:

@@ -30,12 +30,16 @@ class SimulationConfig:
 @dataclass
 class ParamGrid:
     """최적화할 파라미터 탐색 범위"""
-    stop_loss_pct: list[float] = field(default_factory=lambda: [3.0, 5.0, 7.0, 10.0, 13.0])
-    take_profit_pct: list[float] = field(default_factory=lambda: [6.0, 10.0, 15.0, 20.0, 25.0])
-    max_holding_days: list[int] = field(default_factory=lambda: [5, 10, 15, 20, 30])
-    rsi_min: list[float] = field(default_factory=lambda: [30.0, 40.0, 50.0])
-    rsi_max: list[float] = field(default_factory=lambda: [60.0, 70.0, 80.0])
-    volume_ratio_min: list[float] = field(default_factory=lambda: [0.8, 1.2, 2.0])
+    stop_loss_pct: list[float] = field(
+        default_factory=lambda: [5.0, 7.0, 10.0, 13.0, 15.0])
+    take_profit_pct: list[float] = field(
+        default_factory=lambda: [10.0, 15.0, 20.0, 25.0, 30.0])
+    max_holding_days: list[int] = field(
+        default_factory=lambda: [15, 20, 25, 30, 40])
+    rsi_min: list[float] = field(default_factory=lambda: [30.0, 38.0, 45.0])
+    rsi_max: list[float] = field(default_factory=lambda: [65.0, 72.0, 80.0])
+    volume_ratio_min: list[float] = field(
+        default_factory=lambda: [0.6, 0.8, 1.0, 1.2])
 
 
 @dataclass
@@ -126,14 +130,16 @@ def generate_price_paths(
     """
     rng = np.random.default_rng(seed)
     if method == "bootstrap":
-        sampled = rng.choice(returns, size=(n_simulations, simulation_days), replace=True)
+        sampled = rng.choice(returns, size=(
+            n_simulations, simulation_days), replace=True)
         paths = np.cumprod(1.0 + sampled, axis=1)
     else:  # gbm
         mu = float(np.mean(returns))
         sigma = float(np.std(returns))
         dt = 1.0
         Z = rng.standard_normal((n_simulations, simulation_days))
-        daily_rets = np.exp((mu - 0.5 * sigma ** 2) * dt + sigma * np.sqrt(dt) * Z)
+        daily_rets = np.exp((mu - 0.5 * sigma ** 2) *
+                            dt + sigma * np.sqrt(dt) * Z)
         paths = np.cumprod(daily_rets, axis=1)
     return paths
 
@@ -182,7 +188,8 @@ def simulate_strategy(
 
     # 연율화 샤프지수
     if std_return > 1e-9 and avg_holding > 0:
-        sharpe = (float(np.mean(exit_returns)) / std_return) * np.sqrt(252.0 / avg_holding)
+        sharpe = (float(np.mean(exit_returns)) / std_return) * \
+            np.sqrt(252.0 / avg_holding)
     else:
         sharpe = 0.0
 
@@ -241,7 +248,7 @@ def optimize_params(
     # closes_full의 인덱스: returns_full[i] = (closes[i+1]-closes[i])/closes[i]
     # 훈련 구간 closes 인덱스: -n_train-n_val-1 ... -n_val-1
     train_rsi = rsi_full[-n_train - n_val - 1:-n_val - 1]       # (n_train,)
-    train_vol = vol_ratio_full[-n_train - n_val - 1:-n_val - 1] # (n_train,)
+    train_vol = vol_ratio_full[-n_train - n_val - 1:-n_val - 1]  # (n_train,)
     val_rsi = rsi_full[-n_val - 1:-1]                            # (n_val,)
     val_vol = vol_ratio_full[-n_val - 1:-1]                      # (n_val,)
 
@@ -334,8 +341,9 @@ def optimize_params(
         max_drawdown_pct=best_metrics.get("max_drawdown_pct", 0.0),
         n_trades=best_metrics.get("avg_holding_days", 0.0),
         validation_sharpe=validation_sharpe,
-        optimized_at=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-        is_reliable=validation_sharpe > 0,
+        optimized_at=datetime.datetime.now(
+            datetime.timezone.utc).isoformat(timespec="seconds"),
+        is_reliable=validation_sharpe > 0.1,
     )
 
 
