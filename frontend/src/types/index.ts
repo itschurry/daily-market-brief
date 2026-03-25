@@ -173,8 +173,16 @@ export interface TechnicalSnapshot {
   breakout_20d?: boolean | null;
   breakout_20d_high?: number | null;
   trend?: 'bullish' | 'bearish' | 'neutral';
-}
 
+  adx14?: number | null;
+  mfi14?: number | null;
+  bb_upper?: number | null;
+  bb_lower?: number | null;
+  bb_pct?: number | null;
+  obv_trend?: 'up' | 'down' | 'flat' | null;
+  stoch_k?: number | null;
+  stoch_d?: number | null;
+}
 export interface InvestorFlowSnapshot {
   date?: string;
   foreign_net_1d?: number | null;
@@ -386,8 +394,15 @@ export interface BacktestQuery {
   volume_ratio_min: number;
   stop_loss_pct?: number | null;
   take_profit_pct?: number | null;
-}
 
+  adx_min?: number | null;
+  mfi_min?: number | null;
+  mfi_max?: number | null;
+  bb_pct_min?: number | null;
+  bb_pct_max?: number | null;
+  stoch_k_min?: number | null;
+  stoch_k_max?: number | null;
+}
 export interface BacktestData {
   generated_at?: string;
   universe?: string;

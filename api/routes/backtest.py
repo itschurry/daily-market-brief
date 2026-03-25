@@ -35,7 +35,8 @@ def _config_cache_key(config: BacktestConfig) -> str:
 
 
 def _parse_backtest_config(query: dict[str, list[str]]) -> BacktestConfig:
-    market_scope = (query.get("market_scope", ["kospi"])[0] or "kospi").strip().lower()
+    market_scope = (query.get("market_scope", ["kospi"])[
+                    0] or "kospi").strip().lower()
     if market_scope == "all":
         markets = ("KOSPI", "NASDAQ")
         base_currency = "KRW"
@@ -95,11 +96,16 @@ def _parse_backtest_config(query: dict[str, list[str]]) -> BacktestConfig:
         market_profiles.append(
             build_strategy_profile(
                 market,
-                max_positions=_parse_int("max_positions", default_profile.max_positions, 1, 20),
-                max_holding_days=_parse_int("max_holding_days", default_profile.max_holding_days, 5, 180),
-                rsi_min=_parse_float("rsi_min", default_profile.rsi_min, 10.0, 90.0),
-                rsi_max=_parse_float("rsi_max", default_profile.rsi_max, 10.0, 90.0),
-                volume_ratio_min=_parse_float("volume_ratio_min", default_profile.volume_ratio_min, 0.5, 5.0),
+                max_positions=_parse_int(
+                    "max_positions", default_profile.max_positions, 1, 20),
+                max_holding_days=_parse_int(
+                    "max_holding_days", default_profile.max_holding_days, 5, 180),
+                rsi_min=_parse_float(
+                    "rsi_min", default_profile.rsi_min, 10.0, 90.0),
+                rsi_max=_parse_float(
+                    "rsi_max", default_profile.rsi_max, 10.0, 90.0),
+                volume_ratio_min=_parse_float(
+                    "volume_ratio_min", default_profile.volume_ratio_min, 0.5, 5.0),
                 stop_loss_pct=(
                     _parse_optional_float("stop_loss_pct", 1.0, 50.0)
                     if "stop_loss_pct" in query else default_profile.stop_loss_pct
@@ -108,10 +114,39 @@ def _parse_backtest_config(query: dict[str, list[str]]) -> BacktestConfig:
                     _parse_optional_float("take_profit_pct", 1.0, 100.0)
                     if "take_profit_pct" in query else default_profile.take_profit_pct
                 ),
+                adx_min=(
+                    _parse_optional_float("adx_min", 5.0, 40.0)
+                    if "adx_min" in query else default_profile.adx_min
+                ),
+                mfi_min=(
+                    _parse_optional_float("mfi_min", 0.0, 100.0)
+                    if "mfi_min" in query else default_profile.mfi_min
+                ),
+                mfi_max=(
+                    _parse_optional_float("mfi_max", 0.0, 100.0)
+                    if "mfi_max" in query else default_profile.mfi_max
+                ),
+                bb_pct_min=(
+                    _parse_optional_float("bb_pct_min", 0.0, 1.0)
+                    if "bb_pct_min" in query else default_profile.bb_pct_min
+                ),
+                bb_pct_max=(
+                    _parse_optional_float("bb_pct_max", 0.0, 1.0)
+                    if "bb_pct_max" in query else default_profile.bb_pct_max
+                ),
+                stoch_k_min=(
+                    _parse_optional_float("stoch_k_min", 0.0, 100.0)
+                    if "stoch_k_min" in query else default_profile.stoch_k_min
+                ),
+                stoch_k_max=(
+                    _parse_optional_float("stoch_k_max", 0.0, 100.0)
+                    if "stoch_k_max" in query else default_profile.stoch_k_max
+                ),
             )
         )
     primary_profile = market_profiles[0]
-    candidate_selection_enabled = _parse_bool("candidate_selection_enabled", True)
+    candidate_selection_enabled = _parse_bool(
+        "candidate_selection_enabled", True)
     candidate_selection = normalize_candidate_selection_config(
         {
             "min_score": _parse_float("min_score", 50.0, 0.0, 100.0),
@@ -124,7 +159,8 @@ def _parse_backtest_config(query: dict[str, list[str]]) -> BacktestConfig:
     )
 
     return BacktestConfig(
-        initial_cash=_parse_float("initial_cash", initial_default, initial_minimum, initial_maximum),
+        initial_cash=_parse_float(
+            "initial_cash", initial_default, initial_minimum, initial_maximum),
         base_currency=base_currency,
         max_positions=primary_profile.max_positions,
         max_holding_days=primary_profile.max_holding_days,

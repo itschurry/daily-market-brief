@@ -2,6 +2,27 @@ import { useCallback, useEffect, useState } from 'react';
 import type { BacktestData, BacktestQuery } from '../types';
 
 const BACKTEST_MARKET_PRESETS = {
+  // kospi: {
+  //   initial_cash: 10_000_000,
+  //   max_positions: 5,
+  //   max_holding_days: 15,
+  //   rsi_min: 45,
+  //   rsi_max: 62,
+  //   volume_ratio_min: 1.0,
+  //   stop_loss_pct: 5,
+  //   take_profit_pct: null,
+  // },
+  // nasdaq: {
+  //   initial_cash: 10_000,
+  //   max_positions: 5,
+  //   max_holding_days: 30,
+  //   rsi_min: 45,
+  //   rsi_max: 68,
+  //   volume_ratio_min: 1.2,
+  //   stop_loss_pct: null,
+  //   take_profit_pct: null,
+  // },
+
   kospi: {
     initial_cash: 10_000_000,
     max_positions: 5,
@@ -11,6 +32,13 @@ const BACKTEST_MARKET_PRESETS = {
     volume_ratio_min: 1.0,
     stop_loss_pct: 5,
     take_profit_pct: null,
+    adx_min: 15,
+    mfi_min: 30,
+    mfi_max: 70,
+    bb_pct_min: 0.2,
+    bb_pct_max: 0.8,
+    stoch_k_min: 20,
+    stoch_k_max: 80,
   },
   nasdaq: {
     initial_cash: 10_000,
@@ -21,9 +49,15 @@ const BACKTEST_MARKET_PRESETS = {
     volume_ratio_min: 1.2,
     stop_loss_pct: null,
     take_profit_pct: null,
+    adx_min: 15,
+    mfi_min: 30,
+    mfi_max: 70,
+    bb_pct_min: 0.2,
+    bb_pct_max: 0.8,
+    stoch_k_min: 20,
+    stoch_k_max: 80,
   },
 };
-
 export function defaultBacktestQuery(marketScope: BacktestQuery['market_scope'] = 'kospi'): BacktestQuery {
   const preset = BACKTEST_MARKET_PRESETS[marketScope];
   return {
@@ -53,9 +87,30 @@ function buildQueryString(query: BacktestQuery) {
   if (query.take_profit_pct !== null && query.take_profit_pct !== undefined) {
     params.set('take_profit_pct', String(query.take_profit_pct));
   }
+
+  if (query.adx_min !== null && query.adx_min !== undefined) {
+    params.set('adx_min', String(query.adx_min));
+  }
+  if (query.mfi_min !== null && query.mfi_min !== undefined) {
+    params.set('mfi_min', String(query.mfi_min));
+  }
+  if (query.mfi_max !== null && query.mfi_max !== undefined) {
+    params.set('mfi_max', String(query.mfi_max));
+  }
+  if (query.bb_pct_min !== null && query.bb_pct_min !== undefined) {
+    params.set('bb_pct_min', String(query.bb_pct_min));
+  }
+  if (query.bb_pct_max !== null && query.bb_pct_max !== undefined) {
+    params.set('bb_pct_max', String(query.bb_pct_max));
+  }
+  if (query.stoch_k_min !== null && query.stoch_k_min !== undefined) {
+    params.set('stoch_k_min', String(query.stoch_k_min));
+  }
+  if (query.stoch_k_max !== null && query.stoch_k_max !== undefined) {
+    params.set('stoch_k_max', String(query.stoch_k_max));
+  }
   return params.toString();
 }
-
 function readNumber(value: unknown, fallback: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -80,9 +135,16 @@ function normalizeBacktestQuery(value: unknown): BacktestQuery {
     volume_ratio_min: readNumber(raw.volume_ratio_min, preset.volume_ratio_min),
     stop_loss_pct: readNullableNumber(raw.stop_loss_pct, preset.stop_loss_pct),
     take_profit_pct: readNullableNumber(raw.take_profit_pct, preset.take_profit_pct),
+
+    adx_min: readNullableNumber(raw.adx_min, preset.adx_min),
+    mfi_min: readNullableNumber(raw.mfi_min, preset.mfi_min),
+    mfi_max: readNullableNumber(raw.mfi_max, preset.mfi_max),
+    bb_pct_min: readNullableNumber(raw.bb_pct_min, preset.bb_pct_min),
+    bb_pct_max: readNullableNumber(raw.bb_pct_max, preset.bb_pct_max),
+    stoch_k_min: readNullableNumber(raw.stoch_k_min, preset.stoch_k_min),
+    stoch_k_max: readNullableNumber(raw.stoch_k_max, preset.stoch_k_max),
   };
 }
-
 export function loadBacktestQuery() {
   try {
     return normalizeBacktestQuery(JSON.parse(localStorage.getItem(BACKTEST_QUERY_STORAGE_KEY) || 'null'));

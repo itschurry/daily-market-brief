@@ -187,6 +187,56 @@ function PickCard({ item }: { item: TodayPickItem }) {
         </div>
       )}
 
+      {item.technical_snapshot && (
+        <div style={{ display: 'grid', gap: 8, padding: '12px 14px', borderRadius: 16, border: '1px solid rgba(15,76,92,.16)', background: 'rgba(15,76,92,.06)' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>기술 지표</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: 8 }}>
+            {item.technical_snapshot.current_price !== undefined && item.technical_snapshot.current_price !== null && (
+              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-4)', marginBottom: 2 }}>현재가</div>
+                <div style={{ fontWeight: 700 }}>{item.technical_snapshot.current_price.toLocaleString()}</div>
+              </div>
+            )}
+            {item.technical_snapshot.rsi14 !== undefined && item.technical_snapshot.rsi14 !== null && (
+              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-4)', marginBottom: 2 }}>RSI(14)</div>
+                <div style={{ fontWeight: 700 }}>{item.technical_snapshot.rsi14.toFixed(1)}</div>
+              </div>
+            )}
+            {item.technical_snapshot.adx14 !== undefined && item.technical_snapshot.adx14 !== null && (
+              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-4)', marginBottom: 2 }}>ADX(14)</div>
+                <div style={{ fontWeight: 700 }}>{item.technical_snapshot.adx14.toFixed(1)}</div>
+              </div>
+            )}
+            {item.technical_snapshot.mfi14 !== undefined && item.technical_snapshot.mfi14 !== null && (
+              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-4)', marginBottom: 2 }}>MFI(14)</div>
+                <div style={{ fontWeight: 700 }}>{item.technical_snapshot.mfi14.toFixed(1)}</div>
+              </div>
+            )}
+            {item.technical_snapshot.bb_pct !== undefined && item.technical_snapshot.bb_pct !== null && (
+              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-4)', marginBottom: 2 }}>BB %b</div>
+                <div style={{ fontWeight: 700 }}>{item.technical_snapshot.bb_pct.toFixed(2)}</div>
+              </div>
+            )}
+            {item.technical_snapshot.stoch_k !== undefined && item.technical_snapshot.stoch_k !== null && (
+              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-4)', marginBottom: 2 }}>Stoch K</div>
+                <div style={{ fontWeight: 700 }}>{item.technical_snapshot.stoch_k.toFixed(1)}</div>
+              </div>
+            )}
+            {item.technical_snapshot.volume_ratio !== undefined && item.technical_snapshot.volume_ratio !== null && (
+              <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-4)', marginBottom: 2 }}>거래량배수</div>
+                <div style={{ fontWeight: 700 }}>{item.technical_snapshot.volume_ratio.toFixed(2)}x</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         {item.risks.slice(0, 2).map((risk, index) => (
           <span key={index} style={{ fontSize: 11, color: 'var(--down)', background: 'rgba(196,68,45,.08)', border: '1px solid rgba(196,68,45,.18)', borderRadius: 999, padding: '5px 9px' }}>

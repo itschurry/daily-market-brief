@@ -13,8 +13,15 @@ const PARAM_LABELS: Record<string, string> = {
   n_reliable: '신뢰 종목수',
   n_simulations: '시뮬레이션 횟수',
   method: '방법',
-};
 
+  adx_min: 'ADX 하한',
+  mfi_min: 'MFI 하한',
+  mfi_max: 'MFI 상한',
+  bb_pct_min: 'BB %b 하한',
+  bb_pct_max: 'BB %b 상한',
+  stoch_k_min: 'Stochastic K 하한',
+  stoch_k_max: 'Stochastic K 상한',
+};
 function paramLabel(key: string): string {
   return PARAM_LABELS[key] ?? key;
 }
@@ -158,6 +165,7 @@ function NumericField({
   suffix,
   step = 1,
   min,
+  max,
   onChange,
 }: {
   label: string;
@@ -165,6 +173,7 @@ function NumericField({
   suffix?: string;
   step?: number;
   min?: number;
+  max?: number;
   onChange: (value: number | null) => void;
 }) {
   const [display, setDisplay] = useState('');
@@ -186,6 +195,7 @@ function NumericField({
           type="number"
           value={display}
           min={min}
+          max={max}
           step={step}
           onChange={(event) => {
             const raw = event.target.value.trim();
@@ -203,7 +213,8 @@ function NumericField({
             if (!display) return;
             const parsed = Number(display);
             if (!Number.isFinite(parsed)) return;
-            const next = min !== undefined ? Math.max(parsed, min) : parsed;
+            const minClamped = min !== undefined ? Math.max(parsed, min) : parsed;
+            const next = max !== undefined ? Math.min(minClamped, max) : minClamped;
             if (next !== parsed) {
               setDisplay(String(next));
               onChange(next);
@@ -519,9 +530,16 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
             }} />
             <NumericField label="손절 기준" value={draft.stop_loss_pct} suffix="%" min={1} step={0.5} onChange={(value) => patchDraft('stop_loss_pct', value)} />
             <NumericField label="익절 기준" value={draft.take_profit_pct} suffix="%" min={1} step={0.5} onChange={(value) => patchDraft('take_profit_pct', value)} />
+
+            <NumericField label="ADX 최소값" value={draft.adx_min} min={5} onChange={(value) => patchDraft('adx_min', value)} />
+            <NumericField label="MFI 최소값" value={draft.mfi_min} min={0} max={100} onChange={(value) => patchDraft('mfi_min', value)} />
+            <NumericField label="MFI 최대값" value={draft.mfi_max} min={0} max={100} onChange={(value) => patchDraft('mfi_max', value)} />
+            <NumericField label="BB %b 최소값" value={draft.bb_pct_min} min={0} step={0.1} onChange={(value) => patchDraft('bb_pct_min', value)} />
+            <NumericField label="BB %b 최대값" value={draft.bb_pct_max} min={0} step={0.1} onChange={(value) => patchDraft('bb_pct_max', value)} />
+            <NumericField label="Stochastic K 최소값" value={draft.stoch_k_min} min={0} max={100} onChange={(value) => patchDraft('stoch_k_min', value)} />
+            <NumericField label="Stochastic K 최대값" value={draft.stoch_k_max} min={0} max={100} onChange={(value) => patchDraft('stoch_k_max', value)} />
           </div>
         </div>
-
         {status === 'loading' && (
           <div className="page-section" style={{ display: 'grid', gap: 10 }}>
             {[88, 74, 81, 62].map((w, i) => (
@@ -598,9 +616,13 @@ export function BacktestPage({ onBack }: { onBack: () => void }) {
                   <div>추세 이탈: 20일선 하회</div>
                   <div>기본 종료: MACD 약세 / RSI 과열 / 보유기간 만료</div>
                 </div>
-              </div>
-            </div>
 
+                  {draft.adx_min && <div>ADX: {draft.adx_min} 이상</div>}
+                  {draft.mfi_min && <div>MFI: {draft.mfi_min} ~ {draft.mfi_max}</div>}
+                  {draft.bb_pct_min && <div>BB %b: {draft.bb_pct_min} ~ {draft.bb_pct_max}</div>}
+                  {draft.stoch_k_min && <div>Stochastic K: {draft.stoch_k_min} ~ {draft.stoch_k_max}</div>}
+                </div>
+              </div>
             <Sparkline data={data} currency={baseCurrency} />
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>

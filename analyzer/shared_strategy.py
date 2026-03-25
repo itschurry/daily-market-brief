@@ -21,6 +21,14 @@ class StrategyProfile:
     signal_interval: str = "1d"
     signal_range: str = "6mo"
 
+    adx_min: float | None = None
+    mfi_min: float | None = None
+    mfi_max: float | None = None
+    bb_pct_min: float | None = None
+    bb_pct_max: float | None = None
+    stoch_k_min: float | None = None
+    stoch_k_max: float | None = None
+
 
 _DEFAULT_PROFILES: dict[str, StrategyProfile] = {
     "KOSPI": StrategyProfile(
@@ -97,6 +105,21 @@ def normalize_strategy_profile(profile: StrategyProfile) -> StrategyProfile:
         take_profit_pct=take_profit,
         signal_interval=_normalize_signal_interval(profile.signal_interval),
         signal_range=_normalize_signal_range(profile.signal_range),
+
+        adx_min=profile.adx_min if profile.adx_min is None else max(
+            5.0, min(40.0, float(profile.adx_min))),
+        mfi_min=profile.mfi_min if profile.mfi_min is None else max(
+            0.0, min(100.0, float(profile.mfi_min))),
+        mfi_max=profile.mfi_max if profile.mfi_max is None else max(
+            0.0, min(100.0, float(profile.mfi_max))),
+        bb_pct_min=profile.bb_pct_min if profile.bb_pct_min is None else max(
+            0.0, min(1.0, float(profile.bb_pct_min))),
+        bb_pct_max=profile.bb_pct_max if profile.bb_pct_max is None else max(
+            0.0, min(1.0, float(profile.bb_pct_max))),
+        stoch_k_min=profile.stoch_k_min if profile.stoch_k_min is None else max(
+            0.0, min(100.0, float(profile.stoch_k_min))),
+        stoch_k_max=profile.stoch_k_max if profile.stoch_k_max is None else max(
+            0.0, min(100.0, float(profile.stoch_k_max))),
     )
 
 
