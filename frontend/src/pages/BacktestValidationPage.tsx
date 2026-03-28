@@ -1,32 +1,24 @@
-import { useEffect, useState } from 'react';
-import { fetchValidationBacktest, fetchValidationWalkForward } from '../api/domain';
-import type { ValidationResponse } from '../types/domain';
+import { reliabilityToKorean, UI_TEXT } from '../constants/uiText';
+import { formatNumber, formatPercent } from '../utils/format';
+import type { ConsoleSnapshot } from '../types/consoleView';
 
-export function BacktestValidationPage({ onBack }: { onBack: () => void }) {
-  const [backtest, setBacktest] = useState<ValidationResponse>({});
-  const [walkForward, setWalkForward] = useState<ValidationResponse>({});
-  const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('loading');
+interface BacktestValidationPageProps {
+  snapshot: ConsoleSnapshot;
+  loading: boolean;
+  errorMessage: string;
+  onRefresh: () => void;
+}
 
-  async function refresh() {
-    setStatus('loading');
-    try {
-      const [backtestPayload, walkForwardPayload] = await Promise.all([
-        fetchValidationBacktest(),
-        fetchValidationWalkForward(),
-      ]);
-      setBacktest(backtestPayload);
-      setWalkForward(walkForwardPayload);
-      setStatus('idle');
-    } catch {
-      setStatus('error');
-    }
-  }
+function metricValue(metrics: Record<string, number> | undefined, key: string): number | undefined {
+  if (!metrics) return undefined;
+  const value = metrics[key];
+  return Number.isFinite(value) ? value : undefined;
+}
 
-  useEffect(() => {
-    void refresh();
-  }, []);
-
-  const oos = walkForward.segments?.oos || {};
+export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefresh }: BacktestValidationPageProps) {
+  const oos = snapshot.validation.segments?.oos as Record<string, number> | undefined;
+  const train = snapshot.validation.segments?.train as Record<string, number> | undefined;
+  const validation = snapshot.validation.segments?.validation as Record<string, number> | undefined;
 
   return (
     <div className="app-shell">
@@ -34,45 +26,53 @@ export function BacktestValidationPage({ onBack }: { onBack: () => void }) {
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <div className="page-section" style={{ padding: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <div style={{ fontSize: 22, fontWeight: 800 }}>Backtest / Validation</div>
+              <div style={{ fontSize: 22, fontWeight: 800 }}>백테스트/검증</div>
               <div style={{ fontSize: 12, color: 'var(--text-4)', marginTop: 6 }}>
-                OOS reliability {walkForward.summary?.oos_reliability || '-'}
+                OOS 신뢰도 {reliabilityToKorean(String(snapshot.validation.summary?.oos_reliability || ''))} · 윈도우 {snapshot.validation.summary?.windows ?? 0}개
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="ghost-button" onClick={() => void refresh()}>Refresh</button>
-              <button className="ghost-button" onClick={onBack}>Back</button>
-            </div>
+            <button className="ghost-button" onClick={onRefresh}>{UI_TEXT.common.refresh}</button>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
             <div className="page-section" style={{ padding: 16 }}>
-              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Backtest Return</div>
+              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>학습 구간 수익률</div>
               <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800 }}>
-                {String((backtest.metrics || {})['total_return_pct'] ?? '-')}%
+                {formatPercent(metricValue(train, 'total_return_pct'), 2)}
               </div>
             </div>
             <div className="page-section" style={{ padding: 16 }}>
-              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Backtest Profit Factor</div>
+              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>검증 구간 수익률</div>
               <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800 }}>
-                {String((backtest.metrics || {})['profit_factor'] ?? '-')}
+                {formatPercent(metricValue(validation, 'total_return_pct'), 2)}
               </div>
             </div>
             <div className="page-section" style={{ padding: 16 }}>
-              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>OOS Return</div>
+              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>OOS 수익률</div>
               <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800 }}>
-                {String(oos.total_return_pct ?? '-')}%
+                {formatPercent(metricValue(oos, 'total_return_pct'), 2)}
               </div>
             </div>
             <div className="page-section" style={{ padding: 16 }}>
               <div style={{ fontSize: 12, color: 'var(--text-4)' }}>OOS Profit Factor</div>
               <div style={{ marginTop: 8, fontSize: 20, fontWeight: 800 }}>
-                {String(oos.profit_factor ?? '-')}
+                {formatNumber(metricValue(oos, 'profit_factor'), 2)}
               </div>
             </div>
           </div>
 
-          {status === 'error' && <div style={{ color: 'var(--down)', fontSize: 12 }}>failed to load validation data</div>}
+          <div className="page-section" style={{ padding: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>검증 체크</div>
+            <div style={{ marginTop: 8, display: 'grid', gap: 6, fontSize: 12, color: 'var(--text-3)' }}>
+              <div>양수 OOS 윈도우: {snapshot.validation.summary?.positive_windows ?? 0}개</div>
+              <div>OOS 거래수: {formatNumber(metricValue(oos, 'trade_count'), 0)}</div>
+              <div>OOS 승률: {formatPercent(metricValue(oos, 'win_rate_pct'), 2)}</div>
+              <div>OOS 최대낙폭: {formatPercent(metricValue(oos, 'max_drawdown_pct'), 2)}</div>
+            </div>
+          </div>
+
+          {loading && <div style={{ color: 'var(--text-3)', fontSize: 12 }}>{UI_TEXT.common.loading}</div>}
+          {errorMessage && <div style={{ color: 'var(--down)', fontSize: 12 }}>{errorMessage}</div>}
         </div>
       </div>
     </div>

@@ -1,77 +1,209 @@
 import { useEffect, useState } from 'react';
+import { UI_TEXT } from './constants/uiText';
+import { useConsoleData } from './hooks/useConsoleData';
 import { BacktestValidationPage } from './pages/BacktestValidationPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { PaperPortfolioPage } from './pages/PaperPortfolioPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SignalsPage } from './pages/SignalsPage';
+import type { ConsoleTab, ReportTab, TopSection } from './types/navigation';
 
-type RouteId = 'overview' | 'signals' | 'paper' | 'reports' | 'backtest';
-
-const ROUTE_LABELS: Array<{ id: RouteId; label: string; path: string }> = [
-  { id: 'overview', label: 'Overview', path: '/overview' },
-  { id: 'signals', label: 'Signals', path: '/signals' },
-  { id: 'paper', label: 'Paper Portfolio', path: '/paper' },
-  { id: 'reports', label: 'Reports', path: '/reports' },
-  { id: 'backtest', label: 'Backtest/Validation', path: '/backtest' },
-];
-
-function readRoute(): RouteId {
-  const path = location.pathname.toLowerCase();
-  if (path.startsWith('/signals')) return 'signals';
-  if (path.startsWith('/paper')) return 'paper';
-  if (path.startsWith('/reports')) return 'reports';
-  if (path.startsWith('/backtest')) return 'backtest';
-  return 'overview';
+interface RouteState {
+  section: TopSection;
+  consoleTab: ConsoleTab;
+  reportTab: ReportTab;
+  canonicalPath: string;
 }
 
-function navigateTo(route: RouteId) {
-  const target = ROUTE_LABELS.find((item) => item.id === route);
-  if (!target) return;
-  history.pushState(null, '', target.path);
+const CONSOLE_TABS: Array<{ id: ConsoleTab; label: string; path: string }> = [
+  { id: 'overview', label: UI_TEXT.consoleTabs.overview, path: '/console/overview' },
+  { id: 'signals', label: UI_TEXT.consoleTabs.signals, path: '/console/signals' },
+  { id: 'paper', label: UI_TEXT.consoleTabs.paper, path: '/console/paper' },
+  { id: 'validation', label: UI_TEXT.consoleTabs.validation, path: '/console/validation' },
+];
+
+const REPORT_TABS: Array<{ id: ReportTab; label: string; path: string }> = [
+  { id: 'today-report', label: UI_TEXT.reportTabs.todayReport, path: '/reports/today-report' },
+  { id: 'today-recommendations', label: UI_TEXT.reportTabs.todayRecommendations, path: '/reports/today-recommendations' },
+  { id: 'action-board', label: UI_TEXT.reportTabs.actionBoard, path: '/reports/action-board' },
+  { id: 'watch-decision', label: UI_TEXT.reportTabs.watchDecision, path: '/reports/watch-decision' },
+];
+
+function toRouteState(pathname: string): RouteState {
+  const path = pathname.toLowerCase();
+  const normalize = (nextPath: string): RouteState => toRouteState(nextPath);
+
+  const legacyRedirects: Record<string, string> = {
+    '/overview': '/console/overview',
+    '/signals': '/console/signals',
+    '/paper': '/console/paper',
+    '/backtest': '/console/validation',
+    '/reports': '/reports/today-report',
+    '/console/backtest': '/console/validation',
+    '/reports/today': '/reports/today-report',
+    '/reports/recommendations': '/reports/today-recommendations',
+    '/': '/console/overview',
+  };
+  if (legacyRedirects[path]) return normalize(legacyRedirects[path]);
+
+  if (path.startsWith('/console/')) {
+    const segment = path.replace('/console/', '');
+    const found = CONSOLE_TABS.find((tab) => tab.id === segment);
+    if (found) {
+      return {
+        section: 'console',
+        consoleTab: found.id,
+        reportTab: 'today-report',
+        canonicalPath: found.path,
+      };
+    }
+    return normalize('/console/overview');
+  }
+
+  if (path.startsWith('/reports/')) {
+    const segment = path.replace('/reports/', '');
+    const found = REPORT_TABS.find((tab) => tab.id === segment);
+    if (found) {
+      return {
+        section: 'reports',
+        consoleTab: 'overview',
+        reportTab: found.id,
+        canonicalPath: found.path,
+      };
+    }
+    return normalize('/reports/today-report');
+  }
+
+  return normalize('/console/overview');
+}
+
+function pushPath(path: string) {
+  history.pushState(null, '', path);
+}
+
+function replacePath(path: string) {
+  history.replaceState(null, '', path);
 }
 
 export default function App() {
-  const [route, setRoute] = useState<RouteId>(readRoute);
+  const [route, setRoute] = useState<RouteState>(() => toRouteState(location.pathname));
+  const { snapshot, loading, hasError, errorMessage, refresh } = useConsoleData();
 
   useEffect(() => {
+    const initial = toRouteState(location.pathname);
+    setRoute(initial);
+    if (location.pathname !== initial.canonicalPath) {
+      replacePath(initial.canonicalPath);
+    }
+
     const handlePopState = () => {
-      setRoute(readRoute());
+      const next = toRouteState(location.pathname);
+      setRoute(next);
+      if (location.pathname !== next.canonicalPath) {
+        replacePath(next.canonicalPath);
+      }
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  function move(routeId: RouteId) {
-    navigateTo(routeId);
-    setRoute(routeId);
+  function moveToSection(section: TopSection) {
+    const targetPath = section === 'console' ? '/console/overview' : '/reports/today-report';
+    const next = toRouteState(targetPath);
+    pushPath(next.canonicalPath);
+    setRoute(next);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
+
+  function moveToConsoleTab(tab: ConsoleTab) {
+    const target = CONSOLE_TABS.find((item) => item.id === tab);
+    if (!target) return;
+    const next = toRouteState(target.path);
+    pushPath(next.canonicalPath);
+    setRoute(next);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function moveToReportTab(tab: ReportTab) {
+    const target = REPORT_TABS.find((item) => item.id === tab);
+    if (!target) return;
+    const next = toRouteState(target.path);
+    pushPath(next.canonicalPath);
+    setRoute(next);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  const sharedProps = {
+    snapshot,
+    loading,
+    errorMessage: hasError ? errorMessage : '',
+    onRefresh: refresh,
+  };
 
   return (
     <>
       <div className="tab-shell">
         <div className="tab-shell-row">
           <div className="tab-strip">
-            {ROUTE_LABELS.map((item, index) => (
+            <button
+              onClick={() => moveToSection('console')}
+              className={`tab-button ${route.section === 'console' ? 'active' : ''}`}
+            >
+              <span className="tab-step">01</span>
+              <span className="tab-label">{UI_TEXT.topTabs.console}</span>
+              <span className="tab-help">{UI_TEXT.appName}</span>
+            </button>
+            <button
+              onClick={() => moveToSection('reports')}
+              className={`tab-button ${route.section === 'reports' ? 'active' : ''}`}
+            >
+              <span className="tab-step">02</span>
+              <span className="tab-label">{UI_TEXT.topTabs.reports}</span>
+              <span className="tab-help">{UI_TEXT.appName}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="tab-shell" style={{ marginTop: 8 }}>
+        <div className="tab-shell-row">
+          <div className="tab-strip">
+            {route.section === 'console' && CONSOLE_TABS.map((tab, index) => (
               <button
-                key={item.id}
-                onClick={() => move(item.id)}
-                className={`tab-button ${route === item.id ? 'active' : ''}`}
+                key={tab.id}
+                onClick={() => moveToConsoleTab(tab.id)}
+                className={`tab-button ${route.consoleTab === tab.id ? 'active' : ''}`}
               >
                 <span className="tab-step">{String(index + 1).padStart(2, '0')}</span>
-                <span className="tab-label">{item.label}</span>
-                <span className="tab-help">Auto-Invest Console</span>
+                <span className="tab-label">{tab.label}</span>
+                <span className="tab-help">{UI_TEXT.topTabs.console}</span>
+              </button>
+            ))}
+            {route.section === 'reports' && REPORT_TABS.map((tab, index) => (
+              <button
+                key={tab.id}
+                onClick={() => moveToReportTab(tab.id)}
+                className={`tab-button ${route.reportTab === tab.id ? 'active' : ''}`}
+              >
+                <span className="tab-step">{String(index + 1).padStart(2, '0')}</span>
+                <span className="tab-label">{tab.label}</span>
+                <span className="tab-help">{UI_TEXT.topTabs.reports}</span>
               </button>
             ))}
           </div>
         </div>
       </div>
 
-      {route === 'overview' && <OverviewPage />}
-      {route === 'signals' && <SignalsPage />}
-      {route === 'paper' && <PaperPortfolioPage />}
-      {route === 'reports' && <ReportsPage />}
-      {route === 'backtest' && <BacktestValidationPage onBack={() => move('overview')} />}
+      {route.section === 'console' && route.consoleTab === 'overview' && <OverviewPage {...sharedProps} />}
+      {route.section === 'console' && route.consoleTab === 'signals' && <SignalsPage {...sharedProps} />}
+      {route.section === 'console' && route.consoleTab === 'paper' && <PaperPortfolioPage {...sharedProps} />}
+      {route.section === 'console' && route.consoleTab === 'validation' && <BacktestValidationPage {...sharedProps} />}
+      {route.section === 'reports' && (
+        <ReportsPage
+          {...sharedProps}
+          reportTab={route.reportTab}
+        />
+      )}
     </>
   );
 }
