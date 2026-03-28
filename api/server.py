@@ -32,6 +32,7 @@ from api.routes.trading import (
     handle_paper_order,
     handle_paper_reset,
 )
+from api.routes.system import handle_system_mode
 from api.routes.watchlist import (
     handle_watchlist_actions,
     handle_watchlist_get,
@@ -90,6 +91,7 @@ GET_ROUTES: tuple[Route, ...] = (
         lambda _path, query: handle_paper_account(_query_value(query, "refresh", "1").strip() != "0"),
     ),
     Route("/api/paper/engine/status", lambda _path, _query: handle_paper_engine_status()),
+    Route("/api/system/mode", lambda _path, _query: handle_system_mode()),
     Route("/api/optimized-params", lambda _path, _query: handle_get_optimized_params()),
     Route("/api/optimization-status", lambda _path, _query: handle_get_optimization_status()),
 )

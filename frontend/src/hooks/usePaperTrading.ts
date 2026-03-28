@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { PaperAccountData, PaperEngineConfig, PaperEngineState, PaperSeedPositionInput } from '../types';
+import { getJSON, postJSON } from '../api/client';
+import type { PaperAccountData, PaperEngineConfig, PaperEngineState, PaperSeedPositionInput, PaperSkippedItem } from '../types';
 
 const EMPTY_ACCOUNT: PaperAccountData = {
   mode: 'paper',
@@ -21,6 +22,25 @@ const EMPTY_ACCOUNT: PaperAccountData = {
   orders: [],
 };
 
+type PaperOrderResponse = { ok?: boolean; error?: string; account?: PaperAccountData };
+type PaperAutoInvestResponse = {
+  ok?: boolean;
+  error?: string;
+  account?: PaperAccountData;
+  executed?: unknown[];
+  skipped?: PaperSkippedItem[];
+  message?: string;
+  [key: string]: unknown;
+};
+type PaperEngineResponse = {
+  ok?: boolean;
+  error?: string;
+  state?: PaperEngineState;
+  account?: PaperAccountData;
+  message?: string;
+  [key: string]: unknown;
+};
+
 export function usePaperTrading() {
   const [account, setAccount] = useState<PaperAccountData>(EMPTY_ACCOUNT);
   const [engineState, setEngineState] = useState<PaperEngineState>({ running: false });
@@ -29,8 +49,7 @@ export function usePaperTrading() {
 
   const refresh = useCallback(async (refreshQuotes = true) => {
     try {
-      const res = await fetch(`/api/paper/account?refresh=${refreshQuotes ? '1' : '0'}`, { cache: 'no-store' });
-      const payload: PaperAccountData = await res.json();
+      const payload = await getJSON<PaperAccountData>(`/api/paper/account?refresh=${refreshQuotes ? '1' : '0'}`, { noStore: true });
       setAccount(payload);
       setStatus(payload.error ? 'error' : 'ok');
       setLastError(payload.error || '');
@@ -51,13 +70,9 @@ export function usePaperTrading() {
     limit_price?: number | null;
   }) => {
     try {
-      const res = await fetch('/api/paper/order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
-      const payload = await res.json();
-      if (!res.ok || !payload.ok) {
+      const response = await postJSON<PaperOrderResponse>('/api/paper/order', params);
+      const payload = response.data;
+      if (!response.ok || !payload.ok) {
         const message = payload.error || '모의 주문에 실패했습니다.';
         setLastError(message);
         return { ok: false, error: message };
@@ -80,13 +95,9 @@ export function usePaperTrading() {
     seed_positions?: PaperSeedPositionInput[];
   }) => {
     try {
-      const res = await fetch('/api/paper/reset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params || {}),
-      });
-      const payload = await res.json();
-      if (!res.ok || !payload.ok) {
+      const response = await postJSON<PaperOrderResponse>('/api/paper/reset', params || {});
+      const payload = response.data;
+      if (!response.ok || !payload.ok) {
         const message = payload.error || '모의계좌 초기화에 실패했습니다.';
         setLastError(message);
         return { ok: false, error: message };
@@ -114,13 +125,9 @@ export function usePaperTrading() {
     theme_focus?: Array<'automotive' | 'robotics' | 'physical_ai'>;
   }) => {
     try {
-      const res = await fetch('/api/paper/auto-invest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params || {}),
-      });
-      const payload = await res.json();
-      if (!res.ok || !payload.ok) {
+      const response = await postJSON<PaperAutoInvestResponse>('/api/paper/auto-invest', params || {});
+      const payload = response.data;
+      if (!response.ok || !payload.ok) {
         const message = payload.error || '추천 기반 자동매수 실행에 실패했습니다.';
         setLastError(message);
         return { ok: false, error: message, payload };
@@ -138,9 +145,8 @@ export function usePaperTrading() {
 
   const refreshEngineStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/paper/engine/status', { cache: 'no-store' });
-      const payload = await res.json();
-      if (!res.ok || !payload.ok) {
+      const payload = await getJSON<PaperEngineResponse>('/api/paper/engine/status', { noStore: true });
+      if (!payload.ok) {
         const message = payload.error || '자동매매 상태 조회에 실패했습니다.';
         setLastError(message);
         return { ok: false, error: message };
@@ -159,13 +165,9 @@ export function usePaperTrading() {
 
   const startEngine = useCallback(async (params?: Partial<PaperEngineConfig>) => {
     try {
-      const res = await fetch('/api/paper/engine/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params || {}),
-      });
-      const payload = await res.json();
-      if (!res.ok || !payload.ok) {
+      const response = await postJSON<PaperEngineResponse>('/api/paper/engine/start', params || {});
+      const payload = response.data;
+      if (!response.ok || !payload.ok) {
         const message = payload.error || '자동매매 실행에 실패했습니다.';
         setLastError(message);
         return { ok: false, error: message };
@@ -184,11 +186,9 @@ export function usePaperTrading() {
 
   const stopEngine = useCallback(async () => {
     try {
-      const res = await fetch('/api/paper/engine/stop', {
-        method: 'POST',
-      });
-      const payload = await res.json();
-      if (!res.ok || !payload.ok) {
+      const response = await postJSON<PaperEngineResponse>('/api/paper/engine/stop');
+      const payload = response.data;
+      if (!response.ok || !payload.ok) {
         const message = payload.error || '자동매매 중지에 실패했습니다.';
         setLastError(message);
         return { ok: false, error: message };

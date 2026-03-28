@@ -4,10 +4,7 @@
 - 미국장 정규장: ET 09:30-16:00, 30분 단위 cron
 - 장외: KST 06:00-21:00, 1시간 단위 기준, 한국장 정규장은 제외
 """
-import asyncio
 import os
-import subprocess
-import sys
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -16,7 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 
 from config.market_calendar import is_market_half_hour_slot
-from main import run_daily_report
+from jobs.runtime_jobs import run_optimization_job, run_report_job
 
 KST_TZ = "Asia/Seoul"
 KST_ZONE = ZoneInfo(KST_TZ)
@@ -26,7 +23,7 @@ def _run():
     """동기 래퍼 - APScheduler job 함수."""
     logger.info(f"스케줄 실행 시작: {datetime.now():%Y-%m-%d %H:%M:%S}")
     try:
-        asyncio.run(run_daily_report())
+        run_report_job()
         logger.info("스케줄 실행 완료")
     except Exception:
         # 예외로 프로세스가 종료되면 다음 슬롯을 통째로 놓칠 수 있으므로
@@ -78,22 +75,8 @@ def _off_session_job():
 
 def _run_optimization():
     """몬테카를로 파라미터 최적화 — 일요일 새벽 2시에 실행."""
-    from pathlib import Path
-    script = str(Path(__file__).parent / "scripts" / "run_monte_carlo_optimizer.py")
-    logger.info("몬테카를로 최적화 시작: {}", script)
     try:
-        result = subprocess.run(
-            [sys.executable, script],
-            timeout=3600,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            logger.info("몬테카를로 최적화 완료")
-        else:
-            logger.error("몬테카를로 최적화 실패 (rc={}): {}", result.returncode, result.stderr[-2000:])
-    except subprocess.TimeoutExpired:
-        logger.error("몬테카를로 최적화 타임아웃 (1시간 초과)")
+        run_optimization_job()
     except Exception:
         logger.exception("몬테카를로 최적화 실행 중 예외 발생")
 

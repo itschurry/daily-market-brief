@@ -1,99 +1,37 @@
 import { useEffect, useState } from 'react';
-import type { TabId } from './types';
-import { Header } from './components/Header';
-import { SummaryBar } from './components/SummaryBar';
-import { TabBar } from './components/TabBar';
-import { AssistantTab } from './components/AssistantTab';
-import { MarketTab } from './components/MarketTab';
-import { WatchlistTab } from './components/WatchlistTab';
-import { AnalysisTab } from './components/AnalysisTab';
-import { RecommendationTab } from './components/RecommendationTab';
-import { BacktestPage } from './components/BacktestPage';
-import { PaperTradingTab } from './components/PaperTradingTab';
-import { useAnalysis } from './hooks/useAnalysis';
+import { BacktestValidationPage } from './pages/BacktestValidationPage';
+import { OverviewPage } from './pages/OverviewPage';
+import { PaperPortfolioPage } from './pages/PaperPortfolioPage';
+import { ReportsPage } from './pages/ReportsPage';
+import { SignalsPage } from './pages/SignalsPage';
 
-type RouteId = 'dashboard' | 'backtest';
+type RouteId = 'overview' | 'signals' | 'paper' | 'reports' | 'backtest';
+
+const ROUTE_LABELS: Array<{ id: RouteId; label: string; path: string }> = [
+  { id: 'overview', label: 'Overview', path: '/overview' },
+  { id: 'signals', label: 'Signals', path: '/signals' },
+  { id: 'paper', label: 'Paper Portfolio', path: '/paper' },
+  { id: 'reports', label: 'Reports', path: '/reports' },
+  { id: 'backtest', label: 'Backtest/Validation', path: '/backtest' },
+];
 
 function readRoute(): RouteId {
-  return location.pathname.startsWith('/backtest') ? 'backtest' : 'dashboard';
+  const path = location.pathname.toLowerCase();
+  if (path.startsWith('/signals')) return 'signals';
+  if (path.startsWith('/paper')) return 'paper';
+  if (path.startsWith('/reports')) return 'reports';
+  if (path.startsWith('/backtest')) return 'backtest';
+  return 'overview';
 }
 
-function readTab(): TabId {
-  const hash = location.hash.replace('#', '') as TabId;
-  return ['assistant', 'market', 'holdings', 'analysis', 'recommendations', 'paper'].includes(hash) ? hash : 'analysis';
-}
-
-function DashboardPage({ onOpenBacktest }: { onOpenBacktest: () => void }) {
-  const [activeTab, setActiveTab] = useState<TabId>(readTab);
-  const { data: analysis, status: analysisStatus, refresh: refreshAnalysis } = useAnalysis();
-
-  useEffect(() => {
-    const handlePopState = () => {
-      setActiveTab(readTab());
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
-
-  function handleTabChange(tab: TabId) {
-    setActiveTab(tab);
-    history.replaceState(null, '', '/#' + tab);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
-
-  return (
-    <div className="app-shell">
-      <div className="page-frame">
-        <Header
-          reportDate={today}
-          generatedAt={analysis.generated_at}
-          headline={analysis.summary_lines?.[0]}
-        />
-        <SummaryBar
-          summaryLines={analysis.summary_lines || []}
-          generatedAt={analysis.generated_at}
-          onRefresh={refreshAnalysis}
-        />
-        <TabBar activeTab={activeTab} onChange={handleTabChange} onOpenBacktest={onOpenBacktest} />
-        <div className="content-shell">
-          {activeTab === 'assistant' && <AssistantTab />}
-          {activeTab === 'market' && <MarketTab />}
-          {activeTab === 'holdings' && <WatchlistTab />}
-          {activeTab === 'analysis' && (
-            <AnalysisTab
-              data={analysis}
-              status={analysisStatus}
-              onRefresh={refreshAnalysis}
-            />
-          )}
-          {activeTab === 'recommendations' && (
-            <RecommendationTab
-              onRefresh={refreshAnalysis}
-            />
-          )}
-          {activeTab === 'paper' && <PaperTradingTab />}
-        </div>
-      </div>
-    </div>
-  );
+function navigateTo(route: RouteId) {
+  const target = ROUTE_LABELS.find((item) => item.id === route);
+  if (!target) return;
+  history.pushState(null, '', target.path);
 }
 
 export default function App() {
   const [route, setRoute] = useState<RouteId>(readRoute);
-
-  function navigateToDashboard(tab?: TabId) {
-    history.pushState(null, '', tab ? `/#${tab}` : '/');
-    setRoute('dashboard');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function navigateToBacktest() {
-    history.pushState(null, '', '/backtest');
-    setRoute('backtest');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
 
   useEffect(() => {
     const handlePopState = () => {
@@ -103,9 +41,37 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  if (route === 'backtest') {
-    return <BacktestPage onBack={() => navigateToDashboard('analysis')} />;
+  function move(routeId: RouteId) {
+    navigateTo(routeId);
+    setRoute(routeId);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  return <DashboardPage onOpenBacktest={navigateToBacktest} />;
+  return (
+    <>
+      <div className="tab-shell">
+        <div className="tab-shell-row">
+          <div className="tab-strip">
+            {ROUTE_LABELS.map((item, index) => (
+              <button
+                key={item.id}
+                onClick={() => move(item.id)}
+                className={`tab-button ${route === item.id ? 'active' : ''}`}
+              >
+                <span className="tab-step">{String(index + 1).padStart(2, '0')}</span>
+                <span className="tab-label">{item.label}</span>
+                <span className="tab-help">Auto-Invest Console</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {route === 'overview' && <OverviewPage />}
+      {route === 'signals' && <SignalsPage />}
+      {route === 'paper' && <PaperPortfolioPage />}
+      {route === 'reports' && <ReportsPage />}
+      {route === 'backtest' && <BacktestValidationPage onBack={() => move('overview')} />}
+    </>
+  );
 }

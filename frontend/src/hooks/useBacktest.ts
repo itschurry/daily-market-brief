@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { getJSON } from '../api/client';
 import type { BacktestData, BacktestQuery } from '../types';
 
 const BACKTEST_MARKET_PRESETS = {
@@ -165,8 +166,7 @@ export function useBacktest(initialQuery: BacktestQuery = DEFAULT_BACKTEST_QUERY
   const run = useCallback(async (nextQuery: BacktestQuery) => {
     setStatus('loading');
     try {
-      const res = await fetch(`/api/backtest/run?${buildQueryString(nextQuery)}`, { cache: 'no-store' });
-      const payload: BacktestData = await res.json();
+      const payload = await getJSON<BacktestData>(`/api/backtest/run?${buildQueryString(nextQuery)}`, { noStore: true });
       setData(payload);
       setQuery(nextQuery);
       setStatus(payload.error ? 'error' : 'ok');

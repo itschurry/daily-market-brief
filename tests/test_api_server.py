@@ -34,6 +34,13 @@ class ApiServerDispatchTests(unittest.TestCase):
         self.assertEqual((200, {"stopped": True}), result)
         mock_handler.assert_called_once_with()
 
+    def test_dispatch_get_routes_system_mode(self):
+        with patch("api.server.handle_system_mode", return_value=(200, {"ok": True, "current_mode": "paper"})) as mock_handler:
+            result = dispatch_get("/api/system/mode", {})
+
+        self.assertEqual((200, {"ok": True, "current_mode": "paper"}), result)
+        mock_handler.assert_called_once_with()
+
     def test_dispatch_returns_none_for_unknown_route(self):
         self.assertIsNone(dispatch_get("/api/unknown", {}))
         self.assertIsNone(dispatch_post("/api/unknown", {}))

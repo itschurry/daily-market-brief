@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { getJSON } from '../api/client';
 import type { MarketDashboardData } from '../types';
 
 const CLIENT_CACHE_TTL = 60_000;
@@ -23,8 +24,7 @@ export function useMarketDashboard() {
     }
 
     try {
-      const res = await fetch('/api/market-dashboard', { cache: 'no-store' });
-      const next: MarketDashboardData = await res.json();
+      const next = await getJSON<MarketDashboardData>('/api/market-dashboard', { noStore: true });
       cachedDashboard = next;
       cachedAt = Date.now();
       setData(next);

@@ -1,5 +1,3 @@
-export type TabId = 'assistant' | 'market' | 'holdings' | 'analysis' | 'recommendations' | 'paper';
-
 export interface MarketData {
   kospi?: number; kospi_pct?: number;
   kosdaq?: number; kosdaq_pct?: number;

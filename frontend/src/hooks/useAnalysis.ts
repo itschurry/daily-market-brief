@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { getJSON } from '../api/client';
 import type { AnalysisData } from '../types';
 
 export function useAnalysis() {
@@ -8,8 +9,7 @@ export function useAnalysis() {
   const refresh = useCallback(async () => {
     setStatus('loading');
     try {
-      const res = await fetch('/api/analysis', { cache: 'no-store' });
-      const d: AnalysisData = await res.json();
+      const d = await getJSON<AnalysisData>('/api/analysis', { noStore: true });
       setData(d);
       setStatus(d.error ? 'error' : 'ok');
     } catch {

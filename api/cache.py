@@ -1,6 +1,3 @@
-import threading
-
-from broker.execution_engine import PaperExecutionEngine
 from broker.kis_client import KISClient
 
 CACHE_TTL = 300
@@ -21,15 +18,3 @@ _technical_cache: dict = {}
 _investor_flow_cache: dict = {}
 _kis_client: KISClient | None = None
 _kis_client_disabled = False
-_paper_engine: PaperExecutionEngine | None = None
-_auto_trader_lock = threading.Lock()
-_auto_trader_stop_event: threading.Event | None = None
-_auto_trader_thread: threading.Thread | None = None
-_auto_trader_state: dict = {
-    "running": False,
-    "started_at": "",
-    "last_run_at": "",
-    "last_error": "",
-    "last_summary": {},
-    "config": {},
-}

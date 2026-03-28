@@ -9,16 +9,16 @@ export function Header({ reportDate, generatedAt, headline }: Props) {
     <div className="hero-banner">
       <div className="hero-topline">
         <span className="hero-brand">Daily Market Brief</span>
-        <span className="hero-topline-copy">Read-first investment desk</span>
+        <span className="hero-topline-copy">Auto-Invest Operations Console</span>
       </div>
       <div className="hero-grid">
         <div className="hero-copy-stack">
-          <div className="hero-eyebrow">Morning Edition</div>
-          <div className="hero-title">오늘 시장을 읽는 한 장의 브리프</div>
+          <div className="hero-eyebrow">Engine Status</div>
+          <div className="hero-title">자동투자 엔진 관제와 설명 리포트</div>
           <div className="hero-chip-row">
             <span className="hero-chip">리포트 날짜 {reportDate}</span>
             <span className="hero-chip">생성 {generatedAt || '확인 중'}</span>
-            <span className="hero-chip">읽는 순서 오늘 리포트 → 액션 보드 → 관심종목</span>
+            <span className="hero-chip">검증 순서 백테스트 → 모의투자 → 리포트 점검</span>
           </div>
         </div>
 

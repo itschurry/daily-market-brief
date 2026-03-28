@@ -542,6 +542,69 @@ class PaperExecutionEngine:
         self.config.state_path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
 
 
+class LiveBrokerExecutionEngine:
+    """Stub for future live brokerage execution.
+
+    This is intentionally disabled for safety. It provides the same shape as
+    `ExecutionEngine` so callers can switch by mode without changing interfaces.
+    """
+
+    def __init__(self, *, reason: str = "live_trading_disabled") -> None:
+        self.reason = reason
+
+    def get_account(self, *, refresh_quotes: bool = True) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "mode": "live",
+            "enabled": False,
+            "error": self.reason,
+        }
+
+    def place_order(
+        self,
+        *,
+        side: str,
+        code: str,
+        market: str,
+        quantity: int,
+        order_type: str = "market",
+        limit_price: float | None = None,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "mode": "live",
+            "enabled": False,
+            "error": self.reason,
+            "requested": {
+                "side": side,
+                "code": code,
+                "market": market,
+                "quantity": quantity,
+                "order_type": order_type,
+                "limit_price": limit_price,
+                "stop_loss_pct": stop_loss_pct,
+                "take_profit_pct": take_profit_pct,
+            },
+        }
+
+    def reset(
+        self,
+        *,
+        initial_cash_krw: float | None = None,
+        initial_cash_usd: float | None = None,
+        paper_days: int | None = None,
+        seed_positions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "mode": "live",
+            "enabled": False,
+            "error": self.reason,
+        }
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))

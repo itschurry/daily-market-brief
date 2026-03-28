@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { getJSON } from '../api/client';
 import type { RecommendationsData } from '../types';
 
 export function useRecommendations() {
@@ -8,8 +9,7 @@ export function useRecommendations() {
   const refresh = useCallback(async () => {
     setStatus('loading');
     try {
-      const res = await fetch('/api/recommendations', { cache: 'no-store' });
-      const d: RecommendationsData = await res.json();
+      const d = await getJSON<RecommendationsData>('/api/recommendations', { noStore: true });
       if ((d as { error?: string }).error) {
         setData({ recommendations: [], error: (d as { error?: string }).error });
         setStatus('error');

@@ -6,7 +6,7 @@ import threading
 import os
 from pathlib import Path
 
-from api.routes.trading import _load_optimized_params
+from services.execution_service import _load_optimized_params
 
 _optimization_lock = threading.Lock()
 _optimization_running = False
