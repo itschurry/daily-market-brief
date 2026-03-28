@@ -6,6 +6,11 @@ const KRW_DECIMAL_FMT = new Intl.NumberFormat('ko-KR', {
   maximumFractionDigits: 0,
 });
 
+const USD_DECIMAL_FMT = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 const NAME_BY_CODE = new Map<string, string>();
 for (const entry of COMPANY_CATALOG) {
   if (!entry.code) continue;
@@ -33,6 +38,12 @@ export function formatKRW(value: number | null | undefined, withSuffix = false):
   if (value === null || value === undefined || !Number.isFinite(value)) return '-';
   const body = KRW_DECIMAL_FMT.format(value);
   return withSuffix ? `${body}원` : body;
+}
+
+export function formatUSD(value: number | null | undefined, withPrefix = false): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-';
+  const body = USD_DECIMAL_FMT.format(value);
+  return withPrefix ? `$${body}` : body;
 }
 
 export function formatDateTime(value: string | null | undefined): string {

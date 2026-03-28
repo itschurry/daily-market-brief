@@ -1,5 +1,8 @@
+import { useCallback, useMemo } from 'react';
 import { buildSignalRows } from '../adapters/consoleViewAdapter';
+import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { strategyTypeToKorean, UI_TEXT } from '../constants/uiText';
+import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import { formatNumber, formatPercent } from '../utils/format';
 import type { ConsoleSnapshot } from '../types/consoleView';
 
@@ -11,21 +14,61 @@ interface SignalsPageProps {
 }
 
 export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: SignalsPageProps) {
+  const { entries, push, clear } = useConsoleLogs();
   const rows = buildSignalRows(snapshot).slice(0, 60);
+  const allowedCount = rows.filter((row) => row.statusLabel === UI_TEXT.status.allowed).length;
+  const blockedCount = rows.length - allowedCount;
+
+  const handleRefresh = useCallback(() => {
+    onRefresh();
+    push('info', '신호 데이터를 수동 갱신했습니다.');
+  }, [onRefresh, push]);
+
+  const statusItems = useMemo(() => ([
+    {
+      label: '전체 신호',
+      value: `${rows.length}건`,
+      tone: 'neutral' as const,
+    },
+    {
+      label: '추천',
+      value: `${allowedCount}건`,
+      tone: 'good' as const,
+    },
+    {
+      label: '차단',
+      value: `${blockedCount}건`,
+      tone: blockedCount > 0 ? 'bad' as const : 'neutral' as const,
+    },
+    {
+      label: '장세/위험도',
+      value: `${snapshot.signals.regime || '-'} / ${snapshot.signals.risk_level || '-'}`,
+      tone: 'neutral' as const,
+    },
+  ]), [allowedCount, blockedCount, rows.length, snapshot.signals.regime, snapshot.signals.risk_level]);
 
   return (
     <div className="app-shell">
       <div className="page-frame">
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
-          <div className="page-section" style={{ padding: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 800 }}>신호 관리</div>
-              <div style={{ fontSize: 12, color: 'var(--text-4)', marginTop: 6 }}>
-                장세 {snapshot.signals.regime || '-'} · 위험도 {snapshot.signals.risk_level || '-'} · 총 {snapshot.signals.count ?? 0}건
+          <ConsoleActionBar
+            title="신호 관리"
+            subtitle="EV 기반 추천/차단 상태와 차단 사유를 운영 관점으로 확인합니다."
+            lastUpdated={snapshot.fetchedAt}
+            loading={loading}
+            errorMessage={errorMessage}
+            statusItems={statusItems}
+            onRefresh={handleRefresh}
+            logs={entries}
+            onClearLogs={clear}
+            settingsPanel={(
+              <div style={{ display: 'grid', gap: 10, fontSize: 12, color: 'var(--text-3)' }}>
+                <div>표시 최대 건수: 60건</div>
+                <div>정렬 기준: EV 내림차순</div>
+                <div>추천 기준: `entry_allowed && size&gt;0`</div>
               </div>
-            </div>
-            <button className="ghost-button" onClick={onRefresh}>{UI_TEXT.common.refresh}</button>
-          </div>
+            )}
+          />
 
           <div className="page-section" style={{ padding: 0, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -80,7 +123,6 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
           </div>
 
           {loading && <div style={{ color: 'var(--text-3)', fontSize: 12 }}>{UI_TEXT.common.loading}</div>}
-          {errorMessage && <div style={{ color: 'var(--down)', fontSize: 12 }}>{errorMessage}</div>}
         </div>
       </div>
     </div>

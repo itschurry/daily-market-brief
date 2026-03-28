@@ -1,6 +1,9 @@
+import { useCallback, useMemo } from 'react';
+import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { UI_TEXT } from '../constants/uiText';
+import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import { formatKRW } from '../utils/format';
-import type { ConsoleSnapshot } from '../types/consoleView';
+import type { ActionBarStatusItem, ConsoleSnapshot } from '../types/consoleView';
 
 interface OverviewPageProps {
   snapshot: ConsoleSnapshot;
@@ -10,23 +13,62 @@ interface OverviewPageProps {
 }
 
 export function OverviewPage({ snapshot, loading, errorMessage, onRefresh }: OverviewPageProps) {
+  const { entries, push, clear } = useConsoleLogs();
   const allocator = snapshot.engine.allocator || {};
   const running = Boolean(snapshot.engine.execution?.state?.running);
   const guardOk = Boolean(snapshot.engine.risk_guard_state?.entry_allowed);
+  const riskReasons = snapshot.engine.risk_guard_state?.reasons || [];
+
+  const handleRefresh = useCallback(() => {
+    onRefresh();
+    push('info', '콘솔 데이터를 수동 갱신했습니다.');
+  }, [onRefresh, push]);
+
+  const statusItems = useMemo<ActionBarStatusItem[]>(() => ([
+    {
+      label: '엔진 상태',
+      value: running ? UI_TEXT.status.running : UI_TEXT.status.stopped,
+      tone: running ? 'good' : 'bad',
+    },
+    {
+      label: '신규 진입 가능',
+      value: guardOk ? UI_TEXT.common.yes : UI_TEXT.common.no,
+      tone: guardOk ? 'good' : 'bad',
+    },
+    {
+      label: '허용/차단 신호',
+      value: `${allocator.entry_allowed_count ?? 0} / ${allocator.blocked_count ?? 0}`,
+      tone: 'neutral',
+    },
+    {
+      label: '장세/위험도',
+      value: `${allocator.regime || '-'} / ${allocator.risk_level || '-'}`,
+      tone: 'neutral',
+    },
+  ]), [allocator.blocked_count, allocator.entry_allowed_count, allocator.regime, allocator.risk_level, guardOk, running]);
 
   return (
     <div className="app-shell">
       <div className="page-frame">
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
-          <div className="page-section" style={{ padding: 18, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 800 }}>엔진 개요</div>
-              <div style={{ fontSize: 12, color: 'var(--text-4)', marginTop: 6 }}>
-                장세 {allocator.regime || '-'} · 위험도 {allocator.risk_level || '-'}
+          <ConsoleActionBar
+            title="엔진 개요"
+            subtitle="엔진 상태와 리스크 가드의 현재 운용 상태를 확인합니다."
+            lastUpdated={snapshot.fetchedAt}
+            loading={loading}
+            errorMessage={errorMessage}
+            statusItems={statusItems}
+            onRefresh={handleRefresh}
+            logs={entries}
+            onClearLogs={clear}
+            settingsPanel={(
+              <div style={{ display: 'grid', gap: 10, fontSize: 12, color: 'var(--text-3)' }}>
+                <div>자동 갱신 주기: 30초</div>
+                <div>콘솔 데이터 기준 시각: {snapshot.fetchedAt || '-'}</div>
+                <div>오류 발생 시 로그 드로어에서 원인을 먼저 확인하세요.</div>
               </div>
-            </div>
-            <button className="ghost-button" onClick={onRefresh}>{UI_TEXT.common.refresh}</button>
-          </div>
+            )}
+          />
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
             <div className="page-section" style={{ padding: 16 }}>
@@ -58,7 +100,7 @@ export function OverviewPage({ snapshot, loading, errorMessage, onRefresh }: Ove
                 일일 손실 잔여: {formatKRW(snapshot.engine.risk_guard_state?.daily_loss_left)}
               </div>
               <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-3)' }}>
-                사유: {(snapshot.engine.risk_guard_state?.reasons || []).join(', ') || '없음'}
+                사유: {riskReasons.join(', ') || '없음'}
               </div>
             </div>
             <div className="page-section" style={{ padding: 16 }}>
@@ -73,7 +115,6 @@ export function OverviewPage({ snapshot, loading, errorMessage, onRefresh }: Ove
           </div>
 
           {loading && <div style={{ color: 'var(--text-3)', fontSize: 12 }}>{UI_TEXT.common.loading}</div>}
-          {errorMessage && <div style={{ color: 'var(--down)', fontSize: 12 }}>{errorMessage}</div>}
         </div>
       </div>
     </div>

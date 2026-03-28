@@ -61,3 +61,45 @@ export interface SignalTableRow {
   statusLabel: '추천' | '차단';
   reasonSummary: string;
 }
+
+export type ConsoleLogLevel = 'info' | 'success' | 'warning' | 'error';
+
+export interface ConsoleLogEntry {
+  id: string;
+  timestamp: string;
+  level: ConsoleLogLevel;
+  message: string;
+  context?: string;
+}
+
+export interface ActionBarStatusItem {
+  label: string;
+  value: string;
+  tone?: 'neutral' | 'good' | 'bad';
+}
+
+export interface ActionBarAction {
+  label: string;
+  onClick: () => void;
+  tone?: 'default' | 'primary' | 'danger';
+  disabled?: boolean;
+}
+
+export interface PaperViewModel {
+  totalEquityKrw: number;
+  cashKrw: number;
+  cashUsd: number;
+  unrealizedPnlKrw: number;
+  realizedPnlKrw: number;
+  positionCount: number;
+}
+
+export interface BacktestViewModel {
+  totalReturnPct: number | null;
+  oosReturnPct: number | null;
+  maxDrawdownPct: number | null;
+  profitFactor: number | null;
+  winRatePct: number | null;
+  tradeCount: number | null;
+  reliability: string;
+}
