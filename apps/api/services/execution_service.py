@@ -2,13 +2,15 @@ import datetime
 import json
 import os
 import threading
+import uuid
 from pathlib import Path
+from typing import Any
 
+from loguru import logger
 from helpers import (
     _KST,
     _SUPPORTED_AUTO_TRADE_MARKETS,
     _now_iso,
-    _send_paper_trade_notification,
 )
 from routes.market import _paper_fx_rate, _resolve_stock_quote
 from routes.watchlist import _compute_technical_snapshot
@@ -26,12 +28,25 @@ from broker.execution_engine import EngineConfig, PaperExecutionEngine
 from config.market_calendar import is_market_open
 from config.settings import LOGS_DIR
 from market_utils import normalize_market, resolve_market
+from services.notification_service import get_notification_service
+from services.paper_runtime_store import (
+    append_account_snapshot,
+    append_engine_cycle,
+    append_order_event,
+    append_signal_snapshots,
+    load_engine_state,
+    read_account_snapshots,
+    read_engine_cycles,
+    read_order_events,
+    read_signal_snapshots,
+    save_engine_state,
+)
 from services.signal_service import (
     collect_pick_candidates as _signal_collect_pick_candidates,
     normalize_theme_focus as _signal_normalize_theme_focus,
     parse_theme_gate_config as _signal_parse_theme_gate_config,
 )
-from services.strategy_engine import select_entry_candidates
+from services.strategy_engine import build_signal_book, select_entry_candidates
 
 _DEFAULT_THEME_FOCUS = ["automotive", "robotics", "physical_ai"]
 _ALLOWED_THEME_FOCUS = set(_DEFAULT_THEME_FOCUS)
@@ -44,15 +59,223 @@ _paper_engine: PaperExecutionEngine | None = None
 _auto_trader_lock = threading.Lock()
 _auto_trader_stop_event: threading.Event | None = None
 _auto_trader_thread: threading.Thread | None = None
-_auto_trader_state: dict = {
+_auto_trader_state_loaded = False
+_last_daily_loss_notified_day = ""
+_auto_trader_state: dict[str, Any] = {
+    "engine_state": "stopped",
     "running": False,
     "started_at": "",
+    "paused_at": "",
+    "stopped_at": "",
     "last_run_at": "",
+    "next_run_at": "",
+    "last_success_at": "",
     "last_error": "",
+    "last_error_at": "",
     "last_summary": {},
+    "current_config": {},
     "config": {},
+    "latest_cycle_id": "",
+    "validation_policy": {},
+    "optimized_params": {},
 }
 
+
+def _mask_chat_id(chat_id: str) -> str:
+    value = str(chat_id or "").strip()
+    if len(value) <= 4:
+        return value
+    return f"{value[:2]}***{value[-2:]}"
+
+
+def _today_order_counts(account: dict) -> dict[str, int]:
+    today = _today_kst_str()
+    orders = account.get("orders", [])
+    counts = {
+        "buy": 0,
+        "sell": 0,
+        "failed": 0,
+    }
+    for order in orders:
+        if _order_day(str(order.get("ts") or "")) != today:
+            continue
+        side = str(order.get("side") or "").lower()
+        if side in {"buy", "sell"}:
+            counts[side] += 1
+    recent_failures = read_order_events(limit=300)
+    for item in recent_failures:
+        if str(item.get("timestamp") or "").startswith(today) and not bool(item.get("success")):
+            counts["failed"] += 1
+    return counts
+
+
+def _today_realized_pnl(account: dict) -> float:
+    today = _today_kst_str()
+    realized = 0.0
+    for order in account.get("orders", []):
+        if _order_day(str(order.get("ts") or "")) != today:
+            continue
+        if str(order.get("side") or "").lower() != "sell":
+            continue
+        realized += _to_float(order.get("realized_pnl_krw"), 0.0)
+    return round(realized, 2)
+
+
+def _next_run_at(interval_seconds: int) -> str:
+    return (
+        datetime.datetime.now(datetime.timezone.utc).astimezone()
+        + datetime.timedelta(seconds=max(30, min(3600, interval_seconds)))
+    ).isoformat(timespec="seconds")
+
+
+def _default_validation_policy() -> dict[str, Any]:
+    return {
+        "validation_gate_enabled": True,
+        "validation_min_trades": 8,
+        "validation_min_sharpe": 0.8,
+        "validation_block_on_low_reliability": True,
+        "validation_require_optimized_reliability": True,
+    }
+
+
+def _optimized_params_status() -> dict[str, Any]:
+    payload = _load_optimized_params() or {}
+    optimized_at = str(payload.get("optimized_at") or "")
+    version = str(payload.get("version") or optimized_at or "unknown")
+    stale = False
+    if optimized_at:
+        try:
+            optimized_ts = datetime.datetime.fromisoformat(optimized_at)
+            age_days = (
+                datetime.datetime.now(datetime.timezone.utc)
+                - optimized_ts.astimezone(datetime.timezone.utc)
+            ).days
+            stale = age_days > _OPTIMIZED_PARAMS_MAX_AGE_DAYS
+        except Exception:
+            stale = True
+    return {
+        "version": version,
+        "optimized_at": optimized_at,
+        "is_stale": stale,
+        "source": str(_OPTIMIZED_PARAMS_PATH),
+    }
+
+
+def _persist_auto_trader_state_locked() -> None:
+    snapshot = dict(_auto_trader_state)
+    snapshot["running"] = snapshot.get("engine_state") == "running"
+    snapshot["config"] = dict(snapshot.get("current_config") or {})
+    save_engine_state(snapshot)
+
+
+def _hydrate_auto_trader_state() -> None:
+    global _auto_trader_state_loaded, _auto_trader_state
+    if _auto_trader_state_loaded:
+        return
+    loaded = load_engine_state(default={})
+    merged = dict(_auto_trader_state)
+    merged.update(loaded if isinstance(loaded, dict) else {})
+    config = merged.get("current_config") or merged.get("config") or _default_auto_trader_config()
+    if not isinstance(config, dict):
+        config = _default_auto_trader_config()
+    merged["current_config"] = _sync_primary_strategy_fields(dict(config))
+    merged["config"] = dict(merged["current_config"])
+
+    engine_state = str(merged.get("engine_state") or "stopped").lower()
+    if engine_state in {"running", "paused"}:
+        # 프로세스 재시작 시 자동 재개하지 않고 안전 정지로 복구한다.
+        engine_state = "stopped"
+        merged["running"] = False
+        if not merged.get("last_error"):
+            merged["last_error"] = "서버 재시작으로 엔진 상태를 stopped로 복구했습니다."
+            merged["last_error_at"] = _now_iso()
+    merged["engine_state"] = engine_state
+    merged["running"] = engine_state == "running"
+
+    policy = _default_validation_policy()
+    policy.update({
+        key: merged["current_config"].get(key)
+        for key in policy.keys()
+        if key in merged["current_config"]
+    })
+    merged["validation_policy"] = policy
+    merged["optimized_params"] = _optimized_params_status()
+    _auto_trader_state = merged
+    _auto_trader_state_loaded = True
+    _persist_auto_trader_state_locked()
+
+
+def _build_status_payload(state: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
+    today_counts = _today_order_counts(account)
+    running = state.get("engine_state") == "running"
+    payload_state = dict(state)
+    payload_state["running"] = running
+    payload_state["config"] = dict(state.get("current_config") or {})
+    payload_state["today_order_counts"] = today_counts
+    payload_state["today_realized_pnl"] = _today_realized_pnl(account)
+    payload_state["current_equity"] = round(_to_float(account.get("equity_krw"), 0.0), 2)
+    return {
+        "ok": True,
+        "state": payload_state,
+        "account": account,
+    }
+
+
+def _resolve_validation_snapshot(signal: dict[str, Any]) -> tuple[int, float, str]:
+    ev = signal.get("ev_metrics") if isinstance(signal.get("ev_metrics"), dict) else {}
+    reasoning = signal.get("signal_reasoning") if isinstance(signal.get("signal_reasoning"), dict) else {}
+    calibration = reasoning.get("calibration") if isinstance(reasoning.get("calibration"), dict) else {}
+    trades = int(calibration.get("sample_size") or signal.get("validation_trades") or 0)
+    sharpe = float(calibration.get("validation_sharpe") or signal.get("validation_sharpe") or 0.0)
+    reliability = str(ev.get("reliability") or signal.get("strategy_reliability") or "insufficient")
+    return trades, sharpe, reliability
+
+
+def _apply_validation_gate(signal: dict[str, Any], cfg: dict[str, Any]) -> tuple[bool, list[str], dict[str, Any]]:
+    if not bool(cfg.get("validation_gate_enabled", True)):
+        trades, sharpe, reliability = _resolve_validation_snapshot(signal)
+        return True, [], {
+            "enabled": False,
+            "trades": trades,
+            "sharpe": round(sharpe, 4),
+            "reliability": reliability,
+        }
+
+    code = str(signal.get("code") or "").upper()
+    optimized = _load_optimized_params() or {}
+    per_symbol = optimized.get("per_symbol", {}) if isinstance(optimized, dict) else {}
+    symbol_payload = per_symbol.get(code, {}) if isinstance(per_symbol, dict) else {}
+
+    trades, sharpe, reliability = _resolve_validation_snapshot(signal)
+    if int(symbol_payload.get("validation_trades") or 0) > 0:
+        trades = int(symbol_payload.get("validation_trades") or trades)
+    if symbol_payload.get("validation_sharpe") is not None:
+        sharpe = _to_float(symbol_payload.get("validation_sharpe"), sharpe)
+    if symbol_payload.get("strategy_reliability"):
+        reliability = str(symbol_payload.get("strategy_reliability"))
+
+    reasons: list[str] = []
+    if trades < int(cfg.get("validation_min_trades", 8)):
+        reasons.append("validation_trades_low")
+    if sharpe < float(cfg.get("validation_min_sharpe", 0.8)):
+        reasons.append("validation_sharpe_low")
+    if bool(cfg.get("validation_block_on_low_reliability", True)) and reliability in {"low", "insufficient"}:
+        reasons.append("validation_reliability_low")
+    if bool(cfg.get("validation_require_optimized_reliability", True)):
+        if symbol_payload and not bool(symbol_payload.get("is_reliable", False)):
+            reasons.append("optimized_symbol_unreliable")
+
+    return len(reasons) == 0, reasons, {
+        "enabled": True,
+        "trades": trades,
+        "sharpe": round(sharpe, 4),
+        "reliability": reliability,
+        "optimized_reliable": bool(symbol_payload.get("is_reliable")) if symbol_payload else None,
+    }
+
+
+def _notification_order_hook(event: dict[str, Any], _account: dict[str, Any]) -> None:
+    get_notification_service().notify_order_filled(event)
 
 def _load_optimized_params() -> dict | None:
     """config/optimized_params.json을 읽어 반환한다.
@@ -67,11 +290,9 @@ def _load_optimized_params() -> dict | None:
         age_days = (datetime.datetime.now(datetime.timezone.utc)
                     - optimized_at.astimezone(datetime.timezone.utc)).days
         if age_days > _OPTIMIZED_PARAMS_MAX_AGE_DAYS:
-            from loguru import logger
             logger.warning("최적화 파라미터가 {}일 지났습니다. 재실행 권장.", age_days)
         return data
     except Exception as exc:
-        from loguru import logger
         logger.warning("optimized_params.json 로드 실패: {}", exc)
         return None
 
@@ -116,7 +337,7 @@ def _get_paper_engine() -> PaperExecutionEngine:
                 default_initial_cash_krw=10_000_000.0,
                 default_initial_cash_usd=10_000.0,
                 default_paper_days=7,
-                order_notifier=_send_paper_trade_notification,
+                order_notifier=_notification_order_hook,
             ),
             quote_provider=_resolve_stock_quote,
             fx_provider=_paper_fx_rate,
@@ -258,6 +479,11 @@ def _default_auto_trader_config() -> dict:
         "max_market_exposure_pct": 70.0,
         "block_buy_in_risk_off": True,
         "block_buy_when_risk_high": True,
+        "validation_gate_enabled": True,
+        "validation_min_trades": 8,
+        "validation_min_sharpe": 0.8,
+        "validation_block_on_low_reliability": True,
+        "validation_require_optimized_reliability": True,
         "min_avg_volume": 100000,
         "min_avg_notional_krw": 50000000,
         "slippage_bps_base": 8.0,
@@ -288,7 +514,6 @@ def _default_auto_trader_config() -> dict:
                 for market_key in ("KOSPI", "NASDAQ"):
                     if market_key in base["market_profiles"]:
                         base["market_profiles"][market_key][key] = global_params[key]
-        from loguru import logger
         logger.info("몬테카를로 최적 파라미터 적용: {}", global_params)
     return base
 
@@ -570,7 +795,11 @@ def _auto_invest_picks(
 
 
 def _run_auto_trader_cycle(cfg: dict) -> dict:
+    global _last_daily_loss_notified_day
     engine = _get_paper_engine()
+    notifier = get_notification_service()
+    cycle_id = f"cycle-{datetime.datetime.now(_KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+    started_at = _now_iso()
     account = engine.get_account(refresh_quotes=True)
     if int(account.get("days_left") or 0) <= 0:
         raise RuntimeError("모의투자 기간이 종료되어 자동매매를 중지합니다.")
@@ -634,11 +863,15 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
     executed_buys: list[dict] = []
     executed_sells: list[dict] = []
     skipped: list[dict] = []
+    blocked_reason_counts: dict[str, int] = {}
     closed_markets: list[str] = []
     markets = [m for m in cfg.get("markets", ["KOSPI", "NASDAQ"]) if m in {
         "KOSPI", "NASDAQ"}]
     candidate_counts_by_market: dict[str, int] = {
         market: 0 for market in markets}
+    signal_snapshots: list[dict[str, Any]] = []
+    validation_blocked_counts_by_market: dict[str, int] = {market: 0 for market in markets}
+    risk_guard_state: dict[str, Any] = {}
 
     _MARKET_TO_CALENDAR = {"KOSPI": "KR", "NASDAQ": "US"}
 
@@ -647,6 +880,10 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
         if not is_market_open(calendar_market):
             closed_markets.append(market)
             candidate_counts_by_market[market] = 0
+            skipped.append({
+                "market": market,
+                "reason": "market_closed",
+            })
             continue
 
         account = engine.get_account(refresh_quotes=True)
@@ -686,10 +923,55 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 event = result.get("event") or {}
                 executed_sells.append(
                     {"code": code, "market": market, "reason": reason, "quantity": event.get("quantity")})
+                append_order_event({
+                    "timestamp": event.get("ts") or _now_iso(),
+                    "success": True,
+                    "side": "sell",
+                    "code": code,
+                    "market": market,
+                    "quantity": event.get("quantity"),
+                    "order_type": "market",
+                    "submitted_at": started_at,
+                    "filled_at": event.get("ts"),
+                    "filled_price_local": event.get("filled_price_local"),
+                    "filled_price_krw": event.get("filled_price_krw"),
+                    "notional_krw": event.get("notional_krw"),
+                    "failure_reason": "",
+                    "originating_cycle_id": cycle_id,
+                    "originating_signal_key": f"{market}:{code}",
+                    "quote_source": event.get("quote_source"),
+                    "quote_fetched_at": event.get("quote_fetched_at"),
+                    "quote_is_stale": event.get("quote_is_stale"),
+                })
                 orders = (result.get("account") or {}).get("orders", orders)
             else:
+                failure_reason = result.get("error") or "sell_failed"
                 skipped.append({"code": code, "market": market,
-                               "reason": result.get("error") or "sell_failed"})
+                               "reason": failure_reason})
+                append_order_event({
+                    "timestamp": _now_iso(),
+                    "success": False,
+                    "side": "sell",
+                    "code": code,
+                    "market": market,
+                    "quantity": int(position.get("quantity") or 0),
+                    "order_type": "market",
+                    "submitted_at": _now_iso(),
+                    "filled_at": "",
+                    "filled_price_local": None,
+                    "filled_price_krw": None,
+                    "notional_krw": None,
+                    "failure_reason": failure_reason,
+                    "originating_cycle_id": cycle_id,
+                    "originating_signal_key": f"{market}:{code}",
+                })
+                notifier.notify_order_failure({
+                    "code": code,
+                    "market": market,
+                    "side": "sell",
+                    "failure_reason": failure_reason,
+                    "originating_cycle_id": cycle_id,
+                })
 
         account = engine.get_account(refresh_quotes=True)
         held_codes = {
@@ -703,16 +985,70 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
         slots = max(0, max_positions - market_position_count)
         if slots <= 0:
             candidate_counts_by_market[market] = 0
+            skipped.append({
+                "market": market,
+                "reason": "max_positions_reached",
+            })
             continue
         buy_count = _count_orders(market, "buy")
-        entry_candidates = select_entry_candidates(
-            market=market,
-            cfg=cfg,
-            account=account,
-            max_count=max(20, slots * 6),
-        )
-        candidate_counts_by_market[market] = len(entry_candidates)
-        for candidate in entry_candidates:
+        signal_book = build_signal_book(markets=[market], cfg=cfg, account=account)
+        risk_guard_state = signal_book.get("risk_guard_state", risk_guard_state)
+        market_signals = signal_book.get("signals", []) if isinstance(signal_book.get("signals"), list) else []
+        effective_candidates: list[dict[str, Any]] = []
+        validation_blocked = 0
+        for signal in market_signals:
+            if not isinstance(signal, dict):
+                continue
+            candidate = dict(signal)
+            allowed_by_gate, gate_reasons, gate_meta = _apply_validation_gate(candidate, cfg)
+            merged_reasons = list(candidate.get("reason_codes") or [])
+            entry_allowed = bool(candidate.get("entry_allowed")) and allowed_by_gate
+            if not entry_allowed:
+                if gate_reasons:
+                    validation_blocked += 1
+                merged_reasons = list(dict.fromkeys([*merged_reasons, *gate_reasons]))
+                for reason in merged_reasons:
+                    key = str(reason or "unknown")
+                    blocked_reason_counts[key] = blocked_reason_counts.get(key, 0) + 1
+            candidate["entry_allowed"] = entry_allowed
+            candidate["reason_codes"] = merged_reasons
+            candidate["validation_gate"] = gate_meta
+            if entry_allowed:
+                effective_candidates.append(candidate)
+
+            ev_metrics = candidate.get("ev_metrics") if isinstance(candidate.get("ev_metrics"), dict) else {}
+            size_reco = candidate.get("size_recommendation") if isinstance(candidate.get("size_recommendation"), dict) else {}
+            realism = candidate.get("execution_realism") if isinstance(candidate.get("execution_realism"), dict) else {}
+            report_reasoning = candidate.get("report_reasoning") if isinstance(candidate.get("report_reasoning"), dict) else {}
+            signal_snapshots.append({
+                "timestamp": started_at,
+                "cycle_id": cycle_id,
+                "signal_id": f"{cycle_id}:{market}:{candidate.get('code')}",
+                "code": candidate.get("code"),
+                "name": candidate.get("name"),
+                "market": candidate.get("market") or market,
+                "strategy_type": candidate.get("strategy_type"),
+                "score": candidate.get("score"),
+                "confidence": ev_metrics.get("win_probability"),
+                "expected_value": ev_metrics.get("expected_value"),
+                "entry_allowed": entry_allowed,
+                "reason_codes": merged_reasons,
+                "size_recommendation": size_reco,
+                "liquidity_gate_status": realism.get("liquidity_gate_status"),
+                "slippage_bps": realism.get("slippage_bps"),
+                "validation_trades": gate_meta.get("trades"),
+                "validation_sharpe": gate_meta.get("sharpe"),
+                "reliability": gate_meta.get("reliability"),
+                "ai_reasoning_summary": report_reasoning.get("summary") or "",
+                "source": "strategy_engine",
+                "fetched_at": signal_book.get("generated_at") or started_at,
+                "is_stale": False,
+                "validation_gate": gate_meta,
+            })
+
+        validation_blocked_counts_by_market[market] = validation_blocked
+        candidate_counts_by_market[market] = len(market_signals)
+        for candidate in effective_candidates:
             if slots <= 0 or buy_count >= daily_buy_limit:
                 break
             code = str(candidate.get("code") or "").upper()
@@ -760,10 +1096,55 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                     "quantity": event.get("quantity"),
                     "filled_price_local": event.get("filled_price_local"),
                 })
+                append_order_event({
+                    "timestamp": event.get("ts") or _now_iso(),
+                    "success": True,
+                    "side": "buy",
+                    "code": code,
+                    "market": market,
+                    "quantity": event.get("quantity"),
+                    "order_type": "market",
+                    "submitted_at": started_at,
+                    "filled_at": event.get("ts"),
+                    "filled_price_local": event.get("filled_price_local"),
+                    "filled_price_krw": event.get("filled_price_krw"),
+                    "notional_krw": event.get("notional_krw"),
+                    "failure_reason": "",
+                    "originating_cycle_id": cycle_id,
+                    "originating_signal_key": f"{market}:{code}",
+                    "quote_source": event.get("quote_source"),
+                    "quote_fetched_at": event.get("quote_fetched_at"),
+                    "quote_is_stale": event.get("quote_is_stale"),
+                })
                 orders = (result.get("account") or {}).get("orders", orders)
             else:
+                failure_reason = result.get("error") or "buy_failed"
                 skipped.append({"code": code, "name": cand_name, "market": market,
-                               "reason": result.get("error") or "buy_failed"})
+                               "reason": failure_reason})
+                append_order_event({
+                    "timestamp": _now_iso(),
+                    "success": False,
+                    "side": "buy",
+                    "code": code,
+                    "market": market,
+                    "quantity": quantity,
+                    "order_type": "market",
+                    "submitted_at": _now_iso(),
+                    "filled_at": "",
+                    "filled_price_local": None,
+                    "filled_price_krw": None,
+                    "notional_krw": None,
+                    "failure_reason": failure_reason,
+                    "originating_cycle_id": cycle_id,
+                    "originating_signal_key": f"{market}:{code}",
+                })
+                notifier.notify_order_failure({
+                    "code": code,
+                    "market": market,
+                    "side": "buy",
+                    "failure_reason": failure_reason,
+                    "originating_cycle_id": cycle_id,
+                })
 
     skip_reason_counts: dict[str, int] = {}
     for item in skipped:
@@ -783,6 +1164,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 1 for item in executed_sells
                 if str(item.get("market") or "").upper() == market
             ),
+            "blocked_count": int(validation_blocked_counts_by_market.get(market, 0)),
             "skipped_count": sum(
                 1 for item in skipped
                 if str(item.get("market") or "").upper() == market
@@ -790,55 +1172,135 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
         }
 
     final_account = engine.get_account(refresh_quotes=True)
-    return {
+    unrealized_pnl = sum(
+        _to_float(position.get("unrealized_pnl_krw"), 0.0)
+        for position in final_account.get("positions", [])
+        if isinstance(position, dict)
+    )
+    finished_at = _now_iso()
+    summary = {
         "ok": True,
-        "ran_at": _now_iso(),
+        "cycle_id": cycle_id,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "ran_at": finished_at,
         "executed_buy_count": len(executed_buys),
         "executed_sell_count": len(executed_sells),
         "executed_buys": executed_buys,
         "executed_sells": executed_sells,
         "candidate_counts_by_market": candidate_counts_by_market,
+        "blocked_reason_counts": blocked_reason_counts,
         "skip_reason_counts": skip_reason_counts,
         "market_stats": market_stats,
         "closed_markets": closed_markets,
+        "risk_guard_state": risk_guard_state,
+        "validation_gate_summary": {
+            "enabled": bool(cfg.get("validation_gate_enabled", True)),
+            "min_trades": int(cfg.get("validation_min_trades", 8)),
+            "min_sharpe": float(cfg.get("validation_min_sharpe", 0.8)),
+            "blocked_reason_counts": blocked_reason_counts,
+            "blocked_count_by_market": validation_blocked_counts_by_market,
+        },
+        "pnl_snapshot": {
+            "realized_today": _today_realized_pnl(final_account),
+            "unrealized": round(unrealized_pnl, 2),
+            "equity_krw": round(_to_float(final_account.get("equity_krw"), 0.0), 2),
+        },
         "skipped": skipped[:50],
+        "error": "",
         "account": final_account,
     }
+    append_signal_snapshots(signal_snapshots)
+    append_engine_cycle(summary)
+    append_account_snapshot({
+        "timestamp": finished_at,
+        "cycle_id": cycle_id,
+        "cash_krw": final_account.get("cash_krw"),
+        "cash_usd": final_account.get("cash_usd"),
+        "equity_krw": final_account.get("equity_krw"),
+        "realized_pnl_today": _today_realized_pnl(final_account),
+        "unrealized_pnl": round(unrealized_pnl, 2),
+        "open_positions_count": len(final_account.get("positions", [])),
+        "total_orders_today": _today_order_counts(final_account).get("buy", 0) + _today_order_counts(final_account).get("sell", 0),
+        "days_left": final_account.get("days_left"),
+        "engine_state": _auto_trader_state.get("engine_state"),
+    })
+    if isinstance(risk_guard_state, dict) and not bool(risk_guard_state.get("entry_allowed", True)):
+        reasons = [str(item) for item in risk_guard_state.get("reasons", [])]
+        if "daily_loss_limit_reached" in reasons:
+            today = _today_kst_str()
+            if _last_daily_loss_notified_day != today:
+                _last_daily_loss_notified_day = today
+                notifier.notify_daily_loss_limit({
+                    "daily_loss_left": risk_guard_state.get("daily_loss_left"),
+                    "reason": "daily_loss_limit_reached",
+                })
+    return summary
 
 
 def _auto_trader_loop(stop_event: threading.Event) -> None:
     while not stop_event.is_set():
+        _hydrate_auto_trader_state()
         with _auto_trader_lock:
             cfg = dict(_auto_trader_state.get(
-                "config") or _default_auto_trader_config())
+                "current_config") or _default_auto_trader_config())
+            engine_state = str(_auto_trader_state.get("engine_state") or "stopped")
+        if engine_state == "paused":
+            stop_event.wait(1.0)
+            continue
+        if engine_state != "running":
+            stop_event.set()
+            break
         try:
             summary = _run_auto_trader_cycle(cfg)
             with _auto_trader_lock:
                 _auto_trader_state["last_run_at"] = _now_iso()
+                _auto_trader_state["last_success_at"] = _auto_trader_state["last_run_at"]
                 _auto_trader_state["last_summary"] = summary
                 _auto_trader_state["last_error"] = ""
+                _auto_trader_state["last_error_at"] = ""
+                _auto_trader_state["latest_cycle_id"] = summary.get("cycle_id") or ""
+                _auto_trader_state["next_run_at"] = _next_run_at(int(cfg.get("interval_seconds") or 300))
+                _auto_trader_state["optimized_params"] = _optimized_params_status()
+                _persist_auto_trader_state_locked()
         except Exception as exc:
+            logger.warning("auto trader cycle 실패: {}", exc)
+            notifier = get_notification_service()
             with _auto_trader_lock:
                 _auto_trader_state["last_run_at"] = _now_iso()
+                _auto_trader_state["last_error_at"] = _auto_trader_state["last_run_at"]
                 _auto_trader_state["last_error"] = str(exc)
-                if "기간이 종료" in str(exc):
-                    _auto_trader_state["running"] = False
-                    stop_event.set()
-                    break
+                _auto_trader_state["engine_state"] = "error"
+                _auto_trader_state["running"] = False
+                _persist_auto_trader_state_locked()
+                notifier.notify_engine_error(
+                    error=str(exc),
+                    cycle_id=str(_auto_trader_state.get("latest_cycle_id") or ""),
+                )
+            append_engine_cycle({
+                "ok": False,
+                "cycle_id": str(_auto_trader_state.get("latest_cycle_id") or ""),
+                "started_at": _now_iso(),
+                "finished_at": _now_iso(),
+                "error": str(exc),
+            })
+            stop_event.set()
+            break
         interval = int((cfg.get("interval_seconds") or 300))
         interval = max(30, min(3600, interval))
+        with _auto_trader_lock:
+            _auto_trader_state["next_run_at"] = _next_run_at(interval)
+            _persist_auto_trader_state_locked()
         stop_event.wait(interval)
 
 
 def _start_auto_trader(config: dict) -> dict:
     global _auto_trader_stop_event, _auto_trader_thread
+    _hydrate_auto_trader_state()
     with _auto_trader_lock:
-        if (
-            _auto_trader_state.get("running")
-            and _auto_trader_thread
-            and _auto_trader_thread.is_alive()
-        ):
-            return {"ok": True, "running": True, "message": "이미 실행 중입니다.", "state": dict(_auto_trader_state)}
+        current_state = str(_auto_trader_state.get("engine_state") or "stopped")
+        if current_state in {"running", "paused"} and _auto_trader_thread and _auto_trader_thread.is_alive():
+            return _build_status_payload(dict(_auto_trader_state), _get_paper_engine().get_account(refresh_quotes=False))
         merged = _default_auto_trader_config()
         merged.update(config or {})
         merged["interval_seconds"] = max(
@@ -873,6 +1335,11 @@ def _start_auto_trader(config: dict) -> dict:
             0.0, float(merged.get("min_avg_notional_krw") or 50000000))
         merged["slippage_bps_base"] = max(
             1.0, min(80.0, float(merged.get("slippage_bps_base") or 8.0)))
+        merged["validation_gate_enabled"] = bool(merged.get("validation_gate_enabled", True))
+        merged["validation_min_trades"] = max(0, min(200, int(merged.get("validation_min_trades") or 8)))
+        merged["validation_min_sharpe"] = max(-5.0, min(10.0, float(merged.get("validation_min_sharpe") or 0.8)))
+        merged["validation_block_on_low_reliability"] = bool(merged.get("validation_block_on_low_reliability", True))
+        merged["validation_require_optimized_reliability"] = bool(merged.get("validation_require_optimized_reliability", True))
         merged.update(_parse_theme_gate_config(merged))
         markets = merged.get("markets") or ["KOSPI", "NASDAQ"]
         if not isinstance(markets, list):
@@ -887,40 +1354,102 @@ def _start_auto_trader(config: dict) -> dict:
             target=_auto_trader_loop, args=(
                 _auto_trader_stop_event,), daemon=True
         )
+        _auto_trader_state["engine_state"] = "running"
         _auto_trader_state["running"] = True
         _auto_trader_state["started_at"] = _now_iso()
-        _auto_trader_state["config"] = merged
+        _auto_trader_state["paused_at"] = ""
+        _auto_trader_state["stopped_at"] = ""
+        _auto_trader_state["next_run_at"] = _next_run_at(int(merged.get("interval_seconds") or 300))
+        _auto_trader_state["current_config"] = merged
+        _auto_trader_state["config"] = dict(merged)
+        _auto_trader_state["validation_policy"] = {
+            key: merged.get(key)
+            for key in _default_validation_policy().keys()
+        }
+        _auto_trader_state["optimized_params"] = _optimized_params_status()
         _auto_trader_state["last_error"] = ""
+        _auto_trader_state["last_error_at"] = ""
+        _persist_auto_trader_state_locked()
         _auto_trader_thread.start()
-        return {"ok": True, "running": True, "state": dict(_auto_trader_state)}
+        get_notification_service().notify_engine_started(merged)
+        account = _get_paper_engine().get_account(refresh_quotes=False)
+        return _build_status_payload(dict(_auto_trader_state), account)
 
 
 def _stop_auto_trader() -> dict:
     global _auto_trader_stop_event, _auto_trader_thread
+    _hydrate_auto_trader_state()
     with _auto_trader_lock:
         stop_event = _auto_trader_stop_event
         thread = _auto_trader_thread
+        _auto_trader_state["engine_state"] = "stopped"
         _auto_trader_state["running"] = False
+        _auto_trader_state["stopped_at"] = _now_iso()
+        _auto_trader_state["next_run_at"] = ""
+        _persist_auto_trader_state_locked()
     if stop_event:
         stop_event.set()
     if thread and thread.is_alive():
         thread.join(timeout=2.0)
     with _auto_trader_lock:
-        return {"ok": True, "running": False, "state": dict(_auto_trader_state)}
+        state = dict(_auto_trader_state)
+    get_notification_service().notify_engine_stopped({"reason": "manual_stop"})
+    return _build_status_payload(state, _get_paper_engine().get_account(refresh_quotes=False))
+
+
+def _pause_auto_trader() -> dict:
+    _hydrate_auto_trader_state()
+    with _auto_trader_lock:
+        if str(_auto_trader_state.get("engine_state") or "") != "running":
+            return _build_status_payload(dict(_auto_trader_state), _get_paper_engine().get_account(refresh_quotes=False))
+        _auto_trader_state["engine_state"] = "paused"
+        _auto_trader_state["running"] = False
+        _auto_trader_state["paused_at"] = _now_iso()
+        _auto_trader_state["next_run_at"] = ""
+        _persist_auto_trader_state_locked()
+        state = dict(_auto_trader_state)
+    get_notification_service().notify_engine_paused()
+    return _build_status_payload(state, _get_paper_engine().get_account(refresh_quotes=False))
+
+
+def _resume_auto_trader() -> dict:
+    _hydrate_auto_trader_state()
+    start_cfg: dict[str, Any] | None = None
+    with _auto_trader_lock:
+        if str(_auto_trader_state.get("engine_state") or "") == "running":
+            return _build_status_payload(dict(_auto_trader_state), _get_paper_engine().get_account(refresh_quotes=False))
+        if _auto_trader_thread is None or not _auto_trader_thread.is_alive():
+            # 정지된 스레드는 재시작 시 start 흐름을 재사용한다.
+            start_cfg = dict(_auto_trader_state.get("current_config") or _default_auto_trader_config())
+        else:
+            _auto_trader_state["engine_state"] = "running"
+            _auto_trader_state["running"] = True
+            _auto_trader_state["paused_at"] = ""
+            _auto_trader_state["next_run_at"] = _next_run_at(int((_auto_trader_state.get("current_config") or {}).get("interval_seconds") or 300))
+            _persist_auto_trader_state_locked()
+            state = dict(_auto_trader_state)
+    if start_cfg is not None:
+        return _start_auto_trader(start_cfg)
+    get_notification_service().notify_engine_resumed()
+    return _build_status_payload(state, _get_paper_engine().get_account(refresh_quotes=False))
 
 
 def _auto_trader_status() -> dict:
+    _hydrate_auto_trader_state()
     with _auto_trader_lock:
         state = dict(_auto_trader_state)
-    if not state.get("config"):
-        state["config"] = _default_auto_trader_config()
-    if state.get("running") and not (_auto_trader_thread and _auto_trader_thread.is_alive()):
+    if not state.get("current_config"):
+        state["current_config"] = _default_auto_trader_config()
+    if str(state.get("engine_state") or "") in {"running", "paused"} and not (_auto_trader_thread and _auto_trader_thread.is_alive()):
+        state["engine_state"] = "stopped"
         state["running"] = False
         with _auto_trader_lock:
+            _auto_trader_state["engine_state"] = "stopped"
             _auto_trader_state["running"] = False
+            _persist_auto_trader_state_locked()
     engine = _get_paper_engine()
     account = engine.get_account(refresh_quotes=False)
-    return {"ok": True, "state": state, "account": account}
+    return _build_status_payload(state, account)
 
 
 def handle_paper_account(refresh_quotes: bool) -> tuple[int, dict]:
@@ -933,6 +1462,7 @@ def handle_paper_account(refresh_quotes: bool) -> tuple[int, dict]:
 
 def handle_paper_order(payload: dict) -> tuple[int, dict]:
     try:
+        _hydrate_auto_trader_state()
         side = str(payload.get("side") or "").strip().lower()
         code = str(payload.get("code") or "").strip().upper()
         market = str(payload.get("market") or "").strip().upper()
@@ -956,6 +1486,73 @@ def handle_paper_order(payload: dict) -> tuple[int, dict]:
             order_type=order_type,
             limit_price=limit_price,
         )
+        if result.get("ok"):
+            event = result.get("event") or {}
+            append_order_event({
+                "timestamp": event.get("ts") or _now_iso(),
+                "success": True,
+                "side": side,
+                "code": code,
+                "market": market,
+                "quantity": event.get("quantity"),
+                "order_type": order_type,
+                "submitted_at": _now_iso(),
+                "filled_at": event.get("ts"),
+                "filled_price_local": event.get("filled_price_local"),
+                "filled_price_krw": event.get("filled_price_krw"),
+                "notional_krw": event.get("notional_krw"),
+                "failure_reason": "",
+                "originating_cycle_id": "",
+                "originating_signal_key": f"{market}:{code}",
+                "quote_source": event.get("quote_source"),
+                "quote_fetched_at": event.get("quote_fetched_at"),
+                "quote_is_stale": event.get("quote_is_stale"),
+            })
+            account = result.get("account") if isinstance(result.get("account"), dict) else engine.get_account(refresh_quotes=False)
+            unrealized = sum(
+                _to_float(item.get("unrealized_pnl_krw"), 0.0)
+                for item in account.get("positions", [])
+                if isinstance(item, dict)
+            )
+            append_account_snapshot({
+                "timestamp": _now_iso(),
+                "cycle_id": "",
+                "cash_krw": account.get("cash_krw"),
+                "cash_usd": account.get("cash_usd"),
+                "equity_krw": account.get("equity_krw"),
+                "realized_pnl_today": _today_realized_pnl(account),
+                "unrealized_pnl": round(unrealized, 2),
+                "open_positions_count": len(account.get("positions", [])),
+                "total_orders_today": _today_order_counts(account).get("buy", 0) + _today_order_counts(account).get("sell", 0),
+                "days_left": account.get("days_left"),
+                "engine_state": _auto_trader_state.get("engine_state"),
+            })
+        else:
+            reason = str(result.get("error") or "order_failed")
+            append_order_event({
+                "timestamp": _now_iso(),
+                "success": False,
+                "side": side,
+                "code": code,
+                "market": market,
+                "quantity": quantity,
+                "order_type": order_type,
+                "submitted_at": _now_iso(),
+                "filled_at": "",
+                "filled_price_local": None,
+                "filled_price_krw": None,
+                "notional_krw": None,
+                "failure_reason": reason,
+                "originating_cycle_id": "",
+                "originating_signal_key": f"{market}:{code}",
+            })
+            get_notification_service().notify_order_failure({
+                "code": code,
+                "market": market,
+                "side": side,
+                "failure_reason": reason,
+                "originating_cycle_id": "",
+            })
         status = 200 if result.get("ok") else 400
         return status, result
     except Exception as exc:
@@ -964,6 +1561,7 @@ def handle_paper_order(payload: dict) -> tuple[int, dict]:
 
 def handle_paper_reset(payload: dict) -> tuple[int, dict]:
     try:
+        _hydrate_auto_trader_state()
         initial_cash_krw_raw = payload.get("initial_cash_krw")
         initial_cash_usd_raw = payload.get("initial_cash_usd")
         paper_days_raw = payload.get("paper_days")
@@ -975,14 +1573,28 @@ def handle_paper_reset(payload: dict) -> tuple[int, dict]:
         paper_days = int(paper_days_raw) if paper_days_raw not in (
             None, "") else None
         engine = _get_paper_engine()
+        account = engine.reset(
+            initial_cash_krw=initial_cash_krw,
+            initial_cash_usd=initial_cash_usd,
+            paper_days=paper_days,
+            seed_positions=seed_positions,
+        )
+        append_account_snapshot({
+            "timestamp": _now_iso(),
+            "cycle_id": "",
+            "cash_krw": account.get("cash_krw"),
+            "cash_usd": account.get("cash_usd"),
+            "equity_krw": account.get("equity_krw"),
+            "realized_pnl_today": _today_realized_pnl(account),
+            "unrealized_pnl": 0.0,
+            "open_positions_count": len(account.get("positions", [])),
+            "total_orders_today": _today_order_counts(account).get("buy", 0) + _today_order_counts(account).get("sell", 0),
+            "days_left": account.get("days_left"),
+            "engine_state": _auto_trader_state.get("engine_state"),
+        })
         return 200, {
             "ok": True,
-            "account": engine.reset(
-                initial_cash_krw=initial_cash_krw,
-                initial_cash_usd=initial_cash_usd,
-                paper_days=paper_days,
-                seed_positions=seed_positions,
-            ),
+            "account": account,
         }
     except ValueError as exc:
         return 400, {"ok": False, "error": str(exc)}
@@ -1040,9 +1652,55 @@ def handle_paper_engine_stop() -> tuple[int, dict]:
         return 500, {"ok": False, "error": str(exc)}
 
 
+def handle_paper_engine_pause() -> tuple[int, dict]:
+    try:
+        return 200, _pause_auto_trader()
+    except Exception as exc:
+        return 500, {"ok": False, "error": str(exc)}
+
+
+def handle_paper_engine_resume() -> tuple[int, dict]:
+    try:
+        return 200, _resume_auto_trader()
+    except Exception as exc:
+        return 500, {"ok": False, "error": str(exc)}
+
+
 def handle_paper_engine_status() -> tuple[int, dict]:
     try:
         return 200, _auto_trader_status()
+    except Exception as exc:
+        return 500, {"ok": False, "error": str(exc)}
+
+
+def handle_paper_engine_cycles(limit: int = 50) -> tuple[int, dict]:
+    try:
+        rows = read_engine_cycles(limit=limit)
+        return 200, {"ok": True, "cycles": rows, "count": len(rows)}
+    except Exception as exc:
+        return 500, {"ok": False, "error": str(exc)}
+
+
+def handle_paper_order_events(limit: int = 100) -> tuple[int, dict]:
+    try:
+        rows = read_order_events(limit=limit)
+        return 200, {"ok": True, "orders": rows, "count": len(rows)}
+    except Exception as exc:
+        return 500, {"ok": False, "error": str(exc)}
+
+
+def handle_paper_account_history(limit: int = 100) -> tuple[int, dict]:
+    try:
+        rows = read_account_snapshots(limit=limit)
+        return 200, {"ok": True, "history": rows, "count": len(rows)}
+    except Exception as exc:
+        return 500, {"ok": False, "error": str(exc)}
+
+
+def handle_signal_snapshots(limit: int = 200) -> tuple[int, dict]:
+    try:
+        rows = read_signal_snapshots(limit=limit)
+        return 200, {"ok": True, "snapshots": rows, "count": len(rows)}
     except Exception as exc:
         return 500, {"ok": False, "error": str(exc)}
 
@@ -1066,8 +1724,26 @@ class ExecutionService:
     def paper_engine_stop(self) -> tuple[int, dict]:
         return handle_paper_engine_stop()
 
+    def paper_engine_pause(self) -> tuple[int, dict]:
+        return handle_paper_engine_pause()
+
+    def paper_engine_resume(self) -> tuple[int, dict]:
+        return handle_paper_engine_resume()
+
     def paper_engine_status(self) -> tuple[int, dict]:
         return handle_paper_engine_status()
+
+    def paper_engine_cycles(self, limit: int = 50) -> tuple[int, dict]:
+        return handle_paper_engine_cycles(limit)
+
+    def paper_orders(self, limit: int = 100) -> tuple[int, dict]:
+        return handle_paper_order_events(limit)
+
+    def paper_account_history(self, limit: int = 100) -> tuple[int, dict]:
+        return handle_paper_account_history(limit)
+
+    def signal_snapshots(self, limit: int = 200) -> tuple[int, dict]:
+        return handle_signal_snapshots(limit)
 
 
 _execution_service: ExecutionService | None = None
@@ -1077,4 +1753,5 @@ def get_execution_service() -> ExecutionService:
     global _execution_service
     if _execution_service is None:
         _execution_service = ExecutionService()
+    _hydrate_auto_trader_state()
     return _execution_service

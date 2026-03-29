@@ -55,10 +55,37 @@ export interface EngineStatusResponse {
   };
   execution?: {
     state?: {
+      engine_state?: string;
       running?: boolean;
       started_at?: string;
+      paused_at?: string;
+      stopped_at?: string;
       last_run_at?: string;
+      next_run_at?: string;
+      last_success_at?: string;
       last_error?: string;
+      last_error_at?: string;
+      latest_cycle_id?: string;
+      today_order_counts?: {
+        buy?: number;
+        sell?: number;
+        failed?: number;
+      };
+      today_realized_pnl?: number;
+      current_equity?: number;
+      validation_policy?: {
+        validation_gate_enabled?: boolean;
+        validation_min_trades?: number;
+        validation_min_sharpe?: number;
+        validation_block_on_low_reliability?: boolean;
+        validation_require_optimized_reliability?: boolean;
+      };
+      optimized_params?: {
+        version?: string;
+        optimized_at?: string;
+        is_stale?: boolean;
+      };
+      last_summary?: Record<string, unknown>;
     };
     account?: {
       equity_krw?: number;

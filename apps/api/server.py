@@ -23,17 +23,22 @@ from routes.reports import (
     handle_today_picks,
 )
 from routes.reports_domain import handle_reports_explain, handle_reports_index
-from routes.signals import handle_signal_detail, handle_signals_rank
+from routes.signals import handle_signal_detail, handle_signal_snapshots, handle_signals_rank
 from routes.trading import (
     handle_paper_account,
+    handle_paper_account_history,
     handle_paper_auto_invest,
+    handle_paper_engine_cycles,
+    handle_paper_engine_pause,
+    handle_paper_engine_resume,
     handle_paper_engine_start,
     handle_paper_engine_status,
     handle_paper_engine_stop,
+    handle_paper_orders,
     handle_paper_order,
     handle_paper_reset,
 )
-from routes.system import handle_system_mode
+from routes.system import handle_notifications_status, handle_system_mode
 from routes.validation import handle_validation_backtest, handle_validation_walk_forward
 from routes.watchlist import (
     handle_watchlist_actions,
@@ -64,6 +69,7 @@ def _query_value(query: QueryParams, name: str, default: str = "") -> str:
 GET_ROUTES: tuple[Route, ...] = (
     Route("/api/engine/status", lambda _path, _query: handle_engine_status()),
     Route("/api/signals/rank", lambda _path, query: handle_signals_rank(query)),
+    Route("/api/signals/snapshots", lambda _path, query: handle_signal_snapshots(query)),
     Route("/api/signals/", lambda path, _query: handle_signal_detail(path), prefix=True),
     Route(
         "/api/portfolio/state",
@@ -102,7 +108,11 @@ GET_ROUTES: tuple[Route, ...] = (
         lambda _path, query: handle_paper_account(_query_value(query, "refresh", "1").strip() != "0"),
     ),
     Route("/api/paper/engine/status", lambda _path, _query: handle_paper_engine_status()),
+    Route("/api/paper/engine/cycles", lambda _path, query: handle_paper_engine_cycles(query)),
+    Route("/api/paper/orders", lambda _path, query: handle_paper_orders(query)),
+    Route("/api/paper/account/history", lambda _path, query: handle_paper_account_history(query)),
     Route("/api/system/mode", lambda _path, _query: handle_system_mode()),
+    Route("/api/system/notifications/status", lambda _path, _query: handle_notifications_status()),
     Route("/api/optimized-params", lambda _path, _query: handle_get_optimized_params()),
     Route("/api/optimization-status", lambda _path, _query: handle_get_optimization_status()),
 )
@@ -114,6 +124,8 @@ POST_ROUTES: tuple[Route, ...] = (
     Route("/api/paper/reset", lambda _path, payload: handle_paper_reset(payload)),
     Route("/api/paper/auto-invest", lambda _path, payload: handle_paper_auto_invest(payload)),
     Route("/api/paper/engine/start", lambda _path, payload: handle_paper_engine_start(payload)),
+    Route("/api/paper/engine/pause", lambda _path, _payload: handle_paper_engine_pause()),
+    Route("/api/paper/engine/resume", lambda _path, _payload: handle_paper_engine_resume()),
     Route("/api/paper/engine/stop", lambda _path, _payload: handle_paper_engine_stop()),
     Route("/api/run-optimization", lambda _path, _payload: handle_run_optimization()),
 )

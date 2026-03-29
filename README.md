@@ -66,6 +66,11 @@ python3 scheduler.py
 - `REPORT_OUTPUT_DIR` (선택)
 - `LOGS_DIR` (선택)
 
+모의투자 운영(알림/엔진) 필수 설정:
+- `TELEGRAM_ENABLED=true`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+
 로컬 host-run 개발 기본값:
 - API: `http://127.0.0.1:8001`
 - Web dev: `http://127.0.0.1:5173`
@@ -73,6 +78,46 @@ python3 scheduler.py
 - Ollama: `http://127.0.0.1:11434`
 - Report output: `storage/reports`
 - Logs: `storage/logs`
+
+## Paper Trading Operations
+백엔드 실행 후 아래 API로 모의투자 엔진을 운용할 수 있습니다.
+
+```bash
+# 상태 조회
+curl http://127.0.0.1:8001/api/paper/engine/status
+
+# 시작/일시정지/재개/중지
+curl -X POST http://127.0.0.1:8001/api/paper/engine/start -H "Content-Type: application/json" -d '{"markets":["KOSPI","NASDAQ"],"interval_seconds":300}'
+curl -X POST http://127.0.0.1:8001/api/paper/engine/pause
+curl -X POST http://127.0.0.1:8001/api/paper/engine/resume
+curl -X POST http://127.0.0.1:8001/api/paper/engine/stop
+```
+
+운영 로그/스냅샷 API:
+- `GET /api/paper/engine/cycles?limit=30`
+- `GET /api/paper/orders?limit=60`
+- `GET /api/paper/account/history?limit=60`
+- `GET /api/signals/snapshots?limit=120`
+- `GET /api/system/notifications/status`
+
+실행 상태 payload(`state`) 주요 필드:
+- `engine_state`, `running`, `started_at`, `last_run_at`, `next_run_at`
+- `last_success_at`, `last_error`, `last_summary`, `latest_cycle_id`
+- `current_config`, `today_order_counts`, `today_realized_pnl`, `current_equity`
+- `validation_policy`, `optimized_params`
+
+## Runtime Logs
+모의투자 운영 중 아래 파일이 누적됩니다.
+
+```text
+storage/logs/engine_state.json
+storage/logs/engine_cycles/YYYY-MM-DD.jsonl
+storage/logs/order_events.jsonl
+storage/logs/signal_snapshots.jsonl
+storage/logs/account_snapshots.jsonl
+```
+
+알림 채널은 텔레그램만 사용합니다. 발송 실패 시 엔진 루프는 계속 동작하고 경고만 남깁니다.
 
 ## Docker Deployment
 API와 Web만 컨테이너로 운영합니다. `scheduler` 는 제외합니다.

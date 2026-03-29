@@ -584,22 +584,66 @@ export interface PaperSkippedItem {
 }
 
 export interface PaperEngineState {
+  engine_state?: 'idle' | 'running' | 'paused' | 'stopped' | 'error' | string;
   running: boolean;
   started_at?: string;
+  paused_at?: string;
+  stopped_at?: string;
   last_run_at?: string;
+  next_run_at?: string;
+  last_success_at?: string;
   last_error?: string;
+  last_error_at?: string;
+  latest_cycle_id?: string;
+  today_order_counts?: {
+    buy?: number;
+    sell?: number;
+    failed?: number;
+  };
+  today_realized_pnl?: number;
+  current_equity?: number;
+  validation_policy?: {
+    validation_gate_enabled?: boolean;
+    validation_min_trades?: number;
+    validation_min_sharpe?: number;
+    validation_block_on_low_reliability?: boolean;
+    validation_require_optimized_reliability?: boolean;
+  };
+  optimized_params?: {
+    version?: string;
+    optimized_at?: string;
+    is_stale?: boolean;
+    source?: string;
+  };
   last_summary?: {
+    cycle_id?: string;
+    started_at?: string;
+    finished_at?: string;
     executed_buy_count?: number;
     executed_sell_count?: number;
     candidate_counts_by_market?: Record<string, number>;
+    blocked_reason_counts?: Record<string, number>;
     skip_reason_counts?: Record<string, number>;
     skipped?: PaperSkippedItem[];
     closed_markets?: string[];
+    pnl_snapshot?: {
+      realized_today?: number;
+      unrealized?: number;
+      equity_krw?: number;
+    };
+    validation_gate_summary?: {
+      enabled?: boolean;
+      min_trades?: number;
+      min_sharpe?: number;
+      blocked_reason_counts?: Record<string, number>;
+      blocked_count_by_market?: Record<string, number>;
+    };
     market_stats?: Record<string, {
       candidate_count?: number;
       market_closed?: boolean;
       executed_buy_count?: number;
       executed_sell_count?: number;
+      blocked_count?: number;
       skipped_count?: number;
     }>;
   };

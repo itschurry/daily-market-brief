@@ -9,7 +9,9 @@ import {
 import { UI_TEXT } from '../constants/uiText';
 import type { ConsoleDataState, ConsoleSnapshot } from '../types/consoleView';
 
-const POLLING_MS = 30_000;
+const FAST_POLLING_MS = 8_000;
+const MID_POLLING_MS = 20_000;
+const SLOW_POLLING_MS = 60_000;
 
 function emptySnapshot(): ConsoleSnapshot {
   const nowIso = new Date().toISOString();
@@ -23,6 +25,8 @@ function emptySnapshot(): ConsoleSnapshot {
   };
 }
 
+type SnapshotKey = keyof Omit<ConsoleSnapshot, 'fetchedAt'>;
+
 export function useConsoleData() {
   const [state, setState] = useState<ConsoleDataState>({
     snapshot: emptySnapshot(),
@@ -31,50 +35,71 @@ export function useConsoleData() {
     errorMessage: '',
   });
 
-  const refresh = useCallback(async () => {
-    setState((prev) => ({ ...prev, loading: true }));
-    const results = await Promise.allSettled([
-      fetchEngineStatus(),
-      fetchSignals(150),
-      fetchPortfolioState(true),
-      fetchValidationWalkForward(),
-      fetchReportsExplain(),
-    ]);
-
-    const [engineResult, signalsResult, portfolioResult, validationResult, reportsResult] = results;
-    const hasError = results.some((item) => item.status === 'rejected');
-    const nextSnapshot: ConsoleSnapshot = {
-      engine: engineResult.status === 'fulfilled' ? engineResult.value : {},
-      signals: signalsResult.status === 'fulfilled' ? signalsResult.value : {},
-      portfolio: portfolioResult.status === 'fulfilled' ? portfolioResult.value : {},
-      validation: validationResult.status === 'fulfilled' ? validationResult.value : {},
-      reports: reportsResult.status === 'fulfilled' ? reportsResult.value : {},
-      fetchedAt: new Date().toISOString(),
-    };
-
-    setState({
-      snapshot: nextSnapshot,
+  const patchSnapshot = useCallback((partial: Partial<ConsoleSnapshot>, hasError: boolean) => {
+    setState((prev) => ({
+      snapshot: {
+        ...prev.snapshot,
+        ...partial,
+        fetchedAt: new Date().toISOString(),
+      },
       loading: false,
       hasError,
       errorMessage: hasError ? UI_TEXT.errors.partialLoadFailed : '',
-    });
+    }));
   }, []);
 
+  const fetchPartition = useCallback(async (targets: SnapshotKey[]) => {
+    const tasks = targets.map((key) => {
+      if (key === 'engine') return fetchEngineStatus();
+      if (key === 'signals') return fetchSignals(150);
+      if (key === 'portfolio') return fetchPortfolioState(true);
+      if (key === 'validation') return fetchValidationWalkForward();
+      return fetchReportsExplain();
+    });
+    const results = await Promise.allSettled(tasks);
+    const partial: Partial<ConsoleSnapshot> = {};
+    let hasError = false;
+
+    results.forEach((result, idx) => {
+      const key = targets[idx];
+      if (result.status === 'fulfilled') {
+        partial[key] = result.value;
+      } else {
+        hasError = true;
+      }
+    });
+    patchSnapshot(partial, hasError);
+  }, [patchSnapshot]);
+
+  const refresh = useCallback(async () => {
+    setState((prev) => ({ ...prev, loading: true, hasError: false, errorMessage: '' }));
+    await fetchPartition(['engine', 'signals', 'portfolio', 'validation', 'reports']);
+  }, [fetchPartition]);
+
   useEffect(() => {
-    let mounted = true;
-    const refreshSafely = async () => {
-      if (!mounted) return;
-      await refresh();
-    };
-    void refreshSafely();
-    const timer = window.setInterval(() => {
-      void refreshSafely();
-    }, POLLING_MS);
-    return () => {
-      mounted = false;
-      window.clearInterval(timer);
-    };
+    void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void fetchPartition(['engine', 'portfolio']);
+    }, FAST_POLLING_MS);
+    return () => window.clearInterval(timer);
+  }, [fetchPartition]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void fetchPartition(['signals']);
+    }, MID_POLLING_MS);
+    return () => window.clearInterval(timer);
+  }, [fetchPartition]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void fetchPartition(['validation', 'reports']);
+    }, SLOW_POLLING_MS);
+    return () => window.clearInterval(timer);
+  }, [fetchPartition]);
 
   return useMemo(
     () => ({

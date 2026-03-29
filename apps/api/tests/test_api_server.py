@@ -48,6 +48,13 @@ class ApiServerDispatchTests(unittest.TestCase):
         self.assertEqual((200, {"ok": True, "count": 1}), result)
         mock_handler.assert_called_once_with({"limit": ["10"]})
 
+    def test_dispatch_get_routes_signal_snapshots(self):
+        with patch("server.handle_signal_snapshots", return_value=(200, {"ok": True, "count": 1})) as mock_handler:
+            result = dispatch_get("/api/signals/snapshots", {"limit": ["20"]})
+
+        self.assertEqual((200, {"ok": True, "count": 1}), result)
+        mock_handler.assert_called_once_with({"limit": ["20"]})
+
     def test_dispatch_get_routes_domain_signal_detail(self):
         with patch("server.handle_signal_detail", return_value=(200, {"ok": True, "signal": {}})) as mock_handler:
             result = dispatch_get("/api/signals/005930", {})
@@ -60,6 +67,13 @@ class ApiServerDispatchTests(unittest.TestCase):
             dispatch_get("/api/portfolio/state", {"refresh": ["0"]})
 
         mock_handler.assert_called_once_with(False)
+
+    def test_dispatch_get_routes_notifications_status(self):
+        with patch("server.handle_notifications_status", return_value=(200, {"ok": True, "channel": "telegram"})) as mock_handler:
+            result = dispatch_get("/api/system/notifications/status", {})
+
+        self.assertEqual((200, {"ok": True, "channel": "telegram"}), result)
+        mock_handler.assert_called_once_with()
 
     def test_dispatch_returns_none_for_unknown_route(self):
         self.assertIsNone(dispatch_get("/api/unknown", {}))

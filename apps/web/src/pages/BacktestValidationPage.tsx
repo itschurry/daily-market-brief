@@ -451,6 +451,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   const segmentValidation = snapshot.validation.segments?.validation as Record<string, unknown> | undefined;
   const segmentOos = snapshot.validation.segments?.oos as Record<string, unknown> | undefined;
   const globalParams = (optimizedParams?.global_params as Record<string, unknown> | undefined) || {};
+  const validationPolicy = snapshot.engine.execution?.state?.validation_policy;
+  const optimizedState = snapshot.engine.execution?.state?.optimized_params;
 
   return (
     <div className="app-shell">
@@ -615,6 +617,20 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 <div>윈도우 수: {formatCount(snapshot.validation.summary?.windows, '개')}</div>
                 <div>양수 OOS 윈도우: {formatCount(snapshot.validation.summary?.positive_windows, '개')}</div>
                 <div>신뢰도: {reliabilityToKorean(String(snapshot.validation.summary?.oos_reliability || ''))}</div>
+              </div>
+            </div>
+
+            <div className="page-section" style={{ padding: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>실행 정책 반영 상태</div>
+              <div style={{ marginTop: 10, display: 'grid', gap: 6, fontSize: 12, color: 'var(--text-3)' }}>
+                <div>validation gate: {validationPolicy?.validation_gate_enabled ? '활성' : '비활성'}</div>
+                <div>min trades: {formatNumber(validationPolicy?.validation_min_trades, 0)}</div>
+                <div>min sharpe: {formatNumber(validationPolicy?.validation_min_sharpe, 2)}</div>
+                <div>저신뢰 차단: {validationPolicy?.validation_block_on_low_reliability ? '예' : '아니오'}</div>
+                <div>optimized 신뢰도 요구: {validationPolicy?.validation_require_optimized_reliability ? '예' : '아니오'}</div>
+                <div>optimized version: {String(optimizedState?.version || '-')}</div>
+                <div>optimized at: {formatDateTime(optimizedState?.optimized_at)}</div>
+                <div>optimized stale: {optimizedState?.is_stale ? '예' : '아니오'}</div>
               </div>
             </div>
 

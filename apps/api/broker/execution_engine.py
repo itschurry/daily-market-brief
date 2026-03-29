@@ -149,6 +149,8 @@ class PaperExecutionEngine:
         quote_price = _to_float(quote.get("price"))
         if quote_price is None or quote_price <= 0:
             return {"ok": False, "error": "유효한 현재가를 가져오지 못했습니다."}
+        if bool(quote.get("is_stale")):
+            return {"ok": False, "error": "quote_stale"}
 
         can_trade, liquidity_reason = self._liquidity_gate(
             market=normalized_market,
@@ -289,6 +291,9 @@ class PaperExecutionEngine:
                 "realized_pnl_local": round(realized_local, 4),
                 "realized_pnl_krw": round(realized_krw, 2),
                 "status": "filled",
+                "quote_source": quote.get("source") or "unknown",
+                "quote_fetched_at": quote.get("fetched_at") or "",
+                "quote_is_stale": bool(quote.get("is_stale")),
                 "execution_realism": {
                     "slippage_bps": round(slippage_bps, 2),
                     "slippage_model_version": "intraday_v2",

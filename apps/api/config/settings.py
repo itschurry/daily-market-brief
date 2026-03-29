@@ -62,6 +62,7 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+    telegram_enabled: bool = Field(default=False, alias="TELEGRAM_ENABLED")
     report_web_url: str = Field(default="http://localhost:8081", alias="REPORT_WEB_URL")
 
     smtp_host: str = Field(default="smtp.gmail.com", alias="SMTP_HOST")
@@ -130,6 +131,7 @@ KIS_BASE_URL = settings.kis_base_url
 
 TELEGRAM_BOT_TOKEN = settings.telegram_bot_token
 TELEGRAM_CHAT_ID = settings.telegram_chat_id
+TELEGRAM_ENABLED = settings.telegram_enabled
 REPORT_WEB_URL = settings.report_web_url
 
 SMTP_HOST = settings.smtp_host

@@ -206,6 +206,9 @@ def _resolve_stock_quote(code: str, market: str = "") -> dict:
             "price": kis_price.get("price"),
             "change_pct": kis_price.get("change_pct"),
             "market": normalize_market(resolved_market) or "KOSPI",
+            "source": "KIS",
+            "fetched_at": datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "is_stale": False,
         }
 
     last_exc: Exception | None = None
@@ -230,6 +233,9 @@ def _resolve_stock_quote(code: str, market: str = "") -> dict:
         "price": kis_price.get("price"),
         "change_pct": kis_price.get("change_pct"),
         "market": resolved_exchange,
+        "source": "KIS",
+        "fetched_at": datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec="seconds"),
+        "is_stale": False,
     }
 
 

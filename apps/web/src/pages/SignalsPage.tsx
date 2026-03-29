@@ -1,10 +1,10 @@
 import { useCallback, useMemo } from 'react';
-import { buildSignalRows } from '../adapters/consoleViewAdapter';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { strategyTypeToKorean, UI_TEXT } from '../constants/uiText';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
-import { formatCount, formatNumber, formatPercent } from '../utils/format';
+import { formatCount, formatNumber, formatPercent, formatSymbol } from '../utils/format';
 import type { ConsoleSnapshot } from '../types/consoleView';
+import { reasonCodeToKorean, reliabilityToKorean } from '../constants/uiText';
 
 interface SignalsPageProps {
   snapshot: ConsoleSnapshot;
@@ -15,9 +15,9 @@ interface SignalsPageProps {
 
 export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: SignalsPageProps) {
   const { entries, push, clear } = useConsoleLogs();
-  const rows = buildSignalRows(snapshot).slice(0, 60);
-  const allowedCount = rows.filter((row) => row.statusLabel === UI_TEXT.status.allowed).length;
-  const blockedCount = rows.length - allowedCount;
+  const signals = (snapshot.signals.signals || []).slice(0, 80);
+  const allowedCount = signals.filter((row) => row.entry_allowed).length;
+  const blockedCount = signals.length - allowedCount;
   const emptyMessage = errorMessage ? UI_TEXT.empty.signalsMissingData : UI_TEXT.empty.signalsNoMatches;
 
   const handleRefresh = useCallback(() => {
@@ -28,11 +28,11 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
   const statusItems = useMemo(() => ([
     {
       label: '전체 신호',
-      value: `${rows.length}건`,
+      value: `${signals.length}건`,
       tone: 'neutral' as const,
     },
     {
-      label: '추천',
+      label: '진입 허용',
       value: `${allowedCount}건`,
       tone: 'good' as const,
     },
@@ -46,7 +46,7 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
       value: `${snapshot.signals.regime || '-'} / ${snapshot.signals.risk_level || '-'}`,
       tone: 'neutral' as const,
     },
-  ]), [allowedCount, blockedCount, rows.length, snapshot.signals.regime, snapshot.signals.risk_level]);
+  ]), [allowedCount, blockedCount, signals.length, snapshot.signals.regime, snapshot.signals.risk_level]);
 
   return (
     <div className="app-shell">
@@ -54,7 +54,7 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <ConsoleActionBar
             title="신호 관리"
-            subtitle="EV 기반 추천/차단 상태와 차단 사유를 운영 관점으로 확인합니다."
+            subtitle="진입 허용/차단 사유와 검증 신뢰도를 운영 기준으로 확인합니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage}
@@ -64,57 +64,76 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
             onClearLogs={clear}
             settingsPanel={(
               <div style={{ display: 'grid', gap: 10, fontSize: 12, color: 'var(--text-3)' }}>
-                <div>표시 최대 건수: 60건</div>
+                <div>표시 최대 건수: 80건</div>
                 <div>정렬 기준: EV 내림차순</div>
-                <div>추천 기준: `entry_allowed && size&gt;0`</div>
+                <div>차단 사유는 상세 보기로 확인하세요.</div>
               </div>
             )}
           />
 
           <div className="page-section" style={{ padding: 0, overflow: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1320 }}>
               <thead>
                 <tr style={{ background: 'var(--bg-soft)', textAlign: 'left' }}>
                   <th style={{ padding: 12, fontSize: 12 }}>종목</th>
                   <th style={{ padding: 12, fontSize: 12 }}>전략</th>
+                  <th style={{ padding: 12, fontSize: 12 }}>점수/신뢰</th>
                   <th style={{ padding: 12, fontSize: 12 }}>EV</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>승률</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>추천 비중</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>신호 상태</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>차단 사유</th>
+                  <th style={{ padding: 12, fontSize: 12 }}>진입</th>
+                  <th style={{ padding: 12, fontSize: 12 }}>권장 수량</th>
+                  <th style={{ padding: 12, fontSize: 12 }}>검증 신뢰도</th>
+                  <th style={{ padding: 12, fontSize: 12 }}>유동성/슬리피지</th>
+                  <th style={{ padding: 12, fontSize: 12 }}>사유</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => {
-                  const signal = row.signal;
+                {signals.map((signal) => {
                   const ev = signal.ev_metrics?.expected_value;
                   const winProbability = signal.ev_metrics?.win_probability;
                   const size = signal.size_recommendation?.quantity ?? 0;
+                  const sizeReason = signal.size_recommendation?.reason || '-';
+                  const reliability = reliabilityToKorean(String(signal.ev_metrics?.reliability || ''));
+                  const liquidity = signal.execution_realism?.liquidity_gate_status || '-';
+                  const slippage = signal.execution_realism?.slippage_bps;
+                  const reasons = (signal.reason_codes || []).map((reason) => reasonCodeToKorean(reason));
+                  const blocked = !signal.entry_allowed;
                   return (
                     <tr key={`${signal.market || ''}:${signal.code || ''}`} style={{ borderTop: '1px solid var(--border)' }}>
-                      <td style={{ padding: 12, fontSize: 12 }}>{row.symbol}</td>
+                      <td style={{ padding: 12, fontSize: 12 }}>{formatSymbol(signal.code, signal.name)} ({signal.market || '-'})</td>
                       <td style={{ padding: 12, fontSize: 12 }}>{strategyTypeToKorean(signal.strategy_type || '')}</td>
+                      <td style={{ padding: 12, fontSize: 12 }}>
+                        {formatNumber((signal as { score?: number }).score, 2)} / {winProbability === undefined ? '-' : formatPercent(winProbability, 2, true)}
+                      </td>
                       <td style={{ padding: 12, fontSize: 12, fontWeight: 700 }}>
                         {ev === undefined ? '-' : formatNumber(ev, 2)}
                       </td>
-                      <td style={{ padding: 12, fontSize: 12 }}>
-                        {winProbability === undefined ? '-' : formatPercent(winProbability, 2, true)}
+                      <td style={{ padding: 12, fontSize: 12, color: blocked ? 'var(--down)' : 'var(--up)', fontWeight: 700 }}>
+                        {blocked ? UI_TEXT.status.blocked : UI_TEXT.status.allowed}
                       </td>
                       <td style={{ padding: 12, fontSize: 12 }}>
-                        {size > 0 ? formatCount(size, '주') : '-'}
+                        {size > 0 ? formatCount(size, '주') : `0주 (${sizeReason})`}
                       </td>
-                      <td style={{ padding: 12, fontSize: 12, color: row.statusLabel === '추천' ? 'var(--up)' : 'var(--down)', fontWeight: 700 }}>
-                        {row.statusLabel}
+                      <td style={{ padding: 12, fontSize: 12 }}>{reliability || '-'}</td>
+                      <td style={{ padding: 12, fontSize: 12 }}>
+                        {liquidity} / {slippage === undefined ? '-' : `${formatNumber(slippage, 2)} bps`}
                       </td>
-                      <td style={{ padding: 12, fontSize: 12, color: row.statusLabel === '추천' ? 'var(--text-4)' : 'var(--down)' }}>
-                        {row.reasonSummary}
+                      <td style={{ padding: 12, fontSize: 12, color: blocked ? 'var(--down)' : 'var(--text-4)' }}>
+                        {reasons.length <= 1 && (reasons[0] || '-')}
+                        {reasons.length > 1 && (
+                          <details>
+                            <summary>상세 {reasons.length}건</summary>
+                            <div style={{ marginTop: 6, display: 'grid', gap: 4 }}>
+                              {reasons.map((reason, idx) => <div key={`${signal.code}-${idx}`}>{reason}</div>)}
+                            </div>
+                          </details>
+                        )}
                       </td>
                     </tr>
                   );
                 })}
-                {rows.length === 0 && (
+                {signals.length === 0 && (
                   <tr>
-                    <td colSpan={7} style={{ padding: 14, fontSize: 12, color: 'var(--text-4)' }}>
+                    <td colSpan={9} style={{ padding: 14, fontSize: 12, color: 'var(--text-4)' }}>
                       {emptyMessage}
                     </td>
                   </tr>

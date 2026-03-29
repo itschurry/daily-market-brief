@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from services.execution_service import get_execution_service
 from services.strategy_engine import build_signal_book
 
 
@@ -32,5 +33,17 @@ def handle_signal_detail(path: str) -> tuple[int, dict]:
             if str(item.get("code") or "").upper() == code:
                 return 200, {"ok": True, "signal": item, "generated_at": payload.get("generated_at")}
         return 404, {"ok": False, "error": f"signal not found: {code}"}
+    except Exception as exc:
+        return 500, {"ok": False, "error": str(exc)}
+
+
+def handle_signal_snapshots(query: dict[str, list[str]]) -> tuple[int, dict]:
+    try:
+        raw = (query.get("limit", ["200"])[0] or "200").strip()
+        try:
+            limit = max(1, min(500, int(raw)))
+        except (TypeError, ValueError):
+            limit = 200
+        return get_execution_service().signal_snapshots(limit)
     except Exception as exc:
         return 500, {"ok": False, "error": str(exc)}

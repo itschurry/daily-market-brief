@@ -40,12 +40,40 @@ type PaperEngineResponse = {
   message?: string;
   [key: string]: unknown;
 };
+type PaperCyclesResponse = {
+  ok?: boolean;
+  cycles?: Record<string, unknown>[];
+  count?: number;
+  error?: string;
+};
+type PaperOrderEventsResponse = {
+  ok?: boolean;
+  orders?: Record<string, unknown>[];
+  count?: number;
+  error?: string;
+};
+type PaperAccountHistoryResponse = {
+  ok?: boolean;
+  history?: Record<string, unknown>[];
+  count?: number;
+  error?: string;
+};
+type SignalSnapshotsResponse = {
+  ok?: boolean;
+  snapshots?: Record<string, unknown>[];
+  count?: number;
+  error?: string;
+};
 
 export function usePaperTrading() {
   const [account, setAccount] = useState<PaperAccountData>(EMPTY_ACCOUNT);
-  const [engineState, setEngineState] = useState<PaperEngineState>({ running: false });
+  const [engineState, setEngineState] = useState<PaperEngineState>({ running: false, engine_state: 'stopped' });
   const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
   const [lastError, setLastError] = useState<string>('');
+  const [cycles, setCycles] = useState<Record<string, unknown>[]>([]);
+  const [orderEvents, setOrderEvents] = useState<Record<string, unknown>[]>([]);
+  const [accountHistory, setAccountHistory] = useState<Record<string, unknown>[]>([]);
+  const [signalSnapshots, setSignalSnapshots] = useState<Record<string, unknown>[]>([]);
 
   const refresh = useCallback(async (refreshQuotes = true) => {
     try {
@@ -154,12 +182,30 @@ export function usePaperTrading() {
       if (payload.account) {
         setAccount(payload.account as PaperAccountData);
       }
-      setEngineState((payload.state || { running: false }) as PaperEngineState);
+      setEngineState((payload.state || { running: false, engine_state: 'stopped' }) as PaperEngineState);
       return { ok: true, payload };
     } catch {
       const message = '자동매매 상태 조회 중 오류가 발생했습니다.';
       setLastError(message);
       return { ok: false, error: message };
+    }
+  }, []);
+
+  const refreshRuntimeLogs = useCallback(async () => {
+    try {
+      const [cyclesPayload, ordersPayload, historyPayload, snapshotsPayload] = await Promise.all([
+        getJSON<PaperCyclesResponse>('/api/paper/engine/cycles?limit=30', { noStore: true }),
+        getJSON<PaperOrderEventsResponse>('/api/paper/orders?limit=60', { noStore: true }),
+        getJSON<PaperAccountHistoryResponse>('/api/paper/account/history?limit=60', { noStore: true }),
+        getJSON<SignalSnapshotsResponse>('/api/signals/snapshots?limit=120', { noStore: true }),
+      ]);
+      setCycles(Array.isArray(cyclesPayload.cycles) ? cyclesPayload.cycles : []);
+      setOrderEvents(Array.isArray(ordersPayload.orders) ? ordersPayload.orders : []);
+      setAccountHistory(Array.isArray(historyPayload.history) ? historyPayload.history : []);
+      setSignalSnapshots(Array.isArray(snapshotsPayload.snapshots) ? snapshotsPayload.snapshots : []);
+      return { ok: true };
+    } catch {
+      return { ok: false };
     }
   }, []);
 
@@ -196,7 +242,7 @@ export function usePaperTrading() {
       if (payload.state) {
         setEngineState(payload.state as PaperEngineState);
       } else {
-        setEngineState({ running: false });
+        setEngineState({ running: false, engine_state: 'stopped' });
       }
       setLastError('');
       return { ok: true, payload };
@@ -207,23 +253,71 @@ export function usePaperTrading() {
     }
   }, []);
 
+  const pauseEngine = useCallback(async () => {
+    try {
+      const response = await postJSON<PaperEngineResponse>('/api/paper/engine/pause');
+      const payload = response.data;
+      if (!response.ok || !payload.ok) {
+        const message = payload.error || '자동매매 일시정지에 실패했습니다.';
+        setLastError(message);
+        return { ok: false, error: message };
+      }
+      if (payload.state) {
+        setEngineState(payload.state as PaperEngineState);
+      }
+      setLastError('');
+      return { ok: true, payload };
+    } catch {
+      const message = '자동매매 일시정지 요청 중 오류가 발생했습니다.';
+      setLastError(message);
+      return { ok: false, error: message };
+    }
+  }, []);
+
+  const resumeEngine = useCallback(async () => {
+    try {
+      const response = await postJSON<PaperEngineResponse>('/api/paper/engine/resume');
+      const payload = response.data;
+      if (!response.ok || !payload.ok) {
+        const message = payload.error || '자동매매 재개에 실패했습니다.';
+        setLastError(message);
+        return { ok: false, error: message };
+      }
+      if (payload.state) {
+        setEngineState(payload.state as PaperEngineState);
+      }
+      setLastError('');
+      return { ok: true, payload };
+    } catch {
+      const message = '자동매매 재개 요청 중 오류가 발생했습니다.';
+      setLastError(message);
+      return { ok: false, error: message };
+    }
+  }, []);
+
   useEffect(() => {
     refresh(true);
     refreshEngineStatus();
-  }, [refresh, refreshEngineStatus]);
+    refreshRuntimeLogs();
+  }, [refresh, refreshEngineStatus, refreshRuntimeLogs]);
 
   useEffect(() => {
-    if (!engineState.running) return undefined;
+    if (!(engineState.running || engineState.engine_state === 'paused')) return undefined;
     const timer = window.setInterval(() => {
       refreshEngineStatus();
       refresh(false);
+      refreshRuntimeLogs();
     }, 8000);
     return () => window.clearInterval(timer);
-  }, [engineState.running, refresh, refreshEngineStatus]);
+  }, [engineState.engine_state, engineState.running, refresh, refreshEngineStatus, refreshRuntimeLogs]);
 
   return {
     account,
     engineState,
+    cycles,
+    orderEvents,
+    accountHistory,
+    signalSnapshots,
     status,
     lastError,
     refresh,
@@ -231,7 +325,10 @@ export function usePaperTrading() {
     reset,
     autoInvest,
     refreshEngineStatus,
+    refreshRuntimeLogs,
     startEngine,
     stopEngine,
+    pauseEngine,
+    resumeEngine,
   };
 }

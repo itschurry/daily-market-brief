@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { UI_TEXT } from '../constants/uiText';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
@@ -89,6 +89,14 @@ function isToday(ts: unknown): boolean {
     && value.getDate() === now.getDate();
 }
 
+function engineStateLabel(raw: string | undefined, running: boolean): string {
+  const state = String(raw || (running ? 'running' : 'stopped'));
+  if (state === 'running') return UI_TEXT.status.running;
+  if (state === 'paused') return UI_TEXT.status.paused;
+  if (state === 'error') return UI_TEXT.status.error;
+  return UI_TEXT.status.stopped;
+}
+
 export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh }: PaperPortfolioPageProps) {
   const { entries, push, clear } = useConsoleLogs();
   const [settings, setSettings] = useState<PaperSettings>(() => readSettings());
@@ -96,17 +104,28 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
   const {
     account,
     engineState,
+    cycles,
+    orderEvents,
+    accountHistory,
+    signalSnapshots,
     status,
     lastError,
     refresh,
     reset,
     refreshEngineStatus,
+    refreshRuntimeLogs,
     startEngine,
     stopEngine,
+    pauseEngine,
+    resumeEngine,
   } = usePaperTrading();
 
   const positions = account.positions || [];
   const orders = [...(account.orders || [])].sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
+  const mergedOrderHistory = (orderEvents.length > 0 ? orderEvents : orders as unknown as Record<string, unknown>[])
+    .slice(0, 80)
+    .sort((a, b) => String((b as { timestamp?: string; ts?: string }).timestamp || (b as { ts?: string }).ts || '')
+      .localeCompare(String((a as { timestamp?: string; ts?: string }).timestamp || (a as { ts?: string }).ts || '')));
 
   const vm = useMemo<PaperViewModel>(() => {
     const unrealized = positions.reduce((sum, item) => sum + toNumber(item.unrealized_pnl_krw), 0);
@@ -127,8 +146,8 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
   const statusItems = useMemo<ActionBarStatusItem[]>(() => ([
     {
       label: '엔진 상태',
-      value: engineState.running ? UI_TEXT.status.running : UI_TEXT.status.stopped,
-      tone: engineState.running ? 'good' : 'bad',
+      value: engineStateLabel(engineState.engine_state, engineState.running),
+      tone: engineState.engine_state === 'error' ? 'bad' : engineState.running ? 'good' : 'neutral',
     },
     {
       label: '리스크 가드',
@@ -145,18 +164,18 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
       value: `${vm.positionCount}건`,
       tone: 'neutral',
     },
-  ]), [engineState.running, snapshot.portfolio.risk_guard_state?.entry_allowed, status, vm.positionCount]);
+  ]), [engineState.engine_state, engineState.running, snapshot.portfolio.risk_guard_state?.entry_allowed, status, vm.positionCount]);
 
   const handleRefreshAll = useCallback(async () => {
     onRefresh();
-    await Promise.all([refresh(true), refreshEngineStatus()]);
+    await Promise.all([refresh(true), refreshEngineStatus(), refreshRuntimeLogs()]);
     push('info', '모의투자 데이터와 콘솔 스냅샷을 새로고침했습니다.');
-  }, [onRefresh, push, refresh, refreshEngineStatus]);
+  }, [onRefresh, push, refresh, refreshEngineStatus, refreshRuntimeLogs]);
 
   const handleStartStop = useCallback(async () => {
     setPendingAction('engine-toggle');
     try {
-      if (engineState.running) {
+      if (engineState.running || engineState.engine_state === 'paused') {
         const result = await stopEngine();
         if (!result.ok) {
           push('error', '모의투자 엔진 중지에 실패했습니다.', result.error || '');
@@ -185,11 +204,12 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
         }
         push('success', '모의투자 엔진을 시작했습니다.', `시장: ${markets.join(', ')}`);
       }
-      await Promise.all([refresh(true), refreshEngineStatus()]);
+      await Promise.all([refresh(true), refreshEngineStatus(), refreshRuntimeLogs()]);
     } finally {
       setPendingAction(null);
     }
   }, [
+    engineState.engine_state,
     engineState.running,
     push,
     refresh,
@@ -201,9 +221,30 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
     settings.maxPositions,
     settings.runKospi,
     settings.runNasdaq,
+    refreshRuntimeLogs,
     startEngine,
     stopEngine,
   ]);
+
+  const handlePause = useCallback(async () => {
+    const result = await pauseEngine();
+    if (!result.ok) {
+      push('error', '모의투자 엔진 일시정지에 실패했습니다.', result.error || '');
+      return;
+    }
+    await Promise.all([refreshEngineStatus(), refreshRuntimeLogs()]);
+    push('success', '모의투자 엔진을 일시정지했습니다.');
+  }, [pauseEngine, push, refreshEngineStatus, refreshRuntimeLogs]);
+
+  const handleResume = useCallback(async () => {
+    const result = await resumeEngine();
+    if (!result.ok) {
+      push('error', '모의투자 엔진 재개에 실패했습니다.', result.error || '');
+      return;
+    }
+    await Promise.all([refreshEngineStatus(), refreshRuntimeLogs()]);
+    push('success', '모의투자 엔진을 재개했습니다.');
+  }, [push, refreshEngineStatus, refreshRuntimeLogs, resumeEngine]);
 
   const handleReset = useCallback(async () => {
     setPendingAction('reset');
@@ -222,11 +263,19 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
         '모의투자 계좌를 초기화했습니다.',
         `초기자금 KRW ${formatKRW(settings.initialCashKrw, true)} / USD ${formatUSD(settings.initialCashUsd, true)}`,
       );
-      await Promise.all([refresh(true), refreshEngineStatus()]);
+      await Promise.all([refresh(true), refreshEngineStatus(), refreshRuntimeLogs()]);
     } finally {
       setPendingAction(null);
     }
-  }, [push, refresh, refreshEngineStatus, reset, settings.initialCashKrw, settings.initialCashUsd, settings.paperDays]);
+  }, [push, refresh, refreshEngineStatus, refreshRuntimeLogs, reset, settings.initialCashKrw, settings.initialCashUsd, settings.paperDays]);
+
+  useEffect(() => {
+    if (!(engineState.running || engineState.engine_state === 'paused')) return;
+    const timer = window.setInterval(() => {
+      void refreshRuntimeLogs();
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [engineState.engine_state, engineState.running, refreshRuntimeLogs]);
 
   const settingsPanel = (
     <div style={{ display: 'grid', gap: 12 }}>
@@ -339,13 +388,41 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
             onClearLogs={clear}
             actions={[
               {
-                label: engineState.running ? '엔진 중지' : '엔진 시작',
-                onClick: () => { void handleStartStop(); },
-                tone: engineState.running ? 'danger' : 'primary',
-                busy: pendingAction === 'engine-toggle',
-                busyLabel: engineState.running ? '중지 중...' : '시작 중...',
-                confirmTitle: engineState.running ? UI_TEXT.confirm.stopEngineTitle : UI_TEXT.confirm.startEngineTitle,
-                confirmMessage: engineState.running ? UI_TEXT.confirm.stopEngineMessage : UI_TEXT.confirm.startEngineMessage,
+                label: '엔진 시작',
+                onClick: () => { if (!engineState.running) { void handleStartStop(); } },
+                tone: 'primary',
+                disabled: engineState.running,
+                busy: pendingAction === 'engine-toggle' && !engineState.running,
+                busyLabel: '시작 중...',
+                confirmTitle: UI_TEXT.confirm.startEngineTitle,
+                confirmMessage: UI_TEXT.confirm.startEngineMessage,
+              },
+              {
+                label: '일시정지',
+                onClick: () => { void handlePause(); },
+                tone: 'default',
+                disabled: !engineState.running,
+              },
+              {
+                label: '재개',
+                onClick: () => { void handleResume(); },
+                tone: 'default',
+                disabled: engineState.running || engineState.engine_state !== 'paused',
+              },
+              {
+                label: '엔진 중지',
+                onClick: () => { if (engineState.running || engineState.engine_state === 'paused') { void handleStartStop(); } },
+                tone: 'danger',
+                disabled: !(engineState.running || engineState.engine_state === 'paused'),
+                busy: pendingAction === 'engine-toggle' && (engineState.running || engineState.engine_state === 'paused'),
+                busyLabel: '중지 중...',
+                confirmTitle: UI_TEXT.confirm.stopEngineTitle,
+                confirmMessage: UI_TEXT.confirm.stopEngineMessage,
+              },
+              {
+                label: '강제 새로고침',
+                onClick: () => { void handleRefreshAll(); },
+                tone: 'default',
               },
               {
                 label: '모의투자 초기화',
@@ -459,13 +536,17 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
             <div className="page-section" style={{ padding: 16 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>엔진 상태 패널</div>
               <div style={{ marginTop: 10, display: 'grid', gap: 6, fontSize: 12, color: 'var(--text-3)' }}>
-                <div>상태: {engineState.running ? UI_TEXT.status.running : UI_TEXT.status.stopped}</div>
-                <div>상태 사유: {engineState.last_error ? '최근 오류 발생' : (engineState.running ? '정상 실행 중' : '대기 중')}</div>
+                <div>상태: {engineStateLabel(engineState.engine_state, engineState.running)}</div>
+                <div>상태 사유: {engineState.last_error ? '최근 오류 발생' : (engineState.running ? '정상 실행 중' : engineState.engine_state === 'paused' ? '일시정지' : '대기 중')}</div>
                 <div>최근 실행 시각: {formatDateTime(engineState.last_run_at)}</div>
+                <div>다음 실행 시각: {formatDateTime(engineState.next_run_at)}</div>
                 <div>최근 오류: {engineState.last_error || '-'}</div>
                 <div>
                   최근 실행 요약: 매수 {formatNumber(engineState.last_summary?.executed_buy_count, 0)}건 / 매도 {formatNumber(engineState.last_summary?.executed_sell_count, 0)}건
                 </div>
+                <div>today 주문(B/S/F): {formatNumber(engineState.today_order_counts?.buy, 0)} / {formatNumber(engineState.today_order_counts?.sell, 0)} / {formatNumber(engineState.today_order_counts?.failed, 0)}</div>
+                <div>today 실현손익: {formatKRW(engineState.today_realized_pnl, true)}</div>
+                <div>validation gate: {engineState.validation_policy?.validation_gate_enabled ? '활성' : '비활성'}</div>
               </div>
             </div>
 
@@ -484,35 +565,80 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
             <div className="page-section" style={{ padding: 16 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>최근 체결 내역</div>
               <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
-                {orders.slice(0, 10).map((order) => (
-                  <div key={order.order_id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '8px 10px', fontSize: 12 }}>
+                {mergedOrderHistory.slice(0, 12).map((order, index) => {
+                  const item = order as {
+                    order_id?: string;
+                    timestamp?: string;
+                    ts?: string;
+                    code?: string;
+                    name?: string;
+                    side?: string;
+                    quantity?: number;
+                    filled_price_local?: number;
+                    success?: boolean;
+                    failure_reason?: string;
+                  };
+                  const isSuccess = item.success !== false;
+                  return (
+                  <div key={item.order_id || `${item.code || 'order'}-${index}`} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: '8px 10px', fontSize: 12 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <span>{formatSymbol(order.code, order.name)}</span>
-                      <span style={{ color: order.side === 'buy' ? 'var(--up)' : 'var(--down)', fontWeight: 700 }}>
-                        {order.side === 'buy' ? '매수' : '매도'}
+                      <span>{formatSymbol(item.code, item.name)}</span>
+                      <span style={{ color: isSuccess ? (item.side === 'buy' ? 'var(--up)' : 'var(--down)') : 'var(--down)', fontWeight: 700 }}>
+                        {isSuccess ? (item.side === 'buy' ? '매수' : '매도') : '실패'}
                       </span>
                     </div>
                     <div style={{ marginTop: 4, color: 'var(--text-3)' }}>
-                      수량 {formatCount(order.quantity, '주')} · 체결가 {formatNumber(order.filled_price_local, 2)} · {formatDateTime(order.ts)}
+                      수량 {formatCount(item.quantity, '주')} · 체결가 {formatNumber(item.filled_price_local, 2)} · {formatDateTime(item.timestamp || item.ts)}
                     </div>
+                    {!isSuccess && (
+                      <div style={{ marginTop: 4, color: 'var(--down)' }}>실패 사유: {item.failure_reason || '-'}</div>
+                    )}
                   </div>
-                ))}
-                {orders.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{UI_TEXT.empty.noTrades}</div>}
+                );})}
+                {mergedOrderHistory.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{UI_TEXT.empty.noTrades}</div>}
               </div>
             </div>
 
             <div className="page-section" style={{ padding: 16 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>최근 엔진 이벤트 로그</div>
               <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
-                {Object.entries(skipReasonCounts).slice(0, 8).map(([reason, count]) => (
+                {Object.entries(skipReasonCounts).slice(0, 6).map(([reason, count]) => (
                   <div key={reason} style={{ fontSize: 12, color: 'var(--text-3)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 10px' }}>
                     {reason}: {formatCount(count, '건')}
                   </div>
                 ))}
+                {cycles.slice(0, 4).map((cycle, idx) => {
+                  const item = cycle as {
+                    cycle_id?: string;
+                    started_at?: string;
+                    finished_at?: string;
+                    executed_buy_count?: number;
+                    executed_sell_count?: number;
+                    error?: string;
+                  };
+                  return (
+                    <div key={item.cycle_id || `cycle-${idx}`} style={{ fontSize: 12, color: 'var(--text-3)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 10px' }}>
+                      <div>cycle: {item.cycle_id || '-'}</div>
+                      <div>시각: {formatDateTime(item.finished_at || item.started_at)}</div>
+                      <div>매수 {formatNumber(item.executed_buy_count, 0)} / 매도 {formatNumber(item.executed_sell_count, 0)}</div>
+                      {!!item.error && <div style={{ color: 'var(--down)' }}>오류: {item.error}</div>}
+                    </div>
+                  );
+                })}
                 {Object.keys(skipReasonCounts).length === 0 && (
                   <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{UI_TEXT.empty.noSkipReasons}</div>
                 )}
               </div>
+            </div>
+          </div>
+
+          <div className="page-section" style={{ padding: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>운영 로그 스냅샷</div>
+            <div style={{ marginTop: 10, display: 'grid', gap: 6, fontSize: 12, color: 'var(--text-3)' }}>
+              <div>cycle 로그: {formatCount(cycles.length, '건')}</div>
+              <div>주문 이벤트 로그: {formatCount(orderEvents.length, '건')}</div>
+              <div>계좌 스냅샷: {formatCount(accountHistory.length, '건')}</div>
+              <div>signal snapshot: {formatCount(signalSnapshots.length, '건')}</div>
             </div>
           </div>
 
