@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from app.modes import LIVE_DISABLED, SUPPORTED_MODES, normalize_mode
+from modes import LIVE_DISABLED, SUPPORTED_MODES, normalize_mode
 
 
 def get_mode_status() -> dict:

@@ -4,14 +4,14 @@ import os
 import threading
 from pathlib import Path
 
-from api.helpers import (
+from helpers import (
     _KST,
     _SUPPORTED_AUTO_TRADE_MARKETS,
     _now_iso,
     _send_paper_trade_notification,
 )
-from api.routes.market import _paper_fx_rate, _resolve_stock_quote
-from api.routes.watchlist import _compute_technical_snapshot
+from routes.market import _paper_fx_rate, _resolve_stock_quote
+from routes.watchlist import _compute_technical_snapshot
 from analyzer.shared_strategy import (
     build_strategy_profile,
     default_strategy_profile,

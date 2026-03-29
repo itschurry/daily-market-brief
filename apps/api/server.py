@@ -1,21 +1,18 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Callable
-from urllib.parse import parse_qs, urlparse
 
-from api.routes.backtest import handle_backtest_run, handle_kospi_backtest
-from api.routes.engine import handle_engine_status
-from api.routes.market import handle_live_market, handle_stock_price, handle_stock_search
-from api.routes.optimization import (
+from routes.backtest import handle_backtest_run, handle_kospi_backtest
+from routes.engine import handle_engine_status
+from routes.market import handle_live_market, handle_stock_price, handle_stock_search
+from routes.optimization import (
     handle_get_optimization_status,
     handle_get_optimized_params,
     handle_run_optimization,
 )
-from api.routes.portfolio import handle_portfolio_state
-from api.routes.reports import (
+from routes.portfolio import handle_portfolio_state
+from routes.reports import (
     handle_analysis,
     handle_compare,
     handle_macro,
@@ -25,9 +22,9 @@ from api.routes.reports import (
     handle_reports,
     handle_today_picks,
 )
-from api.routes.reports_domain import handle_reports_explain, handle_reports_index
-from api.routes.signals import handle_signal_detail, handle_signals_rank
-from api.routes.trading import (
+from routes.reports_domain import handle_reports_explain, handle_reports_index
+from routes.signals import handle_signal_detail, handle_signals_rank
+from routes.trading import (
     handle_paper_account,
     handle_paper_auto_invest,
     handle_paper_engine_start,
@@ -36,15 +33,13 @@ from api.routes.trading import (
     handle_paper_order,
     handle_paper_reset,
 )
-from api.routes.system import handle_system_mode
-from api.routes.validation import handle_validation_backtest, handle_validation_walk_forward
-from api.routes.watchlist import (
+from routes.system import handle_system_mode
+from routes.validation import handle_validation_backtest, handle_validation_walk_forward
+from routes.watchlist import (
     handle_watchlist_actions,
     handle_watchlist_get,
     handle_watchlist_save,
 )
-
-PORT = 8001
 
 QueryParams = dict[str, list[str]]
 JsonHandlerResult = tuple[int, dict]
@@ -136,50 +131,3 @@ def dispatch_post(path: str, payload: dict) -> JsonHandlerResult | None:
         if route.matches(path):
             return route.handler(path, payload)
     return None
-
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        result = dispatch_get(parsed.path, parse_qs(parsed.query))
-        if result is None:
-            self._json_resp(404, {})
-            return
-        status, body = result
-        self._json_resp(status, body)
-
-    def do_POST(self):
-        parsed = urlparse(self.path)
-        result = dispatch_post(parsed.path, self._read_json_body())
-        if result is None:
-            self._json_resp(404, {})
-            return
-        status, body = result
-        self._json_resp(status, body)
-
-    def _read_json_body(self) -> dict:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
-        payload = json.loads(raw or "{}")
-        return payload if isinstance(payload, dict) else {}
-
-    def _json_resp(self, status: int, data: dict):
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format, *args):
-        msg = format % args if args else format
-        if "/api/" in msg or "GET" in msg:
-            print(f"[{self.client_address[0]}] {msg}", flush=True)
-
-
-def run(host: str = "127.0.0.1", port: int = PORT):
-    server = HTTPServer((host, port), Handler)
-    print(f"API server running on {host}:{port}", flush=True)
-    server.serve_forever()

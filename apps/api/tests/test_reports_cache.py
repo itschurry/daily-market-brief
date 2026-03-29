@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import unittest
 
-from api.routes.reports import _get_cached_payload
+from routes.reports import _get_cached_payload
 
 
 class ReportsCacheHelperTests(unittest.TestCase):

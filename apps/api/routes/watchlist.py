@@ -5,10 +5,10 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import api.cache as _cache
-from api.helpers import _HEADERS, _KST, _get_kis_client, _parse_signed_number, _strip_html
-from api.routes.market import _overseas_exchange_candidates
-from api.routes.reports import (
+import cache as _cache
+from helpers import _HEADERS, _KST, _get_kis_client, _parse_signed_number, _strip_html
+from routes.market import _overseas_exchange_candidates
+from routes.reports import (
     _fallback_today_picks,
     _get_ai_signals,
     _get_recommendations,

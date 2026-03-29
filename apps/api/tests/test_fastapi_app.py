@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from api_server import app
 
 
 class FastApiAppTests(unittest.TestCase):
@@ -20,7 +20,7 @@ class FastApiAppTests(unittest.TestCase):
     def test_legacy_api_route_uses_dispatcher(self):
         client = TestClient(app)
 
-        with patch("app.routers.legacy_api.dispatch_get", return_value=(200, {"ok": True})) as mock_dispatch:
+        with patch("api_server.dispatch_get", return_value=(200, {"ok": True})) as mock_dispatch:
             response = client.get("/api/system/mode")
 
         self.assertEqual(200, response.status_code)

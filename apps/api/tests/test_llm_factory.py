@@ -5,7 +5,13 @@ import types
 import unittest
 from unittest.mock import MagicMock, patch
 
-sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None))
+sys.modules.setdefault(
+    "dotenv",
+    types.SimpleNamespace(
+        load_dotenv=lambda *args, **kwargs: None,
+        dotenv_values=lambda *args, **kwargs: {},
+    ),
+)
 
 import llm.factory as factory
 
@@ -26,9 +32,9 @@ class LLMFactoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "OPENAI_API_KEY"):
                 factory.get_provider()
 
-    def test_nemotron_uses_same_model_for_all_tasks(self):
-        with patch.object(factory, "LLM_PROVIDER", "nemotron"), \
-             patch.object(factory, "NEMOTRON_MODEL", "nemotron-3-super"):
+    def test_ollama_uses_same_model_for_all_tasks(self):
+        with patch.object(factory, "LLM_PROVIDER", "ollama"), \
+             patch.object(factory, "OLLAMA_MODEL", "nemotron-3-super"):
             self.assertEqual("nemotron-3-super", factory.get_model_for_task("report"))
             self.assertEqual("nemotron-3-super", factory.get_model_for_task("playbook"))
             self.assertEqual("nemotron-3-super", factory.get_model_for_task("signal"))

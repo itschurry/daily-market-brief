@@ -5,15 +5,15 @@ import asyncio
 from config.settings import OLLAMA_HOST
 
 
-class NemotronOllamaProvider:
-    name = "nemotron"
+class OllamaProvider:
+    name = "ollama"
 
     def __init__(self) -> None:
         try:
             from ollama import Client
         except ImportError as exc:  # pragma: no cover - dependency guard
             raise RuntimeError(
-                "Nemotron provider requires the 'ollama' Python package to be installed."
+                "Ollama provider requires the 'ollama' Python package to be installed."
             ) from exc
 
         try:
@@ -24,13 +24,13 @@ class NemotronOllamaProvider:
 
     def validate(self, models: list[str]) -> None:
         if not models:
-            raise ValueError("Nemotron provider validation requires at least one model.")
+            raise ValueError("Ollama provider validation requires at least one model.")
 
         try:
             listing = self._client.list()
         except Exception as exc:
             raise RuntimeError(
-                "Ollama daemon is not reachable. Start Ollama before using LLM_PROVIDER=nemotron."
+                "Ollama daemon is not reachable. Start Ollama before using LLM_PROVIDER=ollama."
             ) from exc
 
         available_models = self._extract_model_names(listing)

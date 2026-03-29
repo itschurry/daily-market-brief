@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from api.routes.reports import handle_analysis, handle_reports
+from routes.reports import handle_analysis, handle_reports
 from services.strategy_engine import build_signal_book
 
 

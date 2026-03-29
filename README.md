@@ -19,7 +19,7 @@
 - 로컬 개발: `venv` 기반 직접 실행
 - 배포: Docker `api + web`
 - `scheduler.py`: host/systemd 운영 유지
-- `LLM_PROVIDER=nemotron`: 호스트 Ollama 필요, API 컨테이너는 `OLLAMA_HOST` 로 접속
+- `LLM_PROVIDER=ollama`: 호스트 Ollama 필요, API 컨테이너는 `OLLAMA_HOST` 로 접속
 
 ## Local Development
 ```bash
@@ -56,19 +56,12 @@ cd apps/api
 python3 scheduler.py
 ```
 
-기존 루트 명령도 호환 래퍼로 유지됩니다.
-```bash
-python3 api_server.py
-python3 run_once.py
-python3 scheduler.py
-```
-
 ## Environment
 주요 설정은 `apps/api/.env.example` 을 기준으로 합니다.
 
-- `LLM_PROVIDER=openai|nemotron`
+- `LLM_PROVIDER=openai|ollama`
 - `OPENAI_API_KEY`
-- `NEMOTRON_MODEL`
+- `OLLAMA_MODEL`
 - `OLLAMA_HOST`
 - `REPORT_OUTPUT_DIR`
 - `LOGS_DIR`
@@ -94,10 +87,10 @@ docker compose ps
 ```bash
 curl http://localhost:8001/health
 curl -I http://localhost:8081
-curl http://localhost:8081/api/health
+curl http://localhost:8081/api/system/mode
 ```
 
-Nemotron 사용 시:
+Ollama 사용 시:
 - 배포 서버 호스트에 Ollama 설치 및 모델 pull
 - `OLLAMA_HOST=http://host.docker.internal:11434` 또는 서버 고정 호스트명 설정
 - Linux Docker에서는 compose의 `extra_hosts` 설정을 사용

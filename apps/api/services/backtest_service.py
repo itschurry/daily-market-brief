@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-import api.cache as _cache
+import cache as _cache
 from analyzer.candidate_selector import (
     normalize_candidate_selection_config,
     serialize_candidate_selection_config,
@@ -175,7 +175,7 @@ class BacktestService:
         result = self.run(config)
         if not _OPTIMIZED_PARAMS_PATH.exists():
             try:
-                from api.routes.optimization import handle_run_optimization
+                from routes.optimization import handle_run_optimization
 
                 _, optimization_payload = handle_run_optimization()
                 if isinstance(result, dict):

@@ -6,17 +6,17 @@ import types
 import unittest
 from unittest.mock import MagicMock
 
-from llm.providers.nemotron_ollama_provider import NemotronOllamaProvider
+from llm.providers.ollama_provider import OllamaProvider
 
 
-class NemotronOllamaProviderTests(unittest.TestCase):
+class OllamaProviderTests(unittest.TestCase):
     def test_validate_checks_model_presence(self):
         fake_client = MagicMock()
         fake_client.list.return_value = {"models": [{"name": "nemotron-3-super:latest"}]}
         fake_module = types.SimpleNamespace(Client=lambda: fake_client)
 
         with patch_modules(ollama=fake_module):
-            provider = NemotronOllamaProvider()
+            provider = OllamaProvider()
             provider.validate(["nemotron-3-super"])
 
         fake_client.list.assert_called_once_with()
@@ -27,7 +27,7 @@ class NemotronOllamaProviderTests(unittest.TestCase):
         fake_module = types.SimpleNamespace(Client=lambda: fake_client)
 
         with patch_modules(ollama=fake_module):
-            provider = NemotronOllamaProvider()
+            provider = OllamaProvider()
             content = asyncio.run(
                 provider.complete_json(
                     system_prompt="system",

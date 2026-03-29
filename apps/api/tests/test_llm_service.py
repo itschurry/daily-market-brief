@@ -16,7 +16,13 @@ class _DummyLogger:
         pass
 
 
-sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None))
+sys.modules.setdefault(
+    "dotenv",
+    types.SimpleNamespace(
+        load_dotenv=lambda *args, **kwargs: None,
+        dotenv_values=lambda *args, **kwargs: {},
+    ),
+)
 sys.modules.setdefault("loguru", types.SimpleNamespace(logger=_DummyLogger()))
 
 import llm.service as service
@@ -27,7 +33,7 @@ class LLMServiceTests(unittest.TestCase):
         provider = SimpleNamespace(complete_text=AsyncMock(return_value="hello world"))
 
         with patch("llm.service.get_model_for_task", return_value="nemotron-3-super"), \
-             patch("llm.service.get_provider_name", return_value="nemotron"), \
+             patch("llm.service.get_provider_name", return_value="ollama"), \
              patch("llm.service.validate_provider_models"), \
              patch("llm.service.get_provider", return_value=provider), \
              patch.object(service.logger, "info") as mock_info:
@@ -42,13 +48,13 @@ class LLMServiceTests(unittest.TestCase):
             )
 
         self.assertEqual("hello world", result.content)
-        self.assertEqual("nemotron", result.provider)
+        self.assertEqual("ollama", result.provider)
         self.assertEqual("nemotron-3-super", result.model)
         self.assertGreaterEqual(result.elapsed_ms, 0)
         provider.complete_text.assert_awaited_once()
         self.assertTrue(
             any(
-                call.args[:2] == ("LLM request start provider={} model={}", "nemotron")
+                call.args[:2] == ("LLM request start provider={} model={}", "ollama")
                 and call.args[2] == "nemotron-3-super"
                 for call in mock_info.call_args_list
             )

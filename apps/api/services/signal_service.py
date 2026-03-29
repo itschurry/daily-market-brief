@@ -6,7 +6,7 @@ from analyzer.candidate_selector import (
     normalize_candidate_selection_config,
     select_market_candidates,
 )
-from api.routes.reports import _get_recommendations, _get_today_picks
+from routes.reports import _get_recommendations, _get_today_picks
 
 DEFAULT_THEME_FOCUS = ["automotive", "robotics", "physical_ai"]
 _ALLOWED_THEME_FOCUS = set(DEFAULT_THEME_FOCUS)
