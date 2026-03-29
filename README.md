@@ -63,14 +63,16 @@ python3 scheduler.py
 - `OPENAI_API_KEY`
 - `OLLAMA_MODEL`
 - `OLLAMA_HOST`
-- `REPORT_OUTPUT_DIR`
-- `LOGS_DIR`
+- `REPORT_OUTPUT_DIR` (선택)
+- `LOGS_DIR` (선택)
 
 로컬 host-run 개발 기본값:
 - API: `http://127.0.0.1:8001`
 - Web dev: `http://127.0.0.1:5173`
 - Web prod: `http://127.0.0.1:8081`
 - Ollama: `http://127.0.0.1:11434`
+- Report output: `storage/reports`
+- Logs: `storage/logs`
 
 ## Docker Deployment
 API와 Web만 컨테이너로 운영합니다. `scheduler` 는 제외합니다.
@@ -82,6 +84,10 @@ cp apps/api/.env.example apps/api/.env
 docker compose up --build -d
 docker compose ps
 ```
+
+로컬에서 `python3 run_once.py` 또는 `python3 scheduler.py` 를 직접 실행할 때는
+`REPORT_OUTPUT_DIR`, `LOGS_DIR` 를 `.env` 에 넣지 않는 편이 안전합니다.
+비워두면 자동으로 `storage/reports`, `storage/logs` 를 사용합니다.
 
 검증:
 ```bash
