@@ -10,10 +10,12 @@ import datetime
 import itertools
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Any
 
 import numpy as np
 from loguru import logger
+from services.reliability_service import assess_validation_reliability
 
 
 @dataclass
@@ -65,8 +67,12 @@ class OptimizationResult:
     validation_trades: int = 0  # 검증 구간 진입 신호 수
     optimized_at: str = ""
     is_reliable: bool = False
+    strategy_reliability: str = "insufficient"
     # "passed", "insufficient_signals", "low_sharpe"
     reliability_reason: str = "unknown"
+    composite_score: float = 0.0
+    score_components: dict[str, float] = field(default_factory=dict)
+    tail_risk: dict[str, float] = field(default_factory=dict)
 
 
 # ============================================================
@@ -85,10 +91,35 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 # 검증 신뢰도 기준
 # ============================================================
 # - 훈련 구간 진입 필터 콤보 스킵 기준: 너무 희소한 진입 조건 제거
-# - 검증 구간 신뢰도는 _MIN_VALIDATION_SIGNALS 기준 사용 (별도 분리)
-_MIN_ENTRY_SIGNALS = 5        # 훈련 구간 진입 신호 최소값 (조건을 너무 좁히지 않도록)
-_MIN_VALIDATION_SIGNALS = 3   # 검증 구간 최소 신호 수 (단기 검증 구간 대응)
-_MIN_SHARPE_RELIABLE = 0.1    # Sharpe Ratio > 0.1일 때만 is_reliable=True
+# - 상세 reliability 기준은 services.reliability_service 에서 공통 관리한다.
+_MIN_ENTRY_SIGNALS = 15       # 훈련 구간 진입 신호 최소값
+_MIN_VALIDATION_SIGNALS = 8   # 검증 구간 최소 신호 수
+
+
+def _safe_pct(value: float) -> float:
+    """ratio(0~1)로 들어온 값을 percent(0~100)로 정규화한다."""
+    value_f = float(value)
+    if not isfinite(value_f):
+        return 0.0
+    if -1.0 <= value_f <= 1.0:
+        return value_f * 100.0
+    return value_f
+
+
+def _classify_reliability(
+    *,
+    trade_count: int,
+    validation_signals: int,
+    validation_sharpe: float,
+    max_drawdown_pct: float,
+) -> tuple[bool, str]:
+    assessment = assess_validation_reliability(
+        trade_count=trade_count,
+        validation_signals=validation_signals,
+        validation_sharpe=validation_sharpe,
+        max_drawdown_pct=max_drawdown_pct,
+    )
+    return assessment.is_reliable, assessment.reason
 
 
 def _compute_rsi(closes: np.ndarray, period: int = 14) -> np.ndarray:
@@ -357,75 +388,127 @@ def simulate_strategy(
     drawdowns = (p - cummax) / cummax
     max_dd = float(np.min(drawdowns)) * 100.0
 
+    exit_returns_pct = exit_returns * 100.0
+    return_p01_pct = float(np.percentile(exit_returns_pct, 1)) if len(exit_returns_pct) else 0.0
+    return_p05_pct = float(np.percentile(exit_returns_pct, 5)) if len(exit_returns_pct) else 0.0
+    tail_losses = exit_returns_pct[exit_returns_pct <= return_p05_pct] if len(exit_returns_pct) else np.array([])
+    expected_shortfall_5_pct = float(np.mean(tail_losses)) if len(tail_losses) else return_p05_pct
+    worst_case_return_pct = float(np.min(exit_returns_pct)) if len(exit_returns_pct) else 0.0
+    loss_rate_pct = _safe_pct(float(np.mean(exit_returns < 0))) if len(exit_returns) else 0.0
+
     return {
         "win_rate": win_rate,
+        "win_rate_pct": _safe_pct(win_rate),
         "avg_return_pct": avg_return,
+        "median_return_pct": float(np.median(exit_returns_pct)) if len(exit_returns_pct) else 0.0,
         "sharpe_ratio": sharpe,
         "max_drawdown_pct": max_dd,
         "avg_holding_days": avg_holding,
         "n_profitable": int(win_mask.sum()),
         "n_total": n_sim,
+        "return_p01_pct": return_p01_pct,
+        "return_p05_pct": return_p05_pct,
+        "expected_shortfall_5_pct": expected_shortfall_5_pct,
+        "worst_case_return_pct": worst_case_return_pct,
+        "loss_rate_pct": loss_rate_pct,
+    }
+
+
+def _tail_risk_snapshot(metrics: dict[str, float]) -> dict[str, float]:
+    return {
+        "median_return_pct": round(float(metrics.get("median_return_pct", 0.0) or 0.0), 4),
+        "return_p01_pct": round(float(metrics.get("return_p01_pct", 0.0) or 0.0), 4),
+        "return_p05_pct": round(float(metrics.get("return_p05_pct", 0.0) or 0.0), 4),
+        "expected_shortfall_5_pct": round(float(metrics.get("expected_shortfall_5_pct", 0.0) or 0.0), 4),
+        "worst_case_return_pct": round(float(metrics.get("worst_case_return_pct", 0.0) or 0.0), 4),
+        "loss_rate_pct": round(_safe_pct(metrics.get("loss_rate_pct", 0.0)), 4),
+    }
+
+
+def _compute_score_components(metrics: dict[str, float]) -> dict[str, float]:
+    """Sharpe 일변도 대신 구성 요소를 분리한 점수 카드."""
+    sharpe = float(metrics.get("sharpe_ratio", 0.0) or 0.0)
+    avg_return_pct = float(metrics.get("avg_return_pct", 0.0) or 0.0)
+    win_rate_pct = _safe_pct(metrics.get("win_rate_pct", metrics.get("win_rate", 0.0)))
+    trade_count = int(metrics.get("trade_count", 0) or 0)
+    max_dd = float(metrics.get("max_drawdown_pct", 0.0) or 0.0)
+    tail_risk = _tail_risk_snapshot(metrics)
+
+    sharpe_component = max(-24.0, min(55.0, sharpe * 22.0))
+    return_component = max(-16.0, min(28.0, avg_return_pct * 1.8))
+    win_rate_component = max(-15.0, min(15.0, (win_rate_pct - 50.0) * 0.7))
+
+    if trade_count >= 40:
+        sample_component = 10.0
+    elif trade_count >= 30:
+        sample_component = 5.0
+    elif trade_count >= 20:
+        sample_component = -4.0
+    else:
+        sample_component = -18.0
+
+    if max_dd < -30.0:
+        drawdown_component = -28.0
+    elif max_dd < -20.0:
+        drawdown_component = -16.0
+    elif max_dd < -12.0:
+        drawdown_component = -6.0
+    else:
+        drawdown_component = 4.0
+
+    if tail_risk["expected_shortfall_5_pct"] < -20.0 or tail_risk["return_p05_pct"] < -15.0:
+        tail_component = -26.0
+    elif tail_risk["expected_shortfall_5_pct"] < -14.0 or tail_risk["return_p05_pct"] < -10.0:
+        tail_component = -14.0
+    elif tail_risk["expected_shortfall_5_pct"] < -8.0 or tail_risk["return_p05_pct"] < -6.0:
+        tail_component = -6.0
+    else:
+        tail_component = 4.0
+
+    total_score = (
+        sharpe_component
+        + return_component
+        + win_rate_component
+        + sample_component
+        + drawdown_component
+        + tail_component
+    )
+
+    return {
+        "sharpe_component": round(sharpe_component, 2),
+        "return_component": round(return_component, 2),
+        "win_rate_component": round(win_rate_component, 2),
+        "sample_component": round(sample_component, 2),
+        "drawdown_component": round(drawdown_component, 2),
+        "tail_component": round(tail_component, 2),
+        "total_score": round(total_score, 2),
     }
 
 
 def _compute_composite_score(metrics: dict[str, float]) -> float:
     """
-    다중 지표 기반 복합 점수 계산 (Phase 3 - 최적화 목적함수 개선)
+    다중 지표 기반 복합 점수 계산 (Phase 4 - 분해 가능한 점수 카드)
 
-    목표: Sharpe만이 아니라 견고성(낙폭, 승률, 거래 수)도 함께 고려해서
-    과적합 가능성이 낮은 전략을 우선한다.
-
-    계산식:
-    - 기본 점수: sharpe_ratio * 100
-    - 낙폭 페널티: max_drawdown <= -30% 이면 -50점  
-    - 승률 보너스: win_rate >= 50% 이면 +20점
-    - 거래 수 요구: n_total < 30이면 -10점 (표본 부족)
+    목표: Sharpe만이 아니라 평균수익, 승률, 표본 수, drawdown, tail-risk를
+    별도 구성요소로 나눠서 과대해석을 줄인다.
     """
-    sharpe = metrics.get("sharpe_ratio", 0.0)
-    max_dd = metrics.get("max_drawdown_pct", 0.0)
-    win_rate = metrics.get("win_rate", 0.0)
-    n_total = int(metrics.get("n_total", 1))
-
-    score = sharpe * 100.0  # 기본: Sharpe 점수화
-
-    # 낙폭 페널티: -30% 초과는 크게 감점
-    if max_dd < -30.0:
-        score -= 50.0
-    elif max_dd < -20.0:
-        score -= 20.0
-
-    # 승률 보너스: 50% 이상이면 추가
-    if win_rate >= 50.0:
-        score += 20.0
-    elif win_rate >= 40.0:
-        score += 10.0
-
-    # 거래 표본 페널티: 너무 적으면 감점 (과적합 위험)
-    if n_total < 20:
-        score -= 10.0
-
-    return score
+    return _compute_score_components(metrics)["total_score"]
 
 
 def _should_use_result(result: OptimizationResult) -> bool:
     """
-    최적화 결과의 신뢰도 필터 (Phase 3)
+    최적화 결과의 신뢰도 필터 (Phase 4)
 
     자동 탈락 조건:
-    - validation_trades < _MIN_VALIDATION_SIGNALS (검증 신호 부족)
-    - validation_sharpe <= 0 (검증 구간에서 음수 Sharpe)
-    - max_drawdown_pct < -40% (과도한 낙폭)
-    - trade_count < 10 (훈련 구간 거래 표본 부족)
+    - 공통 reliability 최소 게이트 미통과
     """
-    if result.validation_trades < _MIN_VALIDATION_SIGNALS:
-        return False  # 검증 신호 부족
-    if result.validation_sharpe <= 0.0:
-        return False  # 검증 구간 부정적
-    if result.max_drawdown_pct < -40.0:
-        return False  # 과도한 낙폭
-    if result.trade_count < 10:
-        return False  # 훈련 표본 부족
-    return True
+    assessment = assess_validation_reliability(
+        trade_count=result.trade_count,
+        validation_signals=result.validation_trades,
+        validation_sharpe=result.validation_sharpe,
+        max_drawdown_pct=result.max_drawdown_pct,
+    )
+    return assessment.passes_minimum_gate
 
 
 def optimize_params(
@@ -547,8 +630,9 @@ def optimize_params(
                 continue
 
             metrics = simulate_strategy(train_paths, sl, tp, hd)
-            # Phase 3: Sharpe만이 아니라 다중 지표 복합 점수로 비교
-            composite_score = _compute_composite_score(metrics)
+            metrics["trade_count"] = int(len(entry_idx))
+            score_components = _compute_score_components(metrics)
+            composite_score = score_components["total_score"]
             if composite_score > best_score:
                 best_score = composite_score
                 best_params = {
@@ -566,7 +650,12 @@ def optimize_params(
                     "stoch_k_min": stoch_lo,
                     "stoch_k_max": stoch_hi,
                 }
-                best_metrics = metrics
+                best_metrics = {
+                    **metrics,
+                    "composite_score": composite_score,
+                    "score_components": score_components,
+                    "tail_risk": _tail_risk_snapshot(metrics),
+                }
 
     if not best_params:
         return None
@@ -585,12 +674,10 @@ def optimize_params(
     )
     val_entry_idx = np.where(val_entry_mask)[0]
     validation_signals = len(val_entry_idx)
-    reliability_reason = "passed"
 
     # 검증 구간 신호가 _MIN_VALIDATION_SIGNALS 미만이면 신뢰도 부족으로 처리
     if validation_signals < _MIN_VALIDATION_SIGNALS:
         validation_sharpe = 0.0
-        reliability_reason = "insufficient_signals"
     else:
         val_entry_returns = val_ret[val_entry_idx]
         val_paths = generate_price_paths(
@@ -604,8 +691,13 @@ def optimize_params(
             best_params["max_holding_days"],
         )
         validation_sharpe = val_metrics["sharpe_ratio"]
-        if validation_sharpe <= 0.1:
-            reliability_reason = "low_sharpe"
+
+    assessment = assess_validation_reliability(
+        trade_count=int(best_metrics.get("trade_count", 0)),
+        validation_signals=validation_signals,
+        validation_sharpe=validation_sharpe,
+        max_drawdown_pct=float(best_metrics.get("max_drawdown_pct", 0.0)),
+    )
 
     return OptimizationResult(
         symbol=symbol,
@@ -616,14 +708,17 @@ def optimize_params(
         avg_return_pct=best_metrics.get("avg_return_pct", 0.0),
         max_drawdown_pct=best_metrics.get("max_drawdown_pct", 0.0),
         avg_holding_days=best_metrics.get("avg_holding_days", 0.0),
-        trade_count=best_metrics.get("n_total", 0),
+        trade_count=best_metrics.get("trade_count", 0),
         validation_sharpe=validation_sharpe,
         validation_trades=validation_signals,
         optimized_at=datetime.datetime.now(
             datetime.timezone.utc).isoformat(timespec="seconds"),
-        is_reliable=(validation_sharpe >
-                     0.1 and validation_signals >= _MIN_VALIDATION_SIGNALS),
-        reliability_reason=reliability_reason,
+        is_reliable=assessment.is_reliable,
+        strategy_reliability=assessment.label,
+        reliability_reason=assessment.reason,
+        composite_score=float(best_metrics.get("composite_score", 0.0) or 0.0),
+        score_components=best_metrics.get("score_components", {}),
+        tail_risk=best_metrics.get("tail_risk", {}),
     )
 
 
@@ -671,12 +766,14 @@ def run_portfolio_optimization(
                 # Phase 3: 신뢰도 필터 적용
                 if _should_use_result(result):
                     filtered_results.append(result)
-                    logger.info("[{}/{}] {} ({}) — 샤프={:.2f}, VAL신호={}, 신뢰=✓",
+                    logger.info("[{}/{}] {} ({}) — 샤프={:.2f}, VAL신호={}, 신뢰={} / score={:.2f}",
                                 done, total, code, market,
-                                result.sharpe_ratio, result.validation_trades)
+                                result.sharpe_ratio, result.validation_trades,
+                                result.strategy_reliability, result.composite_score)
                 else:
-                    logger.info("[{}/{}] {} ({}) — 신뢰도 부족 (reason:{})",
-                                done, total, code, market, result.reliability_reason)
+                    logger.info("[{}/{}] {} ({}) — 신뢰도 부족 (label:{}, reason:{})",
+                                done, total, code, market,
+                                result.strategy_reliability, result.reliability_reason)
             else:
                 logger.info("[{}/{}] {} ({}) — 최적화 실패",
                             done, total, code, market)

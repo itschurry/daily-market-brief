@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from math import sqrt
+from math import floor, sqrt
 from typing import Any
 
 from services.backtest_service import get_backtest_service
+from services.reliability_service import classify_walk_forward_reliability
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -28,6 +29,7 @@ def _segment_metrics(equity_curve: list[dict[str, Any]], trades: list[dict[str, 
             "win_rate_pct": 0.0,
             "avg_win_pct": 0.0,
             "avg_loss_pct": 0.0,
+            "avg_trade_return_pct": 0.0,
             "turnover": 0.0,
             "exposure_pct": 0.0,
             "trade_count": 0,
@@ -75,6 +77,7 @@ def _segment_metrics(equity_curve: list[dict[str, Any]], trades: list[dict[str, 
 
     avg_win = (sum(wins) / len(wins)) if wins else 0.0
     avg_loss = (sum(losses) / len(losses)) if losses else 0.0
+    avg_trade_return = (sum(pnl_pct) / len(pnl_pct)) if pnl_pct else 0.0
     win_rate = (len(wins) / len(pnl_pct) * 100.0) if pnl_pct else 0.0
 
     turnover = len(trades) / max(1.0, years)
@@ -91,6 +94,7 @@ def _segment_metrics(equity_curve: list[dict[str, Any]], trades: list[dict[str, 
         "win_rate_pct": round(win_rate, 2),
         "avg_win_pct": round(avg_win, 2),
         "avg_loss_pct": round(avg_loss, 2),
+        "avg_trade_return_pct": round(avg_trade_return, 2),
         "turnover": round(turnover, 2),
         "exposure_pct": round(exposure_pct, 2),
         "trade_count": len(trades),
@@ -121,6 +125,154 @@ def _exit_reason_stats(trades: list[dict[str, Any]]) -> dict[str, dict[str, Any]
         del bucket["sum_pnl_pct"]
         del bucket["wins"]
     return stats
+
+
+def _walk_forward_positive_ratio(windows: list[dict[str, Any]]) -> float:
+    if not windows:
+        return 0.0
+    positive = sum(
+        1
+        for item in windows
+        if _to_float((item.get("metrics") or {}).get("total_return_pct"), 0.0) > 0.0
+    )
+    return positive / len(windows)
+
+
+def _percentile(values: list[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    pct = max(0.0, min(100.0, percentile)) / 100.0
+    position = (len(ordered) - 1) * pct
+    lower = int(floor(position))
+    upper = min(len(ordered) - 1, lower + 1)
+    weight = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * weight
+
+
+
+def _tail_risk_snapshot(trades: list[dict[str, Any]]) -> dict[str, float]:
+    pnl_pct = [
+        _to_float(trade.get("pnl_pct"))
+        for trade in trades
+        if trade.get("pnl_pct") is not None
+    ]
+    if not pnl_pct:
+        return {
+            "median_return_pct": 0.0,
+            "return_p01_pct": 0.0,
+            "return_p05_pct": 0.0,
+            "expected_shortfall_5_pct": 0.0,
+            "worst_case_return_pct": 0.0,
+            "loss_rate_pct": 0.0,
+        }
+
+    p05 = _percentile(pnl_pct, 5)
+    tail_bucket = [value for value in pnl_pct if value <= p05] or [p05]
+    losses = [value for value in pnl_pct if value < 0.0]
+    return {
+        "median_return_pct": round(_percentile(pnl_pct, 50), 4),
+        "return_p01_pct": round(_percentile(pnl_pct, 1), 4),
+        "return_p05_pct": round(p05, 4),
+        "expected_shortfall_5_pct": round(sum(tail_bucket) / len(tail_bucket), 4),
+        "worst_case_return_pct": round(min(pnl_pct), 4),
+        "loss_rate_pct": round((len(losses) / len(pnl_pct)) * 100.0, 4),
+    }
+
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+
+def _score_components(metrics: dict[str, Any], tail_risk: dict[str, float]) -> dict[str, float]:
+    sharpe = _to_float(metrics.get("sharpe"), 0.0)
+    avg_return_pct = _to_float(
+        metrics.get("avg_trade_return_pct", metrics.get("cagr_pct", metrics.get("total_return_pct", 0.0))),
+        0.0,
+    )
+    win_rate_pct = _to_float(metrics.get("win_rate_pct"), 0.0)
+    trade_count = int(metrics.get("trade_count", 0) or 0)
+    max_dd = _to_float(metrics.get("max_drawdown_pct"), 0.0)
+
+    sharpe_component = _clamp(sharpe * 22.0, -24.0, 55.0)
+    return_component = _clamp(avg_return_pct * 1.8, -16.0, 28.0)
+    win_rate_component = _clamp((win_rate_pct - 50.0) * 0.7, -15.0, 15.0)
+
+    if trade_count >= 40:
+        sample_component = 10.0
+    elif trade_count >= 30:
+        sample_component = 5.0
+    elif trade_count >= 20:
+        sample_component = -4.0
+    else:
+        sample_component = -18.0
+
+    if max_dd < -30.0:
+        drawdown_component = -28.0
+    elif max_dd < -20.0:
+        drawdown_component = -16.0
+    elif max_dd < -12.0:
+        drawdown_component = -6.0
+    else:
+        drawdown_component = 4.0
+
+    if tail_risk["expected_shortfall_5_pct"] < -20.0 or tail_risk["return_p05_pct"] < -15.0:
+        tail_component = -26.0
+    elif tail_risk["expected_shortfall_5_pct"] < -14.0 or tail_risk["return_p05_pct"] < -10.0:
+        tail_component = -14.0
+    elif tail_risk["expected_shortfall_5_pct"] < -8.0 or tail_risk["return_p05_pct"] < -6.0:
+        tail_component = -6.0
+    else:
+        tail_component = 4.0
+
+    total_score = (
+        sharpe_component
+        + return_component
+        + win_rate_component
+        + sample_component
+        + drawdown_component
+        + tail_component
+    )
+    return {
+        "sharpe_component": round(sharpe_component, 2),
+        "return_component": round(return_component, 2),
+        "win_rate_component": round(win_rate_component, 2),
+        "sample_component": round(sample_component, 2),
+        "drawdown_component": round(drawdown_component, 2),
+        "tail_component": round(tail_component, 2),
+        "total_score": round(total_score, 2),
+    }
+
+
+
+def _build_strategy_scorecard(metrics: dict[str, Any], trades: list[dict[str, Any]]) -> dict[str, Any]:
+    tail_risk = _tail_risk_snapshot(trades)
+    components = _score_components(metrics, tail_risk)
+    return {
+        "composite_score": components.get("total_score", 0.0),
+        "components": components,
+        "tail_risk": tail_risk,
+    }
+
+
+
+def _classify_walk_forward_reliability(
+    oos_metrics: dict[str, Any],
+    *,
+    positive_window_ratio: float,
+) -> str:
+    assessment = classify_walk_forward_reliability(
+        trade_count=int(oos_metrics.get("trade_count", 0) or 0),
+        profit_factor=_to_float(oos_metrics.get("profit_factor"), 0.0),
+        sharpe=_to_float(oos_metrics.get("sharpe"), 0.0),
+        total_return_pct=_to_float(oos_metrics.get("total_return_pct"), 0.0),
+        positive_window_ratio=positive_window_ratio,
+    )
+    return assessment.label
 
 
 def _regime_stats_from_curve(equity_curve: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -165,6 +317,7 @@ def run_backtest_with_extended_metrics(query: dict[str, list[str]]) -> dict[str,
     payload["metrics"].update(_segment_metrics(equity_curve, trades))
     payload["metrics"]["exit_reason_stats"] = _exit_reason_stats(trades)
     payload["metrics"]["regime_stats"] = _regime_stats_from_curve(equity_curve)
+    payload["scorecard"] = _build_strategy_scorecard(payload["metrics"], trades)
     return payload
 
 
@@ -213,14 +366,18 @@ def run_walk_forward_validation(query: dict[str, list[str]]) -> dict[str, Any]:
             }
         )
 
+    train_metrics = _segment_metrics(train_curve, train_trades)
+    validation_metrics = _segment_metrics(validation_curve, val_trades)
     oos_metrics = _segment_metrics(oos_curve, oos_trades)
+    train_scorecard = _build_strategy_scorecard(train_metrics, train_trades)
+    validation_scorecard = _build_strategy_scorecard(validation_metrics, val_trades)
+    oos_scorecard = _build_strategy_scorecard(oos_metrics, oos_trades)
     positive_oos_windows = sum(1 for item in windows if _to_float((item.get("metrics") or {}).get("total_return_pct"), 0.0) > 0)
-
-    reliability = "low"
-    if oos_metrics.get("trade_count", 0) >= 15 and oos_metrics.get("profit_factor", 0.0) >= 1.2:
-        reliability = "high"
-    elif oos_metrics.get("trade_count", 0) >= 8 and oos_metrics.get("profit_factor", 0.0) >= 1.0:
-        reliability = "medium"
+    positive_window_ratio = round(_walk_forward_positive_ratio(windows), 4)
+    reliability = _classify_walk_forward_reliability(
+        oos_metrics,
+        positive_window_ratio=positive_window_ratio,
+    )
 
     return {
         "ok": True,
@@ -233,16 +390,19 @@ def run_walk_forward_validation(query: dict[str, list[str]]) -> dict[str, Any]:
             },
         },
         "segments": {
-            "train": _segment_metrics(train_curve, train_trades),
-            "validation": _segment_metrics(validation_curve, val_trades),
-            "oos": oos_metrics,
+            "train": {**train_metrics, "strategy_scorecard": train_scorecard},
+            "validation": {**validation_metrics, "strategy_scorecard": validation_scorecard},
+            "oos": {**oos_metrics, "strategy_scorecard": oos_scorecard},
         },
         "rolling_windows": windows,
         "summary": {
             "windows": len(windows),
             "positive_windows": positive_oos_windows,
+            "positive_window_ratio": positive_window_ratio,
             "oos_reliability": reliability,
+            "composite_score": oos_scorecard.get("composite_score"),
             "exit_reason_stats": _exit_reason_stats(trades),
             "regime_stats": _regime_stats_from_curve(equity_curve),
         },
+        "scorecard": oos_scorecard,
     }
