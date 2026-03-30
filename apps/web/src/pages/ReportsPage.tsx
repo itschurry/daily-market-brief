@@ -45,6 +45,15 @@ function persistActionBoardState(done: Record<string, boolean>, custom: CustomCh
   localStorage.setItem(ACTION_BOARD_STATE_KEY, JSON.stringify({ done, custom }));
 }
 
+function renderIndexedBriefItems(lines: string[], keyPrefix: string) {
+  return lines.map((line, index) => (
+    <div key={`${keyPrefix}-${index}`} className="report-brief-item">
+      <span className="report-brief-index">{index + 1}</span>
+      <span>{line}</span>
+    </div>
+  ));
+}
+
 function reportCauseCard(onRefresh: () => void, errorMessage: string) {
   return (
     <div className="console-error-card" role="alert">
@@ -155,18 +164,14 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
         <div className="page-section" style={{ padding: 16 }}>
           <div className="section-title">시장 3줄 요약</div>
           <div className="report-brief-list is-compact">
-            {view.summaryLines.map((line, index) => (
-              <div key={`summary-${index}`} className="report-brief-item">{line}</div>
-            ))}
+            {renderIndexedBriefItems(view.summaryLines, 'summary')}
           </div>
         </div>
 
         <div className="page-section" style={{ padding: 16 }}>
           <div className="section-title">판단 근거</div>
           <div className="report-brief-list is-compact">
-            {view.judgmentLines.map((line, index) => (
-              <div key={`judgment-${index}`} className="report-brief-item">{line}</div>
-            ))}
+            {renderIndexedBriefItems(view.judgmentLines, 'judgment')}
           </div>
         </div>
       </div>
@@ -245,12 +250,10 @@ function renderActionBoard(
         <div className="report-hero-copy">완료 여부만 빠르게 체크하고, 필요한 운영 항목만 추가합니다.</div>
       </div>
 
-      <div className="page-section" style={{ padding: 16 }}>
+      <div className="page-section report-rules-card" style={{ padding: 16 }}>
         <div className="section-title">기본 운영 규칙</div>
         <div className="report-brief-list is-compact">
-          {view.rules.map((rule, index) => (
-            <div key={`rule-${index}`} className="report-brief-item">{rule}</div>
-          ))}
+          {renderIndexedBriefItems(view.rules, 'rule')}
         </div>
       </div>
 
@@ -354,12 +357,10 @@ function renderWatchDecision(snapshot: ConsoleSnapshot) {
         </div>
       </div>
 
-      <div className="page-section" style={{ padding: 16 }}>
+      <div className="page-section report-rationale-card" style={{ padding: 16 }}>
         <div className="section-title">판단 근거</div>
         <div className="report-brief-list is-compact">
-          {view.rationale.map((line, index) => (
-            <div key={`rationale-${index}`} className="report-brief-item">{line}</div>
-          ))}
+          {renderIndexedBriefItems(view.rationale, 'rationale')}
         </div>
       </div>
     </div>
