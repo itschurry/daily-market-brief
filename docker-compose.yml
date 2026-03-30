@@ -1,15 +1,15 @@
 services:
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/api/Dockerfile
     ports:
       - "8001:8001"
     volumes:
       - ./storage/reports:/reports
       - ./storage/logs:/logs
     environment:
-      PYTHONPATH: /app
+      PYTHONPATH: /app/apps/api
       REPORT_OUTPUT_DIR: /reports
       LOGS_DIR: /logs
       PAPER_TRADING_STATE_PATH: /logs/paper_account_state.json

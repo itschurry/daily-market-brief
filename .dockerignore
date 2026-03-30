@@ -1,0 +1,10 @@
+.git
+.github
+.venv
+storage
+apps/api/.env
+apps/web/node_modules
+apps/web/dist
+apps/web/.vite
+**/__pycache__
+**/*.pyc
