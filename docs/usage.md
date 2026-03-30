@@ -55,26 +55,34 @@
 
 ## 3. 스크린샷
 
-현재 저장소에는 실제 운영 화면 캡처가 없어서, 아래 이미지는 **문서용 플레이스홀더**로 추가해뒀어.
-실제 스크린샷이 생기면 같은 경로 파일만 교체하면 문서가 그대로 살아.
+아래 이미지는 로컬 실행 환경에서 실제 렌더링한 화면 캡처입니다.
+문서 설명용으로 대표 화면 3장을 넣었습니다.
 
-### 3-1. 대시보드 예시
+### 3-1. 개요 대시보드
 
-![대시보드 플레이스홀더](./assets/screenshot-dashboard-placeholder.svg)
+![개요 대시보드](./assets/screenshots/overview.png)
 
-### 3-2. 리포트 상세 화면 예시
+- 콘솔 진입 후 시스템 개요, 엔진 요약, 리스크 가드 상태를 보는 화면
+- 운영 상태를 한 장에서 빠르게 점검할 때 쓰기 좋음
 
-![리포트 화면 플레이스홀더](./assets/screenshot-report-placeholder.svg)
+### 3-2. 오늘 리포트 화면
 
-### 3-3. 모의투자 엔진 화면 예시
+![오늘 리포트 화면](./assets/screenshots/report.png)
 
-![모의투자 엔진 플레이스홀더](./assets/screenshot-paper-engine-placeholder.svg)
+- 오늘 결론, 실행 액션, 금지/회피 포인트, 참고 근거를 읽는 화면
+- 아침 브리핑이나 운영 전 점검용 화면으로 적합
 
-> 실제 캡처로 교체 추천 경로
+### 3-3. 모의투자 운영 화면
+
+![모의투자 운영 화면](./assets/screenshots/paper.png)
+
+- 엔진 시작/정지, 위험 상태, 현금/자산 상태, 당일 주문/체결 결과를 보는 화면
+- 운영 제어와 상태 점검을 같이 처리하는 핵심 화면
+
+> 참고
 >
-> - `docs/assets/screenshot-dashboard-placeholder.svg`
-> - `docs/assets/screenshot-report-placeholder.svg`
-> - `docs/assets/screenshot-paper-engine-placeholder.svg`
+> - 실제 PNG 캡처는 `docs/assets/screenshots/` 아래에 저장됨
+> - 기존 SVG 플레이스홀더는 문서 목업/대체 이미지 용도로 유지함
 
 ---
 
