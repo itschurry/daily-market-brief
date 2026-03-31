@@ -12,6 +12,15 @@ if str(ROOT) not in sys.path:
 if "config.settings" not in sys.modules:
     settings_stub = types.ModuleType("config.settings")
     settings_stub.REPORT_OUTPUT_DIR = Path("/tmp")
+    settings_stub.API_DIR = ROOT
+    settings_stub.BASE_DIR = ROOT.parent
+    settings_stub.LLM_PROVIDER = "openai"
+    settings_stub.OPENAI_API_KEY = "test-key"
+    settings_stub.OPENAI_MODEL = "gpt-4o-mini"
+    settings_stub.OPENAI_PLAYBOOK_MODEL = "gpt-4o-mini"
+    settings_stub.OPENAI_SIGNAL_MODEL = "gpt-4o-mini"
+    settings_stub.OLLAMA_MODEL = "llama3"
+    settings_stub.OLLAMA_HOST = "http://localhost:11434"
     sys.modules["config.settings"] = settings_stub
 
 if "broker.kis_client" not in sys.modules:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,6 +11,15 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+if "config.settings" not in sys.modules:
+    settings_stub = types.ModuleType("config.settings")
+    settings_stub.API_DIR = ROOT
+    settings_stub.BASE_DIR = ROOT.parent
+    settings_stub.REPORT_OUTPUT_DIR = Path("/tmp")
+    settings_stub.RECOMMENDATIONS_OUTPUT_DIR = Path("/tmp")
+    settings_stub.TODAY_PICKS_OUTPUT_DIR = Path("/tmp")
+    sys.modules["config.settings"] = settings_stub
 
 from routes.reports import _fallback_today_picks, _map_strategy_signal
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import types
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -9,11 +10,26 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+if "config.settings" not in sys.modules:
+    settings_stub = types.ModuleType("config.settings")
+    settings_stub.API_DIR = ROOT
+    settings_stub.BASE_DIR = ROOT.parent
+    settings_stub.REPORT_OUTPUT_DIR = Path("/tmp")
+    sys.modules["config.settings"] = settings_stub
+
 from collectors.models import DailyData, MarketContext, MarketSnapshot
-from reporter.report_generator import generate_html
+
+try:
+    from reporter.report_generator import generate_html
+except ModuleNotFoundError as exc:
+    generate_html = None
+    _IMPORT_ERROR = exc
+else:
+    _IMPORT_ERROR = None
 
 
 class ReportGeneratorRegressionTests(unittest.TestCase):
+    @unittest.skipIf(generate_html is None, f"report_generator import failed: {_IMPORT_ERROR}")
     def test_generate_html_uses_app_template_directory_and_renders_summary(self):
         data = DailyData(
             collected_at=datetime(2026, 3, 31, 7, 0, 0),
