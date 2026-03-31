@@ -96,7 +96,9 @@ curl -X POST http://127.0.0.1:8001/api/paper/engine/start \
 ## 문서
 
 - 상세 사용 매뉴얼: [`docs/usage.md`](docs/usage.md)
-- 사용 매뉴얼 내 포함: 기능 소개 / 스크린샷 플레이스홀더 / 아키텍처 다이어그램
+- API 문서: [`docs/api.md`](docs/api.md)
+- 웹 UI 사용 매뉴얼: [`docs/ui-manual.md`](docs/ui-manual.md)
+- 사용 매뉴얼 내 포함: 기능 소개 / 실제 스크린샷 / 아키텍처 다이어그램
 - 최근 신뢰도 기준선 문서: [`docs/quant-reliability-baseline-2026-03-31.md`](docs/quant-reliability-baseline-2026-03-31.md)
 
 ## 환경 변수 핵심

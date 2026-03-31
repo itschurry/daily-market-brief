@@ -602,7 +602,15 @@ compose가 `/reports`, `/logs` 로 override 하므로 로컬 경로와 컨테이
 
 ---
 
-## 19. 추천 실행 순서
+## 19. 관련 문서
+
+- API 문서: [`api.md`](./api.md)
+- 웹 UI 사용 매뉴얼: [`ui-manual.md`](./ui-manual.md)
+- 신뢰도 기준선 문서: [`quant-reliability-baseline-2026-03-31.md`](./quant-reliability-baseline-2026-03-31.md)
+
+---
+
+## 20. 추천 실행 순서
 
 처음 세팅할 때 무난한 순서:
 
@@ -639,3 +647,7 @@ cp apps/api/.env.example apps/api/.env
 
 docker compose up -d --build
 ```
+
+---
+
+추가 API 호출 예시와 엔드포인트 설명은 [`api.md`](./api.md) 참고.
