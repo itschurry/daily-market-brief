@@ -179,6 +179,40 @@ class QuantOpsWorkflowTests(unittest.TestCase):
         self.assertTrue(self.state_path.exists())
         self.assertIn("symbol_candidates", result["workflow"])
 
+    def test_optimizer_handoff_promotes_latest_candidate_from_search(self):
+        payload = {
+            "query": {
+                "market_scope": "nasdaq",
+                "lookback_days": 365,
+                "stop_loss_pct": 4.5,
+                "take_profit_pct": 11.0,
+            },
+            "settings": {
+                "strategy": "자동 handoff 전략",
+                "trainingDays": 200,
+                "validationDays": 50,
+                "walkForward": True,
+                "minTrades": 8,
+            },
+        }
+
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \
+             patch.object(svc, "load_runtime_optimized_params", return_value=None), \
+             patch.object(svc, "run_validation_diagnostics", return_value=_adopt_diagnostics()):
+            registered = svc.register_optimizer_search_handoff(payload)
+            result = svc.finalize_optimizer_search_handoff(success=True)
+            workflow = svc.get_quant_ops_workflow()
+
+        self.assertIsNotNone(registered)
+        self.assertTrue(result["ok"])
+        self.assertEqual("candidate_updated", result["handoff"]["status"])
+        self.assertEqual("adopt", result["candidate"]["decision"]["status"])
+        self.assertEqual(self.search_payload["version"], result["candidate"]["search_version"])
+        self.assertEqual("candidate_updated", workflow["search_handoff"]["status"])
+        self.assertEqual(self.search_payload["version"], workflow["latest_candidate"]["search_version"])
+        self.assertEqual("adopt", workflow["stage_status"]["revalidation"])
+
     def test_save_blocks_when_revalidation_failed_guardrails(self):
         with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
              patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \

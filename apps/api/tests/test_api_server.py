@@ -26,7 +26,7 @@ def _install_server_route_stubs() -> None:
         "routes.optimization": {
             "handle_get_optimization_status": lambda: (200, {"ok": True}),
             "handle_get_optimized_params": lambda: (200, {"ok": True}),
-            "handle_run_optimization": lambda: (200, {"ok": True}),
+            "handle_run_optimization": lambda payload=None: (200, {"ok": True, "payload": payload}),
         },
         "routes.portfolio": {"handle_portfolio_state": lambda refresh=True: (200, {"refresh": refresh})},
         "routes.quant_ops": {
@@ -125,6 +125,14 @@ class ApiServerDispatchTests(unittest.TestCase):
 
         self.assertEqual((200, {"stopped": True}), result)
         mock_handler.assert_called_once_with()
+
+    def test_dispatch_post_routes_run_optimization_payload(self):
+        with patch("server.handle_run_optimization", return_value=(200, {"status": "started"})) as mock_handler:
+            payload = {"query": {"market_scope": "nasdaq"}, "settings": {"trainingDays": 180}}
+            result = dispatch_post("/api/run-optimization", payload)
+
+        self.assertEqual((200, {"status": "started"}), result)
+        mock_handler.assert_called_once_with(payload)
 
     def test_dispatch_get_routes_system_mode(self):
         with patch("server.handle_system_mode", return_value=(200, {"ok": True, "current_mode": "paper"})) as mock_handler:

@@ -64,6 +64,8 @@ def _load_state() -> dict[str, Any]:
             "saved_candidate": None,
             "saved_history": [],
             "runtime_apply": None,
+            "pending_search_handoff": None,
+            "last_search_handoff": None,
             "latest_symbol_candidates": {},
             "symbol_candidate_history": {},
             "symbol_approvals": {},
@@ -109,6 +111,7 @@ def _search_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
     global_params = payload.get("global_params") if isinstance(payload.get("global_params"), dict) else {}
     per_symbol = payload.get("per_symbol") if isinstance(payload.get("per_symbol"), dict) else {}
     optimized_at = str(payload.get("optimized_at") or "")
+    search_context = meta.get("search_context") if isinstance(meta.get("search_context"), dict) else {}
     return {
         "available": bool(payload),
         "version": str(payload.get("version") or optimized_at or "not_optimized"),
@@ -121,6 +124,7 @@ def _search_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
         "n_reliable": _to_int(meta.get("n_reliable"), 0),
         "n_medium": _to_int(meta.get("n_medium"), 0),
         "global_overlay_source": meta.get("global_overlay_source"),
+        "context": search_context,
         "source": str(SEARCH_OPTIMIZED_PARAMS_PATH),
     }
 
@@ -612,6 +616,7 @@ def get_quant_ops_workflow() -> dict[str, Any]:
         search_items,
     )
     runtime_apply = _runtime_summary(load_runtime_optimized_params(), state.get("runtime_apply"))
+    search_handoff = state.get("pending_search_handoff") if isinstance(state.get("pending_search_handoff"), dict) else state.get("last_search_handoff")
 
     stage_status = {
         "candidate_search": "ready" if search.get("available") else "missing",
@@ -634,12 +639,102 @@ def get_quant_ops_workflow() -> dict[str, Any]:
         "latest_symbol_candidates": refreshed_latest_symbols,
         "saved_symbol_candidates": refreshed_saved_symbols,
         "runtime_apply": runtime_apply,
+        "search_handoff": search_handoff,
         "stage_status": stage_status,
         "notes": [
             "optimizer 결과는 후보 탐색용이고, latest_candidate는 재검증이 끝난 운영 후보입니다.",
             "saved_candidate는 재검증 통과 후 저장된 스냅샷이고, runtime_apply는 실제 런타임에 적용된 상태입니다.",
             "symbol_candidates는 종목별 탐색/재검증/승인/저장/반영 상태를 분리해서 보여줍니다.",
         ],
+    }
+
+
+def _sanitize_search_handoff_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    query = payload.get("query") if isinstance(payload.get("query"), dict) else {}
+    settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+    if not query or not settings:
+        return None
+    return {
+        "query": copy.deepcopy(query),
+        "settings": copy.deepcopy(settings),
+    }
+
+
+def register_optimizer_search_handoff(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    handoff = _sanitize_search_handoff_payload(payload)
+    if not handoff:
+        return None
+    state = _load_state()
+    state["pending_search_handoff"] = {
+        **handoff,
+        "requested_at": _now_iso(),
+        "status": "pending",
+    }
+    _save_state(state)
+    return state["pending_search_handoff"]
+
+
+def _finalize_search_handoff_record(
+    pending: dict[str, Any],
+    *,
+    status: str,
+    error: str = "",
+    candidate: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    state = _load_state()
+    finalized = {
+        **copy.deepcopy(pending),
+        "completed_at": _now_iso(),
+        "status": status,
+        "error": error,
+    }
+    if isinstance(candidate, dict):
+        decision = candidate.get("decision") if isinstance(candidate.get("decision"), dict) else {}
+        finalized.update({
+            "candidate_id": str(candidate.get("id") or ""),
+            "search_version": str(candidate.get("search_version") or ""),
+            "decision_status": str(decision.get("status") or ""),
+            "decision_label": str(decision.get("label") or ""),
+        })
+    state["pending_search_handoff"] = None
+    state["last_search_handoff"] = finalized
+    _save_state(state)
+    return finalized
+
+
+def finalize_optimizer_search_handoff(*, success: bool, error: str = "") -> dict[str, Any] | None:
+    state = _load_state()
+    pending = state.get("pending_search_handoff") if isinstance(state.get("pending_search_handoff"), dict) else None
+    if not pending:
+        return None
+    if not success:
+        finalized = _finalize_search_handoff_record(pending, status="optimizer_failed", error=error)
+        return {
+            "ok": False,
+            "error": error or "optimizer_failed",
+            "handoff": finalized,
+            "workflow": get_quant_ops_workflow(),
+        }
+
+    result = revalidate_optimizer_candidate({
+        "query": pending.get("query") if isinstance(pending.get("query"), dict) else {},
+        "settings": pending.get("settings") if isinstance(pending.get("settings"), dict) else {},
+    })
+    candidate = result.get("candidate") if isinstance(result.get("candidate"), dict) else None
+    finalized = _finalize_search_handoff_record(
+        pending,
+        status="candidate_updated" if result.get("ok") else "revalidate_failed",
+        error=str(result.get("error") or error or ""),
+        candidate=candidate,
+    )
+    return {
+        "ok": bool(result.get("ok")),
+        "error": str(result.get("error") or error or ""),
+        "handoff": finalized,
+        "candidate": candidate,
+        "workflow": result.get("workflow"),
     }
 
 

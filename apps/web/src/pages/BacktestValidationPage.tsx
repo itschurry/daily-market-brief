@@ -571,10 +571,27 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
 
   const workflowPayload = quantWorkflow.workflow;
   const searchResult = workflowPayload?.search_result || null;
+  const searchHandoff = workflowPayload?.search_handoff || null;
   const latestValidatedCandidate = workflowPayload?.latest_candidate || null;
   const savedValidatedCandidate = workflowPayload?.saved_candidate || null;
   const symbolCandidates = workflowPayload?.symbol_candidates || [];
   const runtimeApplyState = workflowPayload?.runtime_apply || null;
+  const latestCandidateMatchesSearch = Boolean(
+    searchResult?.available
+    && latestValidatedCandidate?.search_version
+    && latestValidatedCandidate.search_version === searchResult?.version,
+  );
+  const searchContextLabel = useMemo(() => {
+    const context = searchResult?.context;
+    if (!context) return '';
+    const parts = [
+      context.market ? `시장 ${String(context.market).toUpperCase()}` : '',
+      context.lookback_days ? `학습 ${formatCount(context.lookback_days, '일')}` : '',
+      context.validation_days ? `검증 ${formatCount(context.validation_days, '일')}` : '',
+      context.top_n ? `상위 ${formatCount(context.top_n, '종목')}` : '',
+    ].filter(Boolean);
+    return parts.join(' · ');
+  }, [searchResult?.context]);
   const [selectedSymbol, setSelectedSymbol] = useState('');
   const selectedSymbolWorkflow = useMemo(
     () => symbolCandidates.find((item) => String(item.symbol || '') === selectedSymbol) || symbolCandidates[0] || null,
@@ -812,20 +829,35 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
         setOptimizationRunning(false);
         setOptimizationPhase('success');
         setOptimizationUpdatedAt(nowIso());
-        setOptimizationMessage('최적화가 완료되었습니다. 최신 파라미터를 확인하세요.');
         if (paramsPayload.status === 'ok') setOptimizedParams(paramsPayload);
-        void quantWorkflow.refresh();
-        push('success', '최적화가 완료되었습니다.', '결과 카드가 갱신되었습니다.', 'optimization');
+        const workflowResult = await quantWorkflow.refresh();
+        const handoffMatched = Boolean(
+          workflowResult?.search_result?.version
+          && workflowResult?.latest_candidate?.search_version
+          && workflowResult.search_result.version === workflowResult.latest_candidate.search_version,
+        );
+        const handoffLabel = workflowResult?.latest_candidate?.decision?.label || '후보 미갱신';
+        setOptimizationMessage(
+          handoffMatched
+            ? `최적화와 후보 handoff가 완료되었습니다. ${handoffLabel}`
+            : '최적화가 완료되었습니다. 최신 탐색 결과를 확인하세요.',
+        );
+        push(
+          'success',
+          handoffMatched ? '최적화와 후보 handoff가 완료되었습니다.' : '최적화가 완료되었습니다.',
+          handoffMatched ? `${handoffLabel} · 저장 가능 여부를 바로 확인하세요.` : '결과 카드가 갱신되었습니다.',
+          'optimization',
+        );
         pushToast({
           tone: 'success',
-          title: '최적화 완료',
-          description: '최신 파라미터와 상태 카드가 갱신되었습니다.',
+          title: handoffMatched ? '최적화 + 후보 갱신 완료' : '최적화 완료',
+          description: handoffMatched ? `${handoffLabel} 상태로 latest candidate를 갱신했습니다.` : '최신 파라미터와 상태 카드가 갱신되었습니다.',
         });
         const historyItem: OptimizationHistoryItem = {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           at: nowIso(),
           status: '완료',
-          message: '백그라운드 최적화 완료',
+          message: handoffMatched ? '백그라운드 최적화 완료 · 후보 handoff 완료' : '백그라운드 최적화 완료',
         };
         updateOptimizationHistory([historyItem, ...optimizationHistory].slice(0, 30));
       } catch {
@@ -842,7 +874,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       }
     }, 8_000);
     return () => window.clearInterval(timer);
-  }, [optimizationHistory, optimizationRunning, push, pushToast, updateOptimizationHistory]);
+  }, [optimizationHistory, optimizationRunning, push, pushToast, quantWorkflow, updateOptimizationHistory]);
 
   const refreshValidationResult = useCallback(async (query: BacktestQuery, settings: ValidationStoreSnapshot['savedSettings']) => {
     try {
@@ -1087,19 +1119,22 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     setOptimizationMessage('최적화 요청을 전송하고 있습니다.');
 
     try {
-      const response = await postJSON<{ status?: string; error?: string }>('/api/run-optimization');
+      const response = await postJSON<{ status?: string; error?: string }>('/api/run-optimization', {
+        query: validationStore.savedQuery,
+        settings: validationStore.savedSettings,
+      });
       const payload = response.data;
 
       if (payload.status === 'started' || payload.status === 'already_running') {
         const alreadyRunning = payload.status === 'already_running';
         setOptimizationRunning(true);
         setOptimizationPhase(alreadyRunning ? 'running' : 'queued');
-        setOptimizationMessage(alreadyRunning ? '이미 실행 중인 최적화 작업을 추적합니다.' : '최적화가 큐에 등록되었습니다.');
-        push('info', alreadyRunning ? '퀀트 최적화가 이미 실행 중입니다.' : '퀀트 최적화를 시작했습니다.', '완료 전까지 동일 작업은 다시 실행되지 않습니다.', 'optimization');
+        setOptimizationMessage(alreadyRunning ? '이미 실행 중인 최적화 작업을 추적합니다.' : '최적화가 큐에 등록되었습니다. 완료 후 latest candidate까지 자동 갱신합니다.');
+        push('info', alreadyRunning ? '퀀트 최적화가 이미 실행 중입니다.' : '퀀트 최적화를 시작했습니다.', alreadyRunning ? '이미 실행 중인 작업을 계속 추적합니다.' : '완료되면 search → latest candidate handoff까지 자동으로 갱신됩니다.', 'optimization');
         pushToast({
           tone: 'info',
           title: alreadyRunning ? '최적화 작업 확인' : '최적화 시작',
-          description: alreadyRunning ? '이미 실행 중인 작업을 계속 모니터링합니다.' : '완료되면 결과 카드와 로그가 자동으로 갱신됩니다.',
+          description: alreadyRunning ? '이미 실행 중인 작업을 계속 모니터링합니다.' : '완료되면 search 결과와 latest candidate가 함께 갱신됩니다.',
         });
         const historyItem: OptimizationHistoryItem = {
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -1121,7 +1156,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       push('error', '최적화 요청 중 오류가 발생했습니다.', '네트워크 또는 서버 상태를 확인하세요.', 'optimization');
       pushToast({ tone: 'error', title: '최적화 요청 실패', description: '요청 전송 중 오류가 발생했습니다.' });
     }
-  }, [optimizationHistory, optimizationPhase, optimizationRunning, push, pushToast, updateOptimizationHistory, validationStore.unsaved]);
+  }, [optimizationHistory, optimizationPhase, optimizationRunning, push, pushToast, updateOptimizationHistory, validationStore.savedQuery, validationStore.savedSettings, validationStore.unsaved]);
 
   const handleSaveSettings = useCallback(async () => {
     if (settingsSaving) return;
@@ -1358,10 +1393,10 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 <div className="section-head-row">
                   <div>
                     <div className="section-title">Quant Ops Workflow</div>
-                    <div className="section-copy">baseline → diagnosis → candidate search → re-validation → save → runtime apply 흐름을 단계별로 끊어서 보여줍니다. optimizer 탐색 결과와 운영 승인 후보를 같은 것으로 취급하지 않습니다.</div>
+                    <div className="section-copy">optimizer search → re-validation → save → runtime apply 순서로 끊어서 보여줍니다. search는 후보 풀이고, latest candidate는 그 search 버전을 baseline 기준으로 다시 검증한 운영 후보입니다.</div>
                   </div>
-                  <div className={`inline-badge ${quantWorkflow.busyAction ? 'is-warning' : 'is-success'}`}>
-                    {quantWorkflow.busyAction ? `작업 중 · ${quantWorkflow.busyAction}` : '단계 추적 중'}
+                  <div className={`inline-badge ${quantWorkflow.busyAction ? 'is-warning' : latestCandidateMatchesSearch ? 'is-success' : 'is-warning'}`}>
+                    {quantWorkflow.busyAction ? `작업 중 · ${quantWorkflow.busyAction}` : latestCandidateMatchesSearch ? '최신 handoff 완료' : '단계 확인 필요'}
                   </div>
                 </div>
 
@@ -1375,19 +1410,80 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   ))}
                 </div>
 
-                <div className="execution-button-row is-split" style={{ marginTop: 12 }}>
+                <div className="detail-list" style={{ marginTop: 12 }}>
+                  <div><strong>실행 순서</strong> 1) Search 2) Revalidate 3) Save 4) Apply</div>
+                  <div>Search는 optimizer를 돌려 후보 풀을 만들고, Revalidate는 그 결과를 현재 baseline 기준으로 다시 판정합니다.</div>
+                  <div>Baseline 진단은 보조 단계입니다. search 전에 막힌 요인만 다시 확인할 때 써 주세요.</div>
+                </div>
+
+                <div className="execution-button-row" style={{ marginTop: 12 }}>
                   <button className="console-action-button" onClick={() => { void handleRunDiagnosis(); }} disabled={validationStore.unsaved}>
-                    {diagnosticsResult?.ok ? '진단 다시 계산' : 'Baseline 진단 실행'}
+                    {diagnosticsResult?.ok ? 'Baseline 진단 다시 계산' : 'Baseline 진단 실행'}
                   </button>
-                  <button className="console-action-button" onClick={() => { void handleRevalidateCandidate(); }} disabled={validationStore.unsaved || quantWorkflow.busyAction === 'revalidate'}>
-                    {quantWorkflow.busyAction === 'revalidate' ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />재검증 중...</span> : 'optimizer 후보 재검증'}
-                  </button>
-                  <button className="console-action-button" onClick={() => { void handleSaveValidatedCandidate(); }} disabled={!latestValidatedCandidate?.guardrails?.can_save || quantWorkflow.busyAction === 'save'}>
-                    {quantWorkflow.busyAction === 'save' ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />저장 중...</span> : '재검증 통과 후보 저장'}
-                  </button>
-                  <button className="console-action-button is-primary" onClick={() => { void handleApplyRuntimeCandidate(); }} disabled={!savedValidatedCandidate?.guardrails?.can_apply || quantWorkflow.busyAction === 'apply'}>
-                    {quantWorkflow.busyAction === 'apply' ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />반영 중...</span> : '저장 후보 runtime 반영'}
-                  </button>
+                </div>
+
+                <div className="quant-ops-stage-grid" style={{ marginTop: 12 }}>
+                  <div className={`quant-ops-stage-card is-${searchResult?.available ? 'good' : searchHandoff?.status === 'optimizer_failed' ? 'bad' : 'neutral'}`}>
+                    <div className="quant-ops-stage-title">1. Search</div>
+                    <div className="quant-ops-stage-status">{searchResult?.available ? '후보 풀 준비' : optimizationRunning ? '실행 중' : '미실행'}</div>
+                    <div className="quant-ops-stage-copy">{searchContextLabel || '저장된 설정 기준으로 optimizer를 돌려 최신 후보 풀을 만듭니다.'}</div>
+                    <div className="quant-ops-stage-copy">{searchHandoff?.status === 'candidate_updated' ? `자동 handoff 완료 · ${searchHandoff?.decision_label || 'latest candidate 갱신'}` : searchHandoff?.error ? `handoff 상태: ${searchHandoff.error}` : '완료 후 latest candidate를 같은 search 버전으로 자동 갱신합니다.'}</div>
+                    <button
+                      className="console-action-button"
+                      style={{ marginTop: 12, width: '100%' }}
+                      onClick={() => { void handleRunOptimization(); }}
+                      disabled={optimizationRunning || optimizationPhase === 'requesting'}
+                    >
+                      {optimizationRunning || optimizationPhase === 'requesting'
+                        ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />optimizer 실행 중...</span>
+                        : searchResult?.available ? '최신 Search 다시 실행' : 'Search 실행'}
+                    </button>
+                  </div>
+
+                  <div className={`quant-ops-stage-card is-${latestCandidateMatchesSearch ? quantDecisionTone(latestValidatedCandidate?.decision?.status) : 'neutral'}`}>
+                    <div className="quant-ops-stage-title">2. Revalidate</div>
+                    <div className="quant-ops-stage-status">{latestCandidateMatchesSearch ? latestValidatedCandidate?.decision?.label || '완료' : '대기'}</div>
+                    <div className="quant-ops-stage-copy">{latestCandidateMatchesSearch ? latestValidatedCandidate?.decision?.summary || '최신 search 버전 기준 후보가 갱신됐습니다.' : 'Search 결과를 현재 baseline 기준으로 다시 판정합니다.'}</div>
+                    <div className="quant-ops-stage-copy">{latestCandidateMatchesSearch ? `search ${String(latestValidatedCandidate?.search_version || '-')}` : '자동 handoff가 실패했거나 수동으로 다시 돌리고 싶으면 여기서 재검증하세요.'}</div>
+                    <button
+                      className="console-action-button"
+                      style={{ marginTop: 12, width: '100%' }}
+                      onClick={() => { void handleRevalidateCandidate(); }}
+                      disabled={validationStore.unsaved || quantWorkflow.busyAction === 'revalidate' || !searchResult?.available}
+                    >
+                      {quantWorkflow.busyAction === 'revalidate' ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />재검증 중...</span> : latestCandidateMatchesSearch ? '최신 후보 다시 재검증' : 'Search 결과 재검증'}
+                    </button>
+                  </div>
+
+                  <div className={`quant-ops-stage-card is-${latestValidatedCandidate?.guardrails?.can_save ? 'good' : 'neutral'}`}>
+                    <div className="quant-ops-stage-title">3. Save</div>
+                    <div className="quant-ops-stage-status">{savedValidatedCandidate?.saved_at ? '저장됨' : latestValidatedCandidate?.guardrails?.can_save ? '저장 가능' : '대기'}</div>
+                    <div className="quant-ops-stage-copy">{savedValidatedCandidate?.saved_at ? `저장 시각 ${formatDateTime(savedValidatedCandidate.saved_at)}` : '재검증 통과 후보만 저장합니다.'}</div>
+                    <div className="quant-ops-stage-copy">{latestValidatedCandidate?.guardrails?.can_save ? '현재 latest candidate를 저장해 runtime apply 전 스냅샷으로 고정합니다.' : '먼저 최신 search 버전 후보를 재검증하고 guardrail을 통과해야 합니다.'}</div>
+                    <button
+                      className="console-action-button"
+                      style={{ marginTop: 12, width: '100%' }}
+                      onClick={() => { void handleSaveValidatedCandidate(); }}
+                      disabled={!latestValidatedCandidate?.guardrails?.can_save || quantWorkflow.busyAction === 'save'}
+                    >
+                      {quantWorkflow.busyAction === 'save' ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />저장 중...</span> : '재검증 통과 후보 저장'}
+                    </button>
+                  </div>
+
+                  <div className={`quant-ops-stage-card is-${savedValidatedCandidate?.guardrails?.can_apply ? 'good' : runtimeApplyState?.status === 'applied' ? 'good' : 'neutral'}`}>
+                    <div className="quant-ops-stage-title">4. Apply</div>
+                    <div className="quant-ops-stage-status">{runtimeApplyState?.status === 'applied' ? 'runtime 반영됨' : savedValidatedCandidate?.guardrails?.can_apply ? '반영 가능' : '대기'}</div>
+                    <div className="quant-ops-stage-copy">{runtimeApplyState?.status === 'applied' ? `${formatDateTime(runtimeApplyState.applied_at)} · 엔진 ${runtimeApplyState.engine_state || '-'}` : '저장된 후보만 runtime/paper 설정으로 반영합니다.'}</div>
+                    <div className="quant-ops-stage-copy">{savedValidatedCandidate?.guardrails?.can_apply ? '다음 engine cycle부터 저장 후보를 쓰게 됩니다.' : 'Save 단계가 끝나야 Apply가 열립니다.'}</div>
+                    <button
+                      className="console-action-button is-primary"
+                      style={{ marginTop: 12, width: '100%' }}
+                      onClick={() => { void handleApplyRuntimeCandidate(); }}
+                      disabled={!savedValidatedCandidate?.guardrails?.can_apply || quantWorkflow.busyAction === 'apply'}
+                    >
+                      {quantWorkflow.busyAction === 'apply' ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />반영 중...</span> : '저장 후보 runtime 반영'}
+                    </button>
+                  </div>
                 </div>
 
                 {(quantWorkflow.lastError || errorMessage) && (
@@ -1400,16 +1496,17 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   <div className="section-head-row">
                     <div>
                       <div className="section-title">탐색 결과(Search)</div>
-                      <div className="section-copy">optimizer 결과는 저장 전 후보 풀입니다. 탐색 결과 자체는 아직 운영 승인 상태가 아닙니다.</div>
+                      <div className="section-copy">optimizer가 만든 최신 후보 풀입니다. 여기서 끝나지 않고 같은 search 버전으로 latest candidate를 자동/수동 재검증해야 저장 단계로 넘어갑니다.</div>
                     </div>
                     <div className={`inline-badge ${searchResult?.is_stale ? 'is-warning' : searchResult?.available ? 'is-success' : ''}`}>
                       {searchResult?.available ? quantWorkflowCardTitle(workflowPayload?.stage_status?.candidate_search, String(searchResult.version || '-')) : '후보 없음'}
                     </div>
                   </div>
                   <div className="summary-metric-grid" style={{ marginTop: 12 }}>
-                    <SummaryMetricCard label="검색 버전" value={String(searchResult?.version || '-')} detail={searchResult?.optimized_at ? formatDateTime(searchResult.optimized_at) : '아직 탐색 결과가 없습니다.'} tone={searchResult?.available ? 'good' : 'neutral'} />
+                    <SummaryMetricCard label="검색 버전" value={String(searchResult?.version || '-')} detail={searchContextLabel || (searchResult?.optimized_at ? formatDateTime(searchResult.optimized_at) : '아직 탐색 결과가 없습니다.')} tone={searchResult?.available ? 'good' : 'neutral'} />
                     <SummaryMetricCard label="신뢰 후보" value={formatCount(searchResult?.n_reliable, '건')} detail={`medium ${formatCount(searchResult?.n_medium, '건')} · total ${formatCount(searchResult?.n_symbols_optimized, '건')}`} tone={searchResult?.available ? 'good' : 'neutral'} />
                     <SummaryMetricCard label="global overlay" value={String(searchResult?.global_overlay_source || '-')} detail={searchResult?.is_stale ? '결과가 오래돼서 재탐색 권장' : `파라미터 ${formatCount(searchResult?.param_count, '개')}`} tone={searchResult?.is_stale ? 'bad' : 'neutral'} />
+                    <SummaryMetricCard label="search → candidate" value={searchHandoff?.decision_label || (latestCandidateMatchesSearch ? latestValidatedCandidate?.decision?.label || '완료' : '대기')} detail={searchHandoff?.error ? `handoff 실패: ${searchHandoff.error}` : latestCandidateMatchesSearch ? `같은 search 버전 ${String(latestValidatedCandidate?.search_version || '-')}` : 'latest candidate가 아직 최신 search를 따라오지 않았습니다.'} tone={latestCandidateMatchesSearch ? quantDecisionTone(latestValidatedCandidate?.decision?.status) : searchHandoff?.error ? 'bad' : 'neutral'} />
                   </div>
                   <div className="detail-list" style={{ marginTop: 12 }}>
                     {Object.entries((searchResult?.global_params || {}) as Record<string, unknown>).slice(0, 8).map(([key, value]) => (
@@ -1933,15 +2030,10 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                       ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />백테스트 진행 중...</span>
                       : '저장된 설정으로 퀀트 백테스트 실행'}
                   </button>
-                  <button
-                    className="console-action-button"
-                    onClick={() => { void handleRunOptimization(); }}
-                    disabled={optimizationRunning || optimizationPhase === 'requesting'}
-                  >
-                    {optimizationRunning || optimizationPhase === 'requesting'
-                      ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />최적화 진행 중...</span>
-                      : '저장된 설정으로 퀀트 최적화 실행'}
-                  </button>
+                </div>
+
+                <div className="detail-list" style={{ marginTop: 8 }}>
+                  <div>optimizer search / 재검증 / 저장 / runtime apply 버튼은 위 Quant Ops Workflow 카드에서 순서대로 실행하세요.</div>
                 </div>
 
                 <div className="validation-inline-status">

@@ -412,6 +412,13 @@ export interface QuantOpsSearchResultPayload {
   n_reliable?: number;
   n_medium?: number;
   global_overlay_source?: string;
+  context?: {
+    market?: string;
+    top_n?: number;
+    symbols?: string[];
+    lookback_days?: number;
+    validation_days?: number;
+  };
   source?: string;
 }
 
@@ -502,6 +509,18 @@ export interface QuantOpsSymbolWorkflowItemPayload {
 export interface QuantOpsWorkflowResponse {
   ok?: boolean;
   search_result?: QuantOpsSearchResultPayload;
+  search_handoff?: {
+    requested_at?: string;
+    completed_at?: string;
+    status?: string;
+    error?: string;
+    candidate_id?: string;
+    search_version?: string;
+    decision_status?: string;
+    decision_label?: string;
+    query?: Record<string, unknown>;
+    settings?: Record<string, unknown>;
+  };
   latest_candidate?: QuantOpsCandidatePayload;
   saved_candidate?: QuantOpsCandidatePayload;
   symbol_candidates?: QuantOpsSymbolWorkflowItemPayload[];

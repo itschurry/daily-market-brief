@@ -199,6 +199,7 @@ def _save_results(
     results: list[OptimizationResult],
     sim_config: SimulationConfig,
     name_map: dict[str, str] | None = None,
+    search_context: dict | None = None,
 ) -> None:
     """결과를 config/optimized_params.json에 저장한다."""
     reliable = [r for r in results if r.is_reliable]
@@ -266,8 +267,10 @@ def _save_results(
             "tail_risk": r.tail_risk,
         }
 
+    optimized_at = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).isoformat(timespec="seconds")
     output = {
-        "optimized_at": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).isoformat(timespec="seconds"),
+        "optimized_at": optimized_at,
+        "version": f"search-{optimized_at}",
         "global_params": global_params,
         "per_symbol": per_symbol,
         "meta": {
@@ -278,6 +281,7 @@ def _save_results(
             "n_medium": len(medium),
             "global_overlay_source": global_overlay_source,
             "overlay_policy": overlay_policy_metadata(),
+            "search_context": search_context or {},
         },
     }
     _OPTIMIZED_PARAMS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -348,6 +352,13 @@ def main() -> None:
     if args.validation_days is not None:
         sim_kwargs["validation_days"] = args.validation_days
     sim_config = SimulationConfig(**sim_kwargs)
+    search_context = {
+        "market": args.market or "all",
+        "top_n": args.top_n,
+        "symbols": [code for code, _, _ in symbols],
+        "lookback_days": sim_config.lookback_days,
+        "validation_days": sim_config.validation_days,
+    }
 
     # 실제로 필요한 최소 데이터 건수 = 학습 + 검증 기간
     min_rows = sim_config.lookback_days + sim_config.validation_days
@@ -383,7 +394,7 @@ def main() -> None:
 
     if not results:
         logger.error("최적화 결과가 없어 빈 결과 파일을 저장합니다.")
-        _save_results([], sim_config, name_map=name_map)
+        _save_results([], sim_config, name_map=name_map, search_context=search_context)
         return
 
     reliable = [r for r in results if r.is_reliable]
@@ -401,7 +412,7 @@ def main() -> None:
             **gp,
         )
 
-    _save_results(results, sim_config, name_map=name_map)
+    _save_results(results, sim_config, name_map=name_map, search_context=search_context)
 
 
 if __name__ == "__main__":
