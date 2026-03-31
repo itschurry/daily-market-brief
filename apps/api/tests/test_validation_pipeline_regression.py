@@ -20,6 +20,7 @@ if "services.backtest_service" not in sys.modules:
     sys.modules["services.backtest_service"] = stub
 
 from services.validation_service import (
+    _build_exit_reason_analysis,
     run_backtest_with_extended_metrics,
     run_validation_diagnostics,
     run_walk_forward_validation,
@@ -91,6 +92,45 @@ class _StubBacktestService:
 
 
 class ValidationPipelineRegressionTests(unittest.TestCase):
+    def test_exit_reason_analysis_normalizes_aliases_and_highlights_loss_drivers(self):
+        analysis = _build_exit_reason_analysis(
+            [
+                {"reason": "손절", "pnl_pct": -2.5, "holding_days": 3},
+                {"reason": "stop_loss", "pnl_pct": -1.0, "holding_days": 2},
+                {"reason": "MACD 약세 전환", "pnl_pct": -0.8, "holding_days": 6},
+                {"reason": "take_profit", "pnl_pct": 1.4, "holding_days": 4},
+            ],
+            segment_label="OOS",
+        )
+
+        reasons = {item["key"]: item for item in analysis["reasons"]}
+        self.assertIn("stop_loss", reasons)
+        self.assertEqual("손절", reasons["stop_loss"]["label"])
+        self.assertEqual(2, reasons["stop_loss"]["count"])
+        self.assertAlmostEqual(3.5, reasons["stop_loss"]["gross_loss_pct"])
+        self.assertGreater(reasons["stop_loss"]["loss_share_pct"], 70.0)
+        self.assertIn("손절", analysis["summary_lines"][0])
+
+    def test_exit_reason_analysis_surfaces_symbol_and_sector_concentration(self):
+        analysis = _build_exit_reason_analysis(
+            [
+                {"code": "AAPL", "name": "Apple", "market": "NASDAQ", "reason": "stop_loss", "pnl_pct": -3.0, "holding_days": 3},
+                {"code": "AAPL", "name": "Apple", "market": "NASDAQ", "reason": "손절", "pnl_pct": -2.0, "holding_days": 2},
+                {"code": "NVDA", "name": "NVIDIA", "market": "NASDAQ", "reason": "stop_loss", "pnl_pct": -1.0, "holding_days": 4},
+                {"code": "TSLA", "name": "Tesla", "market": "NASDAQ", "reason": "timeout", "pnl_pct": -1.4, "holding_days": 15},
+                {"code": "AMZN", "name": "Amazon", "market": "NASDAQ", "reason": "take_profit", "pnl_pct": 1.2, "holding_days": 5},
+            ],
+            segment_label="OOS",
+        )
+
+        self.assertEqual("Apple (AAPL)", analysis["symbol_weaknesses"][0]["label"])
+        self.assertEqual("플랫폼", analysis["sector_weaknesses"][0]["label"])
+        stop_loss = next(item for item in analysis["concentration_verdicts"] if item.get("key") == "stop_loss")
+        self.assertEqual("concentrated", stop_loss["strategy_issue_bias"])
+        self.assertEqual("Apple (AAPL)", stop_loss["top_symbols"][0]["label"])
+        self.assertEqual("플랫폼", stop_loss["top_sectors"][0]["label"])
+        self.assertIn("쏠림", stop_loss["summary"])
+
     def test_extended_backtest_includes_scorecard_tail_risk_and_stats(self):
         payload = _load_validation_payload()
         stub = _StubBacktestService(payload_for_optional=payload, payload_for_run=payload)
@@ -103,7 +143,13 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
         self.assertIn("reliability_diagnostic", result)
         self.assertEqual(1.23, result["metrics"]["legacy_metric"])
         self.assertIn("exit_reason_stats", result["metrics"])
+        self.assertIn("exit_reason_analysis", result["metrics"])
         self.assertIn("regime_stats", result["metrics"])
+        self.assertIn("reasons", result["metrics"]["exit_reason_analysis"])
+        self.assertIn("symbol_weaknesses", result["metrics"]["exit_reason_analysis"])
+        self.assertIn("sector_weaknesses", result["metrics"]["exit_reason_analysis"])
+        self.assertIn("concentration_verdicts", result["metrics"]["exit_reason_analysis"])
+        self.assertIn("focus_items", result["metrics"]["exit_reason_analysis"])
 
         scorecard = result["scorecard"]
         self.assertIn("composite_score", scorecard)
@@ -131,6 +177,11 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
             segment_payload = result["segments"][segment]
             self.assertIn("strategy_scorecard", segment_payload)
             self.assertIn("tail_risk", segment_payload["strategy_scorecard"])
+            self.assertIn("exit_reason_analysis", segment_payload)
+            self.assertIn("reasons", segment_payload["exit_reason_analysis"])
+            self.assertIn("symbol_weaknesses", segment_payload["exit_reason_analysis"])
+            self.assertIn("sector_weaknesses", segment_payload["exit_reason_analysis"])
+            self.assertIn("concentration_verdicts", segment_payload["exit_reason_analysis"])
 
         summary = result["summary"]
         self.assertIn("oos_reliability", summary)
@@ -138,8 +189,24 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
         self.assertIn("reliability_diagnostic", summary)
         self.assertIn("blocking_factors", summary["reliability_diagnostic"])
         self.assertIn("uplift_search", summary["reliability_diagnostic"])
+        self.assertIn("exit_reason_analysis", summary)
+        self.assertIn("weakness_clusters", summary["exit_reason_analysis"])
+        self.assertIn("persistent_negative_reasons", summary["exit_reason_analysis"])
+        self.assertIn("headlines", summary["exit_reason_analysis"])
         self.assertGreaterEqual(summary["positive_window_ratio"], 0.0)
         self.assertLessEqual(summary["positive_window_ratio"], 1.0)
+        self.assertTrue(
+            any(
+                item.get("segment") == "oos" and item.get("key") == "stop_loss"
+                for item in summary["exit_reason_analysis"]["weakness_clusters"]
+            )
+        )
+        self.assertTrue(
+            any(
+                item.get("key") == "stop_loss"
+                for item in summary["exit_reason_analysis"]["persistent_negative_reasons"]
+            )
+        )
         self.assertEqual(
             result["scorecard"]["composite_score"],
             result["segments"]["oos"]["strategy_scorecard"]["composite_score"],

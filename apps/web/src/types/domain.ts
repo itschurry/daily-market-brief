@@ -192,22 +192,147 @@ export interface PortfolioStateResponse {
   };
 }
 
+export interface ExitReasonAnalysisRow {
+  key?: string;
+  label?: string;
+  category?: string;
+  count?: number;
+  share_of_trades_pct?: number;
+  net_pnl_pct?: number;
+  gross_pnl_pct?: number;
+  gross_profit_pct?: number;
+  gross_loss_pct?: number;
+  profit_share_pct?: number;
+  loss_share_pct?: number;
+  avg_pnl_pct?: number;
+  median_pnl_pct?: number;
+  avg_win_pct?: number;
+  avg_loss_pct?: number;
+  win_rate_pct?: number;
+  loss_rate_pct?: number;
+  avg_holding_days?: number;
+  raw_reasons?: string[];
+}
+
+export interface ExitReasonFocusItem {
+  kind?: string;
+  key?: string;
+  label?: string;
+  count?: number;
+  summary?: string;
+  gross_loss_pct?: number;
+  gross_profit_pct?: number;
+  loss_share_pct?: number;
+  profit_share_pct?: number;
+  avg_pnl_pct?: number;
+}
+
+export interface ExitScopeWeaknessRow {
+  key?: string;
+  label?: string;
+  count?: number;
+  loss_trades?: number;
+  gross_loss_pct?: number;
+  loss_share_pct?: number;
+  net_pnl_pct?: number;
+  avg_pnl_pct?: number;
+  avg_loss_pct?: number;
+  top_reason_key?: string | null;
+  top_reason_label?: string | null;
+  top_reason_loss_share_pct?: number;
+  markets?: string[];
+  summary?: string;
+}
+
+export interface ExitReasonConcentrationVerdict {
+  key?: string;
+  label?: string;
+  count?: number;
+  gross_loss_pct?: number;
+  loss_share_pct?: number;
+  symbol_count?: number;
+  sector_count?: number;
+  symbol_distribution_level?: string;
+  symbol_distribution_label?: string;
+  symbol_top_share_pct?: number;
+  sector_distribution_level?: string;
+  sector_distribution_label?: string;
+  sector_top_share_pct?: number;
+  strategy_issue_bias?: string;
+  strategy_issue_label?: string;
+  top_symbols?: ExitScopeWeaknessRow[];
+  top_sectors?: ExitScopeWeaknessRow[];
+  summary?: string;
+}
+
+export interface ExitReasonAnalysisPayload {
+  trade_count?: number;
+  gross_loss_pct?: number;
+  gross_profit_pct?: number;
+  net_pnl_pct?: number;
+  reasons?: ExitReasonAnalysisRow[];
+  symbol_weaknesses?: ExitScopeWeaknessRow[];
+  sector_weaknesses?: ExitScopeWeaknessRow[];
+  concentration_verdicts?: ExitReasonConcentrationVerdict[];
+  focus_items?: ExitReasonFocusItem[];
+  summary_lines?: string[];
+}
+
+export interface ExitReasonWeaknessCluster {
+  segment?: string;
+  segment_label?: string;
+  key?: string;
+  label?: string;
+  count?: number;
+  gross_loss_pct?: number;
+  loss_share_pct?: number;
+  avg_pnl_pct?: number;
+  summary?: string;
+}
+
+export interface ExitReasonPersistentWeakness {
+  key?: string;
+  label?: string;
+  segments?: string[];
+  combined_gross_loss_pct?: number;
+  combined_count?: number;
+  max_loss_share_pct?: number;
+  summary?: string;
+}
+
+export interface ValidationSegmentPayload extends Record<string, number | string | Record<string, unknown> | StrategyScorecardPayload | ExitReasonAnalysisPayload | undefined> {
+  strategy_scorecard?: StrategyScorecardPayload;
+  exit_reason_analysis?: ExitReasonAnalysisPayload;
+}
+
+export interface ValidationWalkForwardExitReasonPayload {
+  overall?: ExitReasonAnalysisPayload;
+  train?: ExitReasonAnalysisPayload;
+  validation?: ExitReasonAnalysisPayload;
+  oos?: ExitReasonAnalysisPayload;
+  weakness_clusters?: ExitReasonWeaknessCluster[];
+  persistent_negative_reasons?: ExitReasonPersistentWeakness[];
+  headlines?: string[];
+}
+
 export interface ValidationResponse {
   ok?: boolean;
   metrics?: Record<string, number | string | Record<string, unknown>>;
   scorecard?: StrategyScorecardPayload;
   reliability_diagnostic?: ReliabilityDiagnosticPayload;
   segments?: {
-    train?: Record<string, number | string | Record<string, unknown>>;
-    validation?: Record<string, number | string | Record<string, unknown>>;
-    oos?: Record<string, number | string | Record<string, unknown>>;
+    train?: ValidationSegmentPayload;
+    validation?: ValidationSegmentPayload;
+    oos?: ValidationSegmentPayload;
   };
   summary?: {
     windows?: number;
     positive_windows?: number;
+    positive_window_ratio?: number;
     oos_reliability?: string;
     composite_score?: number;
     reliability_diagnostic?: ReliabilityDiagnosticPayload;
+    exit_reason_analysis?: ValidationWalkForwardExitReasonPayload;
   };
 }
 

@@ -355,6 +355,8 @@ export interface BacktestMetricData {
 export interface BacktestTrade {
   code: string;
   name: string;
+  market?: string;
+  sector?: string;
   entry_date: string;
   exit_date: string;
   entry_price: number;

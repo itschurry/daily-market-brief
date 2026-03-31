@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from functools import lru_cache
 from math import floor, sqrt
 from typing import Any
 
+from market_utils import lookup_company_listing, normalize_market
 from services.backtest_service import get_backtest_service
 from services.reliability_service import (
     build_reliability_diagnostic,
@@ -147,6 +149,666 @@ def _exit_reason_stats(trades: list[dict[str, Any]]) -> dict[str, dict[str, Any]
         del bucket["sum_pnl_pct"]
         del bucket["wins"]
     return stats
+
+
+_EXIT_REASON_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "stop_loss": {
+        "label": "손절",
+        "category": "risk_cut",
+        "aliases": {"손절", "stop_loss", "stoploss", "sl"},
+    },
+    "moving_average_breakdown": {
+        "label": "20일선 이탈",
+        "category": "trend_failure",
+        "aliases": {
+            "20일선 이탈",
+            "moving_average_breakdown",
+            "ma_breakdown",
+            "sma_breakdown",
+            "sma20_breakdown",
+            "20ma_breakdown",
+        },
+    },
+    "macd_weakness": {
+        "label": "MACD 약세",
+        "category": "momentum_failure",
+        "aliases": {
+            "MACD 약세 전환",
+            "macd_weakness",
+            "macd_bearish",
+            "macd_bearish_turn",
+        },
+    },
+    "holding_period_expiry": {
+        "label": "보유기간 만료",
+        "category": "time_exit",
+        "aliases": {
+            "보유기간 만료",
+            "timeout",
+            "time_exit",
+            "holding_period_expiry",
+            "holding_period",
+            "max_holding",
+        },
+    },
+    "rsi_overheat": {
+        "label": "RSI 과열",
+        "category": "overheat_exit",
+        "aliases": {
+            "RSI 과열",
+            "rsi_overheat",
+            "rsi_overbought",
+            "overbought_exit",
+        },
+    },
+    "take_profit": {
+        "label": "익절",
+        "category": "profit_capture",
+        "aliases": {"익절", "take_profit", "takeprofit", "tp", "profit_target"},
+    },
+    "unknown": {
+        "label": "기타",
+        "category": "unknown",
+        "aliases": {"unknown", "기타", "other"},
+    },
+}
+
+_EXIT_REASON_ALIAS_TO_KEY: dict[str, str] = {}
+for _exit_reason_key, _exit_reason_meta in _EXIT_REASON_DEFINITIONS.items():
+    for _alias in _exit_reason_meta.get("aliases", set()):
+        _EXIT_REASON_ALIAS_TO_KEY[str(_alias).strip().lower().replace("-", "_").replace(" ", "_")] = _exit_reason_key
+
+
+def _normalize_exit_reason(reason: Any) -> tuple[str, str, str]:
+    raw = str(reason or "unknown").strip()
+    normalized = raw.lower().replace("-", "_").replace(" ", "_")
+    key = _EXIT_REASON_ALIAS_TO_KEY.get(normalized, "unknown")
+    meta = _EXIT_REASON_DEFINITIONS.get(key, _EXIT_REASON_DEFINITIONS["unknown"])
+    return key, str(meta.get("label") or raw or "기타"), str(meta.get("category") or "unknown")
+
+
+@lru_cache(maxsize=2048)
+def _lookup_trade_listing(code: str, name: str, market: str) -> dict[str, Any] | None:
+    return lookup_company_listing(
+        code=code,
+        name=name,
+        market=market,
+        ticker=code,
+        scope="live",
+    )
+
+
+def _fallback_sector_for_market(market: str) -> str:
+    normalized_market = normalize_market(market)
+    if normalized_market in {"KOSPI", "KOSDAQ"}:
+        return "국내주식"
+    if normalized_market == "NASDAQ":
+        return "미국주식"
+    return "미분류"
+
+
+def _trade_identity(trade: dict[str, Any]) -> dict[str, str]:
+    code = str(trade.get("code") or trade.get("symbol") or "").strip().upper()
+    name = str(trade.get("name") or "").strip()
+    market = normalize_market(str(trade.get("market") or "").strip())
+    sector = str(trade.get("sector") or "").strip()
+
+    listing = _lookup_trade_listing(code, name, market) if (code or name) else None
+    if listing:
+        if not code:
+            code = str(listing.get("code") or "").strip().upper()
+        if not name:
+            name = str(listing.get("name") or "").strip()
+        if not market:
+            market = normalize_market(str(listing.get("market") or ""))
+        if not sector:
+            sector = str(listing.get("sector") or "").strip()
+
+    symbol_key = code or name or "unknown"
+    symbol_label = "미상 종목"
+    if code and name and name.upper() != code:
+        symbol_label = f"{name} ({code})"
+    elif name:
+        symbol_label = name
+    elif code:
+        symbol_label = code
+
+    sector_label = sector or _fallback_sector_for_market(market)
+    return {
+        "code": code,
+        "name": name,
+        "market": market,
+        "sector": sector_label,
+        "symbol_key": symbol_key,
+        "symbol_label": symbol_label,
+        "sector_key": sector_label,
+        "sector_label": sector_label,
+    }
+
+
+def _mean(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def _median(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _build_scope_weakness_rows(
+    trades: list[dict[str, Any]],
+    *,
+    scope: str,
+) -> list[dict[str, Any]]:
+    total_gross_loss = sum(abs(_to_float(trade.get("pnl_pct"), 0.0)) for trade in trades if _to_float(trade.get("pnl_pct"), 0.0) < 0)
+    buckets: dict[str, dict[str, Any]] = {}
+
+    for trade in trades:
+        pnl_pct = _to_float(trade.get("pnl_pct"), 0.0)
+        identity = _trade_identity(trade)
+        if scope == "sector":
+            bucket_key = identity["sector_key"]
+            bucket_label = identity["sector_label"]
+        else:
+            bucket_key = identity["symbol_key"]
+            bucket_label = identity["symbol_label"]
+
+        bucket = buckets.setdefault(
+            bucket_key,
+            {
+                "key": bucket_key,
+                "label": bucket_label,
+                "count": 0,
+                "loss_trades": 0,
+                "net_pnl_pct": 0.0,
+                "gross_loss_pct": 0.0,
+                "pnl_values": [],
+                "loss_values": [],
+                "reason_losses": {},
+                "markets": set(),
+            },
+        )
+        bucket["count"] += 1
+        bucket["net_pnl_pct"] += pnl_pct
+        bucket["pnl_values"].append(pnl_pct)
+        if identity["market"]:
+            bucket["markets"].add(identity["market"])
+
+        if pnl_pct < 0:
+            reason_key, reason_label, _ = _normalize_exit_reason(trade.get("reason"))
+            bucket["loss_trades"] += 1
+            bucket["gross_loss_pct"] += abs(pnl_pct)
+            bucket["loss_values"].append(pnl_pct)
+            reason_bucket = bucket["reason_losses"].setdefault(
+                reason_key,
+                {"label": reason_label, "gross_loss_pct": 0.0},
+            )
+            reason_bucket["gross_loss_pct"] += abs(pnl_pct)
+
+    rows: list[dict[str, Any]] = []
+    for bucket in buckets.values():
+        if bucket["gross_loss_pct"] <= 0:
+            continue
+        top_reason_key = None
+        top_reason_label = None
+        top_reason_gross_loss = 0.0
+        if bucket["reason_losses"]:
+            top_reason_key, top_reason_data = max(
+                bucket["reason_losses"].items(),
+                key=lambda item: float(item[1].get("gross_loss_pct", 0.0)),
+            )
+            top_reason_label = str(top_reason_data.get("label") or top_reason_key)
+            top_reason_gross_loss = _to_float(top_reason_data.get("gross_loss_pct"), 0.0)
+
+        loss_share_pct = (bucket["gross_loss_pct"] / total_gross_loss * 100.0) if total_gross_loss > 0 else 0.0
+        top_reason_share_pct = (top_reason_gross_loss / bucket["gross_loss_pct"] * 100.0) if bucket["gross_loss_pct"] > 0 else 0.0
+        rows.append(
+            {
+                "key": bucket["key"],
+                "label": bucket["label"],
+                "count": int(bucket["count"]),
+                "loss_trades": int(bucket["loss_trades"]),
+                "gross_loss_pct": round(bucket["gross_loss_pct"], 4),
+                "loss_share_pct": round(loss_share_pct, 2),
+                "net_pnl_pct": round(bucket["net_pnl_pct"], 4),
+                "avg_pnl_pct": round(_mean(bucket["pnl_values"]), 4),
+                "avg_loss_pct": round(_mean(bucket["loss_values"]), 4),
+                "top_reason_key": top_reason_key,
+                "top_reason_label": top_reason_label,
+                "top_reason_loss_share_pct": round(top_reason_share_pct, 2),
+                "markets": sorted(bucket["markets"]),
+                "summary": (
+                    f"{bucket['label']} {int(bucket['loss_trades'])}건 · 손실 {bucket['gross_loss_pct']:.2f}%"
+                    + (
+                        f" · {top_reason_label} 비중 {top_reason_share_pct:.1f}%"
+                        if top_reason_label
+                        else ""
+                    )
+                ),
+            }
+        )
+
+    rows.sort(
+        key=lambda item: (
+            float(item.get("gross_loss_pct", 0.0)),
+            float(item.get("loss_share_pct", 0.0)),
+            int(item.get("loss_trades", 0)),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _classify_concentration(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "level": "unknown",
+            "label": "데이터 없음",
+            "unique_count": 0,
+            "top_share_pct": 0.0,
+            "top3_share_pct": 0.0,
+        }
+
+    unique_count = len(rows)
+    top_share_pct = _to_float(rows[0].get("loss_share_pct"), 0.0)
+    top3_share_pct = sum(_to_float(item.get("loss_share_pct"), 0.0) for item in rows[:3])
+
+    if unique_count <= 1:
+        level = "single"
+        label = "단일 집중"
+    elif top_share_pct >= 60.0 or unique_count <= 2 or top3_share_pct >= 90.0:
+        level = "concentrated"
+        label = "집중형"
+    elif unique_count >= 5 and top_share_pct <= 35.0 and top3_share_pct <= 75.0:
+        level = "broad"
+        label = "분산형"
+    else:
+        level = "mixed"
+        label = "혼합형"
+
+    return {
+        "level": level,
+        "label": label,
+        "unique_count": unique_count,
+        "top_share_pct": round(top_share_pct, 2),
+        "top3_share_pct": round(top3_share_pct, 2),
+    }
+
+
+def _strategy_issue_bias(symbol_distribution: dict[str, Any], sector_distribution: dict[str, Any]) -> tuple[str, str]:
+    symbol_level = str(symbol_distribution.get("level") or "unknown")
+    sector_level = str(sector_distribution.get("level") or "unknown")
+
+    if symbol_level == "broad" and sector_level == "broad":
+        return "broad", "전략 전반 이슈"
+    if symbol_level in {"single", "concentrated"} or sector_level in {"single", "concentrated"}:
+        return "concentrated", "특정 종목/섹터 집중"
+    if symbol_level == "unknown" and sector_level == "unknown":
+        return "unknown", "판정 보류"
+    return "mixed", "혼합형"
+
+
+def _build_reason_concentration_verdicts(
+    trades: list[dict[str, Any]],
+    reason_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    verdicts: list[dict[str, Any]] = []
+
+    for reason_row in reason_rows:
+        gross_loss_pct = _to_float(reason_row.get("gross_loss_pct"), 0.0)
+        if gross_loss_pct <= 0:
+            continue
+
+        reason_key = str(reason_row.get("key") or "unknown")
+        reason_loss_trades = [
+            trade
+            for trade in trades
+            if _to_float(trade.get("pnl_pct"), 0.0) < 0
+            and _normalize_exit_reason(trade.get("reason"))[0] == reason_key
+        ]
+        if not reason_loss_trades:
+            continue
+
+        symbol_rows = _build_scope_weakness_rows(reason_loss_trades, scope="symbol")
+        sector_rows = _build_scope_weakness_rows(reason_loss_trades, scope="sector")
+        symbol_distribution = _classify_concentration(symbol_rows)
+        sector_distribution = _classify_concentration(sector_rows)
+        bias, bias_label = _strategy_issue_bias(symbol_distribution, sector_distribution)
+        top_symbol = symbol_rows[0] if symbol_rows else None
+        top_sector = sector_rows[0] if sector_rows else None
+
+        if bias == "broad":
+            summary = (
+                f"{reason_row['label']} 손실이 {symbol_distribution['unique_count']}개 종목 · {sector_distribution['unique_count']}개 섹터에 퍼져 있어 "
+                "전략 exit rule 점검이 먼저입니다."
+            )
+        elif bias == "concentrated":
+            focused_parts = []
+            if top_symbol:
+                focused_parts.append(str(top_symbol.get("label") or "미상 종목"))
+            if top_sector:
+                focused_parts.append(str(top_sector.get("label") or "미분류"))
+            focus_text = " / ".join(focused_parts) if focused_parts else "특정 구간"
+            summary = (
+                f"{reason_row['label']} 손실은 {focus_text} 쏠림이 커서 "
+                "개별 종목·섹터 편향 가능성이 큽니다."
+            )
+        else:
+            summary = (
+                f"{reason_row['label']} 손실은 일부 집중과 일부 분산이 섞여 있어 "
+                "룰 자체와 대상 편향을 같이 봐야 합니다."
+            )
+
+        verdicts.append(
+            {
+                "key": reason_key,
+                "label": reason_row.get("label") or reason_key,
+                "count": int(reason_row.get("count", 0) or 0),
+                "gross_loss_pct": round(gross_loss_pct, 4),
+                "loss_share_pct": round(_to_float(reason_row.get("loss_share_pct"), 0.0), 2),
+                "symbol_count": int(symbol_distribution.get("unique_count", 0) or 0),
+                "sector_count": int(sector_distribution.get("unique_count", 0) or 0),
+                "symbol_distribution_level": symbol_distribution.get("level"),
+                "symbol_distribution_label": symbol_distribution.get("label"),
+                "symbol_top_share_pct": round(_to_float(symbol_distribution.get("top_share_pct"), 0.0), 2),
+                "sector_distribution_level": sector_distribution.get("level"),
+                "sector_distribution_label": sector_distribution.get("label"),
+                "sector_top_share_pct": round(_to_float(sector_distribution.get("top_share_pct"), 0.0), 2),
+                "strategy_issue_bias": bias,
+                "strategy_issue_label": bias_label,
+                "top_symbols": symbol_rows[:3],
+                "top_sectors": sector_rows[:3],
+                "summary": summary,
+            }
+        )
+
+    bias_priority = {"concentrated": 2, "broad": 1, "mixed": 0, "unknown": -1}
+    verdicts.sort(
+        key=lambda item: (
+            bias_priority.get(str(item.get("strategy_issue_bias") or "unknown"), -1),
+            float(item.get("gross_loss_pct", 0.0)),
+            float(item.get("loss_share_pct", 0.0)),
+        ),
+        reverse=True,
+    )
+    return verdicts
+
+
+def _build_exit_reason_analysis(trades: list[dict[str, Any]], *, segment_label: str | None = None) -> dict[str, Any]:
+    segment_label = str(segment_label or "").strip()
+    total_trades = len(trades)
+    total_gross_loss = 0.0
+    total_gross_profit = 0.0
+    buckets: dict[str, dict[str, Any]] = {}
+
+    for trade in trades:
+        pnl_pct = _to_float(trade.get("pnl_pct"), 0.0)
+        holding_days = _to_float(trade.get("holding_days"), 0.0)
+        raw_reason = str(trade.get("reason") or "unknown")
+        key, label, category = _normalize_exit_reason(raw_reason)
+
+        bucket = buckets.setdefault(
+            key,
+            {
+                "key": key,
+                "label": label,
+                "category": category,
+                "count": 0,
+                "wins": 0,
+                "losses": 0,
+                "net_pnl_pct": 0.0,
+                "gross_profit_pct": 0.0,
+                "gross_loss_pct": 0.0,
+                "pnl_values": [],
+                "holding_days_values": [],
+                "win_values": [],
+                "loss_values": [],
+                "raw_reason_counts": {},
+            },
+        )
+        bucket["count"] += 1
+        bucket["net_pnl_pct"] += pnl_pct
+        bucket["pnl_values"].append(pnl_pct)
+        if holding_days > 0:
+            bucket["holding_days_values"].append(holding_days)
+
+        raw_counts = bucket["raw_reason_counts"]
+        raw_counts[raw_reason] = int(raw_counts.get(raw_reason, 0)) + 1
+
+        if pnl_pct > 0:
+            bucket["wins"] += 1
+            bucket["gross_profit_pct"] += pnl_pct
+            bucket["win_values"].append(pnl_pct)
+            total_gross_profit += pnl_pct
+        elif pnl_pct < 0:
+            bucket["losses"] += 1
+            bucket["gross_loss_pct"] += abs(pnl_pct)
+            bucket["loss_values"].append(pnl_pct)
+            total_gross_loss += abs(pnl_pct)
+
+    rows: list[dict[str, Any]] = []
+    for bucket in buckets.values():
+        count = max(1, int(bucket["count"]))
+        avg_pnl = _mean(bucket["pnl_values"])
+        row = {
+            "key": bucket["key"],
+            "label": bucket["label"],
+            "category": bucket["category"],
+            "count": int(bucket["count"]),
+            "share_of_trades_pct": round((bucket["count"] / max(1, total_trades)) * 100.0, 2),
+            "net_pnl_pct": round(bucket["net_pnl_pct"], 4),
+            "gross_pnl_pct": round(bucket["net_pnl_pct"], 4),
+            "gross_profit_pct": round(bucket["gross_profit_pct"], 4),
+            "gross_loss_pct": round(bucket["gross_loss_pct"], 4),
+            "profit_share_pct": round((bucket["gross_profit_pct"] / total_gross_profit) * 100.0, 2) if total_gross_profit > 0 else 0.0,
+            "loss_share_pct": round((bucket["gross_loss_pct"] / total_gross_loss) * 100.0, 2) if total_gross_loss > 0 else 0.0,
+            "avg_pnl_pct": round(avg_pnl, 4),
+            "median_pnl_pct": round(_median(bucket["pnl_values"]), 4),
+            "avg_win_pct": round(_mean(bucket["win_values"]), 4),
+            "avg_loss_pct": round(_mean(bucket["loss_values"]), 4),
+            "win_rate_pct": round((bucket["wins"] / count) * 100.0, 2),
+            "loss_rate_pct": round((bucket["losses"] / count) * 100.0, 2),
+            "avg_holding_days": round(_mean(bucket["holding_days_values"]), 2),
+            "raw_reasons": [
+                raw_reason
+                for raw_reason, _count in sorted(
+                    bucket["raw_reason_counts"].items(),
+                    key=lambda item: (-int(item[1]), str(item[0])),
+                )
+            ],
+        }
+        rows.append(row)
+
+    rows.sort(
+        key=lambda item: (
+            float(item.get("gross_loss_pct", 0.0)),
+            -float(item.get("gross_profit_pct", 0.0)),
+            int(item.get("count", 0)),
+            -float(item.get("avg_pnl_pct", 0.0)),
+        ),
+        reverse=True,
+    )
+
+    symbol_weaknesses = _build_scope_weakness_rows(trades, scope="symbol")
+    sector_weaknesses = _build_scope_weakness_rows(trades, scope="sector")
+    concentration_verdicts = _build_reason_concentration_verdicts(trades, rows)
+
+    loss_focus = [item for item in rows if float(item.get("gross_loss_pct", 0.0)) > 0][:3]
+    profit_focus = [item for item in sorted(rows, key=lambda item: float(item.get("gross_profit_pct", 0.0)), reverse=True) if float(item.get("gross_profit_pct", 0.0)) > 0][:2]
+
+    prefix = f"{segment_label} " if segment_label else ""
+    summary_lines: list[str] = []
+    if not rows:
+        summary_lines.append(f"{prefix}청산 사유 데이터가 아직 없습니다.")
+    else:
+        if loss_focus:
+            top_loss = loss_focus[0]
+            summary_lines.append(
+                f"{prefix}{top_loss['label']} 쪽 손실이 큽니다. 총손실 비중 {top_loss['loss_share_pct']:.1f}% · 평균 {top_loss['avg_pnl_pct']:.2f}%"
+            )
+        if len(loss_focus) >= 2:
+            secondary_loss = loss_focus[1]
+            summary_lines.append(
+                f"{prefix}{secondary_loss['label']}도 약점입니다. {secondary_loss['count']}건 · 평균 {secondary_loss['avg_pnl_pct']:.2f}%"
+            )
+        if profit_focus:
+            top_profit = profit_focus[0]
+            summary_lines.append(
+                f"{prefix}{top_profit['label']}은 이익 잠금 역할입니다. 이익 기여 {top_profit['profit_share_pct']:.1f}%"
+            )
+        if concentration_verdicts:
+            summary_lines.append(f"{prefix}{str(concentration_verdicts[0].get('summary') or '')}")
+
+    focus_items: list[dict[str, Any]] = []
+    for row in loss_focus:
+        focus_items.append(
+            {
+                "kind": "loss_driver",
+                "key": row["key"],
+                "label": row["label"],
+                "count": row["count"],
+                "summary": f"{row['label']} {row['count']}건 · 손실 비중 {row['loss_share_pct']:.1f}% · 평균 {row['avg_pnl_pct']:.2f}%",
+                "gross_loss_pct": row["gross_loss_pct"],
+                "loss_share_pct": row["loss_share_pct"],
+                "avg_pnl_pct": row["avg_pnl_pct"],
+            }
+        )
+    for row in profit_focus[:1]:
+        focus_items.append(
+            {
+                "kind": "profit_capture",
+                "key": row["key"],
+                "label": row["label"],
+                "count": row["count"],
+                "summary": f"{row['label']} {row['count']}건 · 이익 기여 {row['profit_share_pct']:.1f}% · 평균 {row['avg_pnl_pct']:.2f}%",
+                "gross_profit_pct": row["gross_profit_pct"],
+                "profit_share_pct": row["profit_share_pct"],
+                "avg_pnl_pct": row["avg_pnl_pct"],
+            }
+        )
+
+    return {
+        "trade_count": total_trades,
+        "gross_loss_pct": round(total_gross_loss, 4),
+        "gross_profit_pct": round(total_gross_profit, 4),
+        "net_pnl_pct": round(sum(_to_float(trade.get("pnl_pct"), 0.0) for trade in trades), 4),
+        "reasons": rows,
+        "symbol_weaknesses": symbol_weaknesses[:6],
+        "sector_weaknesses": sector_weaknesses[:6],
+        "concentration_verdicts": concentration_verdicts[:6],
+        "focus_items": focus_items,
+        "summary_lines": summary_lines,
+    }
+
+
+def _build_exit_reason_cluster_summary(segment_analysis: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    segment_labels = {"train": "학습", "validation": "검증", "oos": "OOS"}
+    segment_priority = {"train": 0, "validation": 1, "oos": 2}
+
+    weakness_clusters: list[dict[str, Any]] = []
+    persistent: dict[str, dict[str, Any]] = {}
+
+    for segment, analysis in segment_analysis.items():
+        rows = analysis.get("reasons") if isinstance(analysis.get("reasons"), list) else []
+        for row in rows:
+            gross_loss_pct = _to_float(row.get("gross_loss_pct"), 0.0)
+            if gross_loss_pct <= 0:
+                continue
+
+            weakness_clusters.append(
+                {
+                    "segment": segment,
+                    "segment_label": segment_labels.get(segment, segment),
+                    "key": row.get("key"),
+                    "label": row.get("label"),
+                    "count": int(row.get("count", 0) or 0),
+                    "gross_loss_pct": round(gross_loss_pct, 4),
+                    "loss_share_pct": round(_to_float(row.get("loss_share_pct"), 0.0), 2),
+                    "avg_pnl_pct": round(_to_float(row.get("avg_pnl_pct"), 0.0), 4),
+                    "summary": f"{segment_labels.get(segment, segment)}에서 {row.get('label')} {int(row.get('count', 0) or 0)}건 · 손실 비중 {_to_float(row.get('loss_share_pct'), 0.0):.1f}%",
+                }
+            )
+
+            if segment not in {"validation", "oos"}:
+                continue
+
+            key = str(row.get("key") or "unknown")
+            bucket = persistent.setdefault(
+                key,
+                {
+                    "key": key,
+                    "label": row.get("label") or key,
+                    "segments": [],
+                    "combined_gross_loss_pct": 0.0,
+                    "combined_count": 0,
+                    "max_loss_share_pct": 0.0,
+                },
+            )
+            bucket["segments"].append(segment)
+            bucket["combined_gross_loss_pct"] += gross_loss_pct
+            bucket["combined_count"] += int(row.get("count", 0) or 0)
+            bucket["max_loss_share_pct"] = max(bucket["max_loss_share_pct"], _to_float(row.get("loss_share_pct"), 0.0))
+
+    weakness_clusters.sort(
+        key=lambda item: (
+            segment_priority.get(str(item.get("segment") or "train"), 0),
+            float(item.get("loss_share_pct", 0.0)),
+            float(item.get("gross_loss_pct", 0.0)),
+            int(item.get("count", 0)),
+        ),
+        reverse=True,
+    )
+
+    persistent_negative_reasons = [
+        {
+            **item,
+            "segments": sorted(set(item["segments"]), key=lambda segment: segment_priority.get(segment, 0)),
+            "combined_gross_loss_pct": round(item["combined_gross_loss_pct"], 4),
+            "max_loss_share_pct": round(item["max_loss_share_pct"], 2),
+            "summary": f"검증/OOS에서 {item['label']} 약점이 반복됩니다. 누적 손실 {item['combined_gross_loss_pct']:.2f}% · 최대 비중 {item['max_loss_share_pct']:.1f}%",
+        }
+        for item in persistent.values()
+        if len(set(item["segments"])) >= 2
+    ]
+    persistent_negative_reasons.sort(
+        key=lambda item: (
+            float(item.get("combined_gross_loss_pct", 0.0)),
+            float(item.get("max_loss_share_pct", 0.0)),
+            int(item.get("combined_count", 0)),
+        ),
+        reverse=True,
+    )
+
+    headlines: list[str] = []
+    if weakness_clusters:
+        top_cluster = weakness_clusters[0]
+        headlines.append(
+            f"{top_cluster['segment_label']} 약점은 {top_cluster['label']}입니다. 손실 비중 {top_cluster['loss_share_pct']:.1f}%"
+        )
+    if persistent_negative_reasons:
+        headlines.append(str(persistent_negative_reasons[0].get("summary") or ""))
+    concentration_headline = None
+    for segment in ("oos", "validation"):
+        verdicts = segment_analysis.get(segment, {}).get("concentration_verdicts")
+        if isinstance(verdicts, list) and verdicts:
+            concentration_headline = str(verdicts[0].get("summary") or "")
+            if concentration_headline:
+                break
+    if concentration_headline:
+        headlines.append(concentration_headline)
+
+    return {
+        "weakness_clusters": weakness_clusters[:8],
+        "persistent_negative_reasons": persistent_negative_reasons[:5],
+        "headlines": headlines,
+    }
 
 
 def _walk_forward_positive_ratio(windows: list[dict[str, Any]]) -> float:
@@ -526,6 +1188,7 @@ def run_backtest_with_extended_metrics(query: dict[str, list[str]]) -> dict[str,
     payload.setdefault("metrics", {})
     payload["metrics"].update(_segment_metrics(equity_curve, trades))
     payload["metrics"]["exit_reason_stats"] = _exit_reason_stats(trades)
+    payload["metrics"]["exit_reason_analysis"] = _build_exit_reason_analysis(trades, segment_label="백테스트")
     payload["metrics"]["regime_stats"] = _regime_stats_from_curve(equity_curve)
     payload["reliability_diagnostic"] = build_reliability_diagnostic(
         trade_count=int(payload["metrics"].get("trade_count", 0) or 0),
@@ -644,6 +1307,22 @@ def run_walk_forward_validation(query: dict[str, list[str]]) -> dict[str, Any]:
     train_scorecard = _build_strategy_scorecard(train_metrics, train_trades)
     validation_scorecard = _build_strategy_scorecard(validation_metrics, val_trades)
     oos_scorecard = _build_strategy_scorecard(oos_metrics, oos_trades)
+    train_exit_reason_analysis = _build_exit_reason_analysis(train_trades, segment_label="학습")
+    validation_exit_reason_analysis = _build_exit_reason_analysis(val_trades, segment_label="검증")
+    oos_exit_reason_analysis = _build_exit_reason_analysis(oos_trades, segment_label="OOS")
+    walk_forward_exit_reason_analysis = {
+        "overall": _build_exit_reason_analysis(trades),
+        "train": train_exit_reason_analysis,
+        "validation": validation_exit_reason_analysis,
+        "oos": oos_exit_reason_analysis,
+        **_build_exit_reason_cluster_summary(
+            {
+                "train": train_exit_reason_analysis,
+                "validation": validation_exit_reason_analysis,
+                "oos": oos_exit_reason_analysis,
+            }
+        ),
+    }
     positive_oos_windows = sum(1 for item in windows if _to_float((item.get("metrics") or {}).get("total_return_pct"), 0.0) > 0)
     positive_window_ratio = round(_walk_forward_positive_ratio(windows), 4)
     reliability = _classify_walk_forward_reliability(
@@ -680,9 +1359,9 @@ def run_walk_forward_validation(query: dict[str, list[str]]) -> dict[str, Any]:
             },
         },
         "segments": {
-            "train": {**train_metrics, "strategy_scorecard": train_scorecard},
-            "validation": {**validation_metrics, "strategy_scorecard": validation_scorecard},
-            "oos": {**oos_metrics, "strategy_scorecard": oos_scorecard},
+            "train": {**train_metrics, "strategy_scorecard": train_scorecard, "exit_reason_analysis": train_exit_reason_analysis},
+            "validation": {**validation_metrics, "strategy_scorecard": validation_scorecard, "exit_reason_analysis": validation_exit_reason_analysis},
+            "oos": {**oos_metrics, "strategy_scorecard": oos_scorecard, "exit_reason_analysis": oos_exit_reason_analysis},
         },
         "rolling_windows": windows,
         "summary": {
@@ -693,6 +1372,7 @@ def run_walk_forward_validation(query: dict[str, list[str]]) -> dict[str, Any]:
             "reliability_diagnostic": reliability_diagnostic,
             "composite_score": oos_scorecard.get("composite_score"),
             "exit_reason_stats": _exit_reason_stats(trades),
+            "exit_reason_analysis": walk_forward_exit_reason_analysis,
             "regime_stats": _regime_stats_from_curve(equity_curve),
         },
         "scorecard": oos_scorecard,

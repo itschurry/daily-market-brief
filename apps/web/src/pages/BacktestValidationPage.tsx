@@ -13,7 +13,7 @@ import {
 import { useToast } from '../hooks/useToast';
 import type { BacktestData, BacktestQuery, BacktestTrade } from '../types';
 import type { ActionBarStatusItem, BacktestViewModel, ConsoleSnapshot } from '../types/consoleView';
-import type { ValidationResponse } from '../types/domain';
+import type { ExitReasonAnalysisPayload, ExitReasonAnalysisRow, ExitReasonConcentrationVerdict, ExitReasonPersistentWeakness, ExitReasonWeaknessCluster, ExitScopeWeaknessRow, ValidationResponse, ValidationWalkForwardExitReasonPayload } from '../types/domain';
 import {
   buildScoreComponentRows,
   buildTailRiskRows,
@@ -111,7 +111,17 @@ function metricNumber(metrics: Record<string, unknown> | undefined, key: string)
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function aggregateByReason(trades: BacktestTrade[]): Array<{ reason: string; count: number; avgPnlPct: number }> {
+function readExitReasonAnalysis(value: unknown): ExitReasonAnalysisPayload | null {
+  if (!value || typeof value !== 'object') return null;
+  return value as ExitReasonAnalysisPayload;
+}
+
+function readWalkForwardExitReasonSummary(value: unknown): ValidationWalkForwardExitReasonPayload | null {
+  if (!value || typeof value !== 'object') return null;
+  return value as ValidationWalkForwardExitReasonPayload;
+}
+
+function aggregateByReason(trades: BacktestTrade[]): ExitReasonAnalysisRow[] {
   const bucket = new Map<string, { count: number; sum: number }>();
   for (const trade of trades) {
     const reason = trade.reason || '기타';
@@ -122,12 +132,84 @@ function aggregateByReason(trades: BacktestTrade[]): Array<{ reason: string; cou
   }
   return [...bucket.entries()]
     .map(([reason, item]) => ({
-      reason,
+      key: reason,
+      label: reason,
       count: item.count,
-      avgPnlPct: item.count > 0 ? item.sum / item.count : 0,
+      avg_pnl_pct: item.count > 0 ? item.sum / item.count : 0,
     }))
-    .sort((left, right) => right.count - left.count)
+    .sort((left, right) => Number(right.count || 0) - Number(left.count || 0))
     .slice(0, 8);
+}
+
+function topLossReason(analysis: ExitReasonAnalysisPayload | null | undefined): ExitReasonAnalysisRow | null {
+  if (!analysis?.reasons || analysis.reasons.length === 0) return null;
+  const negatives = analysis.reasons.filter((item) => Number(item.gross_loss_pct || 0) > 0);
+  return negatives[0] || analysis.reasons[0] || null;
+}
+
+function reasonRowTone(row: ExitReasonAnalysisRow | null | undefined): 'neutral' | 'good' | 'bad' {
+  if (!row) return 'neutral';
+  if (Number(row.gross_loss_pct || 0) > 0 || Number(row.avg_pnl_pct || 0) < 0) return 'bad';
+  if (Number(row.gross_profit_pct || 0) > 0 || Number(row.avg_pnl_pct || 0) > 0) return 'good';
+  return 'neutral';
+}
+
+function formatExitReasonDetail(row: ExitReasonAnalysisRow): string {
+  const parts = [
+    `거래 ${formatCount(row.count, '건')}`,
+    `평균 ${formatPercent(row.avg_pnl_pct ?? null, 2)}`,
+  ];
+  if (row.loss_share_pct !== undefined && row.loss_share_pct !== null && Number(row.loss_share_pct) > 0) {
+    parts.push(`손실 비중 ${formatPercent(row.loss_share_pct, 1)}`);
+  } else if (row.profit_share_pct !== undefined && row.profit_share_pct !== null && Number(row.profit_share_pct) > 0) {
+    parts.push(`이익 기여 ${formatPercent(row.profit_share_pct, 1)}`);
+  }
+  if (row.avg_holding_days !== undefined && row.avg_holding_days !== null && Number(row.avg_holding_days) > 0) {
+    parts.push(`평균 보유 ${formatNumber(row.avg_holding_days, 1)}일`);
+  }
+  return parts.join(' · ');
+}
+
+function formatScopeWeaknessDetail(row: ExitScopeWeaknessRow): string {
+  const parts = [
+    `손실 거래 ${formatCount(row.loss_trades ?? row.count ?? null, '건')}`,
+    `누적 손실 ${formatPercent(row.gross_loss_pct ?? null, 2)}`,
+  ];
+  if (row.loss_share_pct !== undefined && row.loss_share_pct !== null && Number(row.loss_share_pct) > 0) {
+    parts.push(`손실 비중 ${formatPercent(row.loss_share_pct, 1)}`);
+  }
+  if (row.top_reason_label) {
+    parts.push(`${row.top_reason_label} ${formatPercent(row.top_reason_loss_share_pct ?? null, 1)}`);
+  }
+  if (Array.isArray(row.markets) && row.markets.length > 0) {
+    parts.push(row.markets.join('/'));
+  }
+  return parts.join(' · ');
+}
+
+function topScopeWeakness(analysis: ExitReasonAnalysisPayload | null | undefined, scope: 'symbol' | 'sector'): ExitScopeWeaknessRow | null {
+  const rows = scope === 'symbol' ? analysis?.symbol_weaknesses : analysis?.sector_weaknesses;
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  return rows[0] || null;
+}
+
+function concentrationTone(verdict: ExitReasonConcentrationVerdict | null | undefined): 'neutral' | 'bad' {
+  if (!verdict) return 'neutral';
+  if (verdict.strategy_issue_bias === 'mixed') return 'neutral';
+  if (verdict.strategy_issue_bias === 'unknown') return 'neutral';
+  return 'bad';
+}
+
+function formatConcentrationDetail(verdict: ExitReasonConcentrationVerdict | null | undefined): string {
+  if (!verdict) return '종목/섹터 집중도 데이터가 아직 없습니다.';
+  const parts = [verdict.summary || ''];
+  if (verdict.symbol_distribution_label) {
+    parts.push(`종목 ${verdict.symbol_distribution_label} ${formatPercent(verdict.symbol_top_share_pct ?? null, 1)}`);
+  }
+  if (verdict.sector_distribution_label) {
+    parts.push(`섹터 ${verdict.sector_distribution_label} ${formatPercent(verdict.sector_top_share_pct ?? null, 1)}`);
+  }
+  return parts.filter(Boolean).join(' · ');
 }
 
 function formatElapsed(startedAt: string) {
@@ -308,7 +390,76 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   const validationResult = executedRun?.validation || snapshot.validation;
   const metrics = activeBacktest?.metrics as Record<string, unknown> | undefined;
   const oos = validationResult.segments?.oos;
-  const reasonRows = useMemo(() => aggregateByReason(activeBacktest?.trades || []), [activeBacktest?.trades]);
+  const exitReasonSummary = useMemo(
+    () => readWalkForwardExitReasonSummary(validationResult.summary?.exit_reason_analysis),
+    [validationResult.summary?.exit_reason_analysis],
+  );
+  const backtestExitReasonAnalysis = useMemo(
+    () => readExitReasonAnalysis(metrics?.exit_reason_analysis),
+    [metrics?.exit_reason_analysis],
+  );
+  const validationExitReasonAnalysis = useMemo(
+    () => exitReasonSummary?.validation || readExitReasonAnalysis(validationResult.segments?.validation?.exit_reason_analysis),
+    [exitReasonSummary?.validation, validationResult.segments?.validation?.exit_reason_analysis],
+  );
+  const oosExitReasonAnalysis = useMemo(
+    () => exitReasonSummary?.oos || readExitReasonAnalysis(validationResult.segments?.oos?.exit_reason_analysis) || backtestExitReasonAnalysis,
+    [backtestExitReasonAnalysis, exitReasonSummary?.oos, validationResult.segments?.oos?.exit_reason_analysis],
+  );
+  const overallExitReasonAnalysis = useMemo(
+    () => exitReasonSummary?.overall || backtestExitReasonAnalysis,
+    [backtestExitReasonAnalysis, exitReasonSummary?.overall],
+  );
+  const exitWeaknessClusters = useMemo<ExitReasonWeaknessCluster[]>(
+    () => (Array.isArray(exitReasonSummary?.weakness_clusters) ? exitReasonSummary.weakness_clusters : []),
+    [exitReasonSummary?.weakness_clusters],
+  );
+  const persistentExitReasons = useMemo<ExitReasonPersistentWeakness[]>(
+    () => (Array.isArray(exitReasonSummary?.persistent_negative_reasons) ? exitReasonSummary.persistent_negative_reasons : []),
+    [exitReasonSummary?.persistent_negative_reasons],
+  );
+  const reasonRows = useMemo(
+    () => {
+      if (Array.isArray(oosExitReasonAnalysis?.reasons) && oosExitReasonAnalysis.reasons.length > 0) return oosExitReasonAnalysis.reasons.slice(0, 6);
+      if (Array.isArray(validationExitReasonAnalysis?.reasons) && validationExitReasonAnalysis.reasons.length > 0) return validationExitReasonAnalysis.reasons.slice(0, 6);
+      if (Array.isArray(overallExitReasonAnalysis?.reasons) && overallExitReasonAnalysis.reasons.length > 0) return overallExitReasonAnalysis.reasons.slice(0, 6);
+      return aggregateByReason(activeBacktest?.trades || []);
+    },
+    [activeBacktest?.trades, oosExitReasonAnalysis?.reasons, overallExitReasonAnalysis?.reasons, validationExitReasonAnalysis?.reasons],
+  );
+  const oosTopLossReason = useMemo(() => topLossReason(oosExitReasonAnalysis), [oosExitReasonAnalysis]);
+  const persistentTopReason = persistentExitReasons[0] || null;
+  const exitHeadlines = useMemo(
+    () => {
+      if (Array.isArray(exitReasonSummary?.headlines) && exitReasonSummary.headlines.length > 0) return exitReasonSummary.headlines;
+      return [
+        ...(oosExitReasonAnalysis?.summary_lines || []),
+        ...(validationExitReasonAnalysis?.summary_lines || []),
+      ].slice(0, 4);
+    },
+    [exitReasonSummary?.headlines, oosExitReasonAnalysis?.summary_lines, validationExitReasonAnalysis?.summary_lines],
+  );
+  const oosSymbolWeakness = useMemo(() => topScopeWeakness(oosExitReasonAnalysis, 'symbol'), [oosExitReasonAnalysis]);
+  const validationSymbolWeakness = useMemo(() => topScopeWeakness(validationExitReasonAnalysis, 'symbol'), [validationExitReasonAnalysis]);
+  const overallSymbolWeakness = useMemo(() => topScopeWeakness(overallExitReasonAnalysis, 'symbol'), [overallExitReasonAnalysis]);
+  const oosSectorWeakness = useMemo(() => topScopeWeakness(oosExitReasonAnalysis, 'sector'), [oosExitReasonAnalysis]);
+  const validationSectorWeakness = useMemo(() => topScopeWeakness(validationExitReasonAnalysis, 'sector'), [validationExitReasonAnalysis]);
+  const overallSectorWeakness = useMemo(() => topScopeWeakness(overallExitReasonAnalysis, 'sector'), [overallExitReasonAnalysis]);
+  const primarySymbolWeakness = oosSymbolWeakness || validationSymbolWeakness || overallSymbolWeakness || null;
+  const primarySectorWeakness = oosSectorWeakness || validationSectorWeakness || overallSectorWeakness || null;
+  const oosConcentrationVerdict = useMemo<ExitReasonConcentrationVerdict | null>(
+    () => (Array.isArray(oosExitReasonAnalysis?.concentration_verdicts) ? oosExitReasonAnalysis.concentration_verdicts[0] || null : null),
+    [oosExitReasonAnalysis?.concentration_verdicts],
+  );
+  const validationConcentrationVerdict = useMemo<ExitReasonConcentrationVerdict | null>(
+    () => (Array.isArray(validationExitReasonAnalysis?.concentration_verdicts) ? validationExitReasonAnalysis.concentration_verdicts[0] || null : null),
+    [validationExitReasonAnalysis?.concentration_verdicts],
+  );
+  const overallConcentrationVerdict = useMemo<ExitReasonConcentrationVerdict | null>(
+    () => (Array.isArray(overallExitReasonAnalysis?.concentration_verdicts) ? overallExitReasonAnalysis.concentration_verdicts[0] || null : null),
+    [overallExitReasonAnalysis?.concentration_verdicts],
+  );
+  const primaryConcentrationVerdict = oosConcentrationVerdict || validationConcentrationVerdict || overallConcentrationVerdict || null;
 
   const viewModel = useMemo<BacktestViewModel>(() => ({
     totalReturnPct: metricNumber(metrics, 'total_return_pct'),
@@ -1097,6 +1248,104 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 </div>
               )}
 
+              {(oosExitReasonAnalysis || validationExitReasonAnalysis || exitWeaknessClusters.length > 0) && (
+                <div className="page-section" style={{ padding: 16 }}>
+                  <div className="section-head-row">
+                    <div>
+                      <div className="section-title">청산 사유 손실 맵</div>
+                      <div className="section-copy">손절·이평 이탈·MACD 약세·보유기간 만료 같은 exit가 검증/OOS에서 왜 문제인지, 그리고 특정 종목·섹터 쏠림인지 한 번에 봅니다.</div>
+                    </div>
+                    <div className={`inline-badge ${exitWeaknessClusters.length > 0 ? 'is-warning' : 'is-success'}`}>
+                      {exitWeaknessClusters.length > 0 ? '약점 클러스터 포착' : '청산 이슈 없음'}
+                    </div>
+                  </div>
+
+                  <div className="summary-metric-grid" style={{ marginTop: 12 }}>
+                    <SummaryMetricCard
+                      label="OOS 최대 손실 사유"
+                      value={oosTopLossReason?.label || '-'}
+                      detail={oosTopLossReason ? formatExitReasonDetail(oosTopLossReason) : 'OOS 청산 데이터가 없습니다.'}
+                      tone={reasonRowTone(oosTopLossReason)}
+                    />
+                    <SummaryMetricCard
+                      label="손실 집중 종목"
+                      value={primarySymbolWeakness?.label || '-'}
+                      detail={primarySymbolWeakness ? formatScopeWeaknessDetail(primarySymbolWeakness) : '문제 종목 데이터가 없습니다.'}
+                      tone={primarySymbolWeakness ? 'bad' : 'neutral'}
+                    />
+                    <SummaryMetricCard
+                      label="손실 집중 섹터"
+                      value={primarySectorWeakness?.label || '-'}
+                      detail={primarySectorWeakness ? formatScopeWeaknessDetail(primarySectorWeakness) : '문제 섹터 데이터가 없습니다.'}
+                      tone={primarySectorWeakness ? 'bad' : 'neutral'}
+                    />
+                    <SummaryMetricCard
+                      label="구조 판정"
+                      value={primaryConcentrationVerdict?.strategy_issue_label || '-'}
+                      detail={formatConcentrationDetail(primaryConcentrationVerdict)}
+                      tone={concentrationTone(primaryConcentrationVerdict)}
+                    />
+                  </div>
+
+                  <div className="validation-report-grid" style={{ marginTop: 12 }}>
+                    <div className="detail-list">
+                      <div><strong>OOS 상위 청산 사유</strong></div>
+                      {(oosExitReasonAnalysis?.reasons || []).slice(0, 4).map((row) => (
+                        <div key={`oos-${row.key || row.label}`}>
+                          {row.label || row.key || '기타'} · {formatExitReasonDetail(row)}
+                        </div>
+                      ))}
+                      {(!oosExitReasonAnalysis?.reasons || oosExitReasonAnalysis.reasons.length === 0) && <div>OOS 청산 사유가 아직 없습니다.</div>}
+                    </div>
+                    <div className="detail-list">
+                      <div><strong>검증/OOS 해석</strong></div>
+                      {exitHeadlines.slice(0, 3).map((line, index) => (
+                        <div key={`exit-headline-${index}`}>{line}</div>
+                      ))}
+                      {primaryConcentrationVerdict?.summary && <div>{primaryConcentrationVerdict.summary}</div>}
+                      {persistentTopReason && (
+                        <div>
+                          반복 약점 {persistentTopReason.label || '-'} · {(persistentTopReason.segments || []).join(' → ')} 반복 · 누적 손실 {formatPercent(persistentTopReason.combined_gross_loss_pct ?? null, 2)}
+                        </div>
+                      )}
+                      {(validationExitReasonAnalysis?.reasons || []).slice(0, 2).map((row) => (
+                        <div key={`validation-${row.key || row.label}`}>
+                          검증 {row.label || row.key || '기타'} · {formatExitReasonDetail(row)}
+                        </div>
+                      ))}
+                      {exitHeadlines.length === 0 && !primaryConcentrationVerdict?.summary && !persistentTopReason && (!validationExitReasonAnalysis?.reasons || validationExitReasonAnalysis.reasons.length === 0) && <div>검증/OOS 청산 인사이트가 아직 없습니다.</div>}
+                    </div>
+                  </div>
+
+                  <div className="validation-report-grid" style={{ marginTop: 12 }}>
+                    <div className="detail-list">
+                      <div><strong>문제 종목 상위</strong></div>
+                      {(oosExitReasonAnalysis?.symbol_weaknesses || validationExitReasonAnalysis?.symbol_weaknesses || overallExitReasonAnalysis?.symbol_weaknesses || []).slice(0, 4).map((row) => (
+                        <div key={`symbol-${row.key || row.label}`}>
+                          {row.label || row.key || '기타'} · {formatScopeWeaknessDetail(row)}
+                        </div>
+                      ))}
+                      {(!oosExitReasonAnalysis?.symbol_weaknesses || oosExitReasonAnalysis.symbol_weaknesses.length === 0)
+                        && (!validationExitReasonAnalysis?.symbol_weaknesses || validationExitReasonAnalysis.symbol_weaknesses.length === 0)
+                        && (!overallExitReasonAnalysis?.symbol_weaknesses || overallExitReasonAnalysis.symbol_weaknesses.length === 0)
+                        && <div>문제 종목 데이터가 아직 없습니다.</div>}
+                    </div>
+                    <div className="detail-list">
+                      <div><strong>문제 섹터 상위</strong></div>
+                      {(oosExitReasonAnalysis?.sector_weaknesses || validationExitReasonAnalysis?.sector_weaknesses || overallExitReasonAnalysis?.sector_weaknesses || []).slice(0, 4).map((row) => (
+                        <div key={`sector-${row.key || row.label}`}>
+                          {row.label || row.key || '기타'} · {formatScopeWeaknessDetail(row)}
+                        </div>
+                      ))}
+                      {(!oosExitReasonAnalysis?.sector_weaknesses || oosExitReasonAnalysis.sector_weaknesses.length === 0)
+                        && (!validationExitReasonAnalysis?.sector_weaknesses || validationExitReasonAnalysis.sector_weaknesses.length === 0)
+                        && (!overallExitReasonAnalysis?.sector_weaknesses || overallExitReasonAnalysis.sector_weaknesses.length === 0)
+                        && <div>문제 섹터 데이터가 아직 없습니다.</div>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="validation-report-grid">
                 <div className="page-section" style={{ padding: 16 }}>
                   <div className="section-title">구간 성과</div>
@@ -1250,12 +1499,12 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 </div>
               </div>
               <div>
-                <div className="section-subtitle">사유별 성과</div>
+                <div className="section-subtitle">OOS 청산 사유 요약</div>
                 <div className="history-list">
                   {reasonRows.map((row) => (
-                    <div key={row.reason} className="history-item">
-                      <div>{row.reason}</div>
-                      <div className="history-item-copy">거래 {formatCount(row.count, '건')} · 평균 {formatPercent(row.avgPnlPct, 2)}</div>
+                    <div key={row.key || row.label} className="history-item">
+                      <div>{row.label || row.key || '기타'}</div>
+                      <div className="history-item-copy">{formatExitReasonDetail(row)}</div>
                     </div>
                   ))}
                   {reasonRows.length === 0 && <div className="empty-inline">{UI_TEXT.empty.noReasonBreakdown}</div>}
