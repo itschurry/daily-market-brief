@@ -108,6 +108,10 @@ curl http://127.0.0.1:8001/api/system/notifications/status
 
 ## 3. 리포트 / 브리프 계열
 
+이 섹션은 **AI·테마·뉴스 추천 모드**에 더 가깝습니다.
+반대로 백테스트 / walk-forward / 최적화는 아래 `검증 / 백테스트 / 최적화` 섹션이 담당합니다.
+두 모드는 운영상 함께 읽지만, API 의미상으로는 교집합 강제가 아니라 역할 분리 + downstream 합집합 흐름으로 보는 편이 맞습니다.
+
 ## 3-1. `GET /api/reports`
 
 사용 가능한 리포트 날짜 또는 리포트 목록 조회.
@@ -190,6 +194,9 @@ curl "http://127.0.0.1:8001/api/analysis?date=2026-03-31"
 
 추천 종목 목록 조회.
 
+이 API는 AI·테마·뉴스 추천 모드의 기본 입력 중 하나입니다.
+퀀트 백테스트를 통과한 종목만 반환하는 API로 보면 안 되고, downstream에서는 `today_picks` 와 함께 합집합 후보 흐름으로 해석합니다.
+
 쿼리 파라미터:
 
 - `date` 선택. 비우면 최신/전략 엔진 기준
@@ -232,6 +239,9 @@ curl http://127.0.0.1:8001/api/recommendations
 ## 3-6. `GET /api/today-picks?date=YYYY-MM-DD`
 
 오늘의 픽 조회.
+
+운영상으로는 downstream 후보 선택에서 `recommendations` 보다 우선되는 브리핑 소스로 보는 편이 맞습니다.
+단, 둘 다 동시에 있어야 한다는 뜻은 아니고 없으면 `recommendations` 가 fallback 역할을 합니다.
 
 쿼리 파라미터:
 
@@ -390,6 +400,12 @@ curl http://127.0.0.1:8001/api/live-market
 
 시그널 랭킹 조회.
 
+의미:
+
+- quant 백테스트 화면 자체를 반환하는 API는 아님
+- `today_picks` 우선 / `recommendations` fallback 후보 흐름 위에 validation gate, EV, liquidity, sizing을 얹은 downstream 신호 뷰에 가까움
+- 즉 두 전략 모드의 교집합만 보여주는 API가 아니라, 합집합 후보 흐름을 runtime 관점에서 정리한 API로 보면 됨
+
 ```bash
 curl http://127.0.0.1:8001/api/signals/rank
 ```
@@ -495,6 +511,9 @@ curl "http://127.0.0.1:8001/api/portfolio/state?refresh=1"
 ---
 
 ## 6. 검증 / 백테스트 / 최적화
+
+이 섹션은 **퀀트 트레이딩 모드 전용**입니다.
+여기서 다루는 결과는 전략 채택, OOS 신뢰도, 최적화 파라미터를 위한 것이고, AI·테마·뉴스 추천 자체를 검증하는 API는 아닙니다.
 
 ## 6-1. `GET /api/backtest/run`
 
@@ -893,6 +912,12 @@ curl -X POST http://127.0.0.1:8001/api/paper/reset \
 
 추천 기반 자동 투자 액션 1회 실행.
 
+중요 의미:
+
+- 후보 입력은 `today_picks` 우선 / `recommendations` fallback 흐름을 사용함
+- quant 검증 결과는 validation gate, sizing, optimized params 쪽에서 별도로 반영됨
+- 즉 quant와 AI 추천이 둘 다 동시에 일치해야만 주문 후보가 되는 교집합 모델은 아님
+
 ### 요청 body
 
 웹 클라이언트 기준 허용 필드:
@@ -926,6 +951,11 @@ curl -X POST http://127.0.0.1:8001/api/paper/reset \
 ## 8-5. `POST /api/paper/engine/start`
 
 모의투자 엔진 시작.
+
+운영 해석:
+
+- 엔진은 quant validation gate와 AI 추천 candidate flow를 함께 사용함
+- 하지만 두 모드를 교집합으로 묶는 게 아니라, combined candidate flow 위에 gate를 얹는 방식으로 읽는 편이 정확함
 
 ### 요청 body
 
