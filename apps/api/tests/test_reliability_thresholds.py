@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 import sys
+import json
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -37,7 +38,11 @@ from services.reliability_policy import (
     select_global_overlay_candidates,
     should_apply_symbol_overlay,
 )
-from services.reliability_service import assess_validation_reliability
+from services.reliability_service import (
+    assess_validation_reliability,
+    build_reliability_diagnostic,
+    find_minimal_reliability_uplift,
+)
 from services.validation_service import _classify_walk_forward_reliability
 
 
@@ -213,6 +218,61 @@ class SharedReliabilityServiceTests(unittest.TestCase):
         self.assertEqual(payload["reliability"], "medium")
         self.assertEqual(payload["reliability_detail"]["reason"], "borderline_train_trades")
         self.assertTrue(payload["calibration"]["passes_minimum_gate"])
+
+    def test_reliability_diagnostic_reports_blocking_gaps_for_low_candidate(self):
+        diagnostic = build_reliability_diagnostic(
+            trade_count=17,
+            validation_signals=7,
+            validation_sharpe=0.12,
+            max_drawdown_pct=-32.4,
+            target_label="medium",
+        )
+
+        self.assertFalse(diagnostic["target_reached"])
+        blocking_metrics = {item["metric"] for item in diagnostic["blocking_factors"]}
+        self.assertEqual(
+            blocking_metrics,
+            {"trade_count", "validation_signals", "validation_sharpe", "max_drawdown_pct"},
+        )
+        self.assertTrue(diagnostic["uplift_search"]["feasible"])
+        self.assertIsNotNone(diagnostic["uplift_search"]["recommended_path"])
+
+    def test_uplift_search_finds_single_metric_change_when_only_sharpe_is_low(self):
+        uplift = find_minimal_reliability_uplift(
+            trade_count=26,
+            validation_signals=12,
+            validation_sharpe=0.18,
+            max_drawdown_pct=-20.0,
+            target_label="medium",
+            max_adjusted_metrics=2,
+            max_trials=1200,
+        )
+
+        self.assertTrue(uplift["feasible"])
+        recommended = uplift["recommended_path"]
+        self.assertIsNotNone(recommended)
+        changes = recommended["changes"]
+        self.assertEqual(1, len(changes))
+        self.assertEqual("validation_sharpe", changes[0]["metric"])
+        self.assertIn(recommended["label"], {"medium", "high"})
+
+    def test_fixture_low_candidate_has_uplift_path_to_medium(self):
+        fixtures_dir = Path(__file__).resolve().parent / "fixtures"
+        payload = json.loads((fixtures_dir / "optimizer_results_high_medium_low.json").read_text(encoding="utf-8"))
+        low = next(item for item in payload if item.get("symbol") == "CCC")
+        uplift = find_minimal_reliability_uplift(
+            trade_count=int(low.get("trade_count", 0)),
+            validation_signals=int(low.get("validation_trades", 0)),
+            validation_sharpe=float(low.get("validation_sharpe", 0.0)),
+            max_drawdown_pct=float(low.get("max_drawdown_pct", 0.0)),
+            target_label="medium",
+            max_adjusted_metrics=4,
+            max_trials=8000,
+        )
+
+        self.assertTrue(uplift["feasible"])
+        self.assertIsNotNone(uplift["recommended_path"])
+        self.assertIn(uplift["recommended_path"]["label"], {"medium", "high"})
 
 
 class OverlayPolicyTests(unittest.TestCase):

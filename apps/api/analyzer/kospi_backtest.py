@@ -43,7 +43,11 @@ class BacktestConfig:
     stop_loss_pct: float | None = 5.0
     take_profit_pct: float | None = None
     market_profiles: tuple[StrategyProfile, ...] = ()
-    candidate_selection_enabled: bool = True
+    # Historical report/theme/news candidate filtering is experimental and must
+    # be explicitly opted into. Backtests should default to pure indicator-based
+    # selection so live/report recommendation logic does not leak into
+    # historical evaluation.
+    candidate_selection_enabled: bool = False
     candidate_selection: CandidateSelectionConfig = field(
         default_factory=CandidateSelectionConfig)
 
@@ -222,6 +226,12 @@ def run_kospi_backtest(config: BacktestConfig | None = None) -> dict[str, Any]:
     final_equity = equity_curve[-1]["equity"] if equity_curve else cfg.initial_cash
     metrics = _compute_metrics(cfg.initial_cash, equity_curve, trades)
     universe_label = _universe_label(cfg.markets)
+    candidate_selection_config = {
+        "enabled": cfg.candidate_selection_enabled,
+        **_candidate_coverage_summary(candidate_cache, enabled=cfg.candidate_selection_enabled),
+    }
+    if cfg.candidate_selection_enabled:
+        candidate_selection_config.update(serialize_candidate_selection_config(cfg.candidate_selection))
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "universe": universe_label,
@@ -234,11 +244,7 @@ def run_kospi_backtest(config: BacktestConfig | None = None) -> dict[str, Any]:
             "lookback_days": cfg.lookback_days,
             "markets": list(cfg.markets),
             "market_profiles": serialize_strategy_profiles(market_profiles),
-            "candidate_selection": {
-                "enabled": cfg.candidate_selection_enabled,
-                **serialize_candidate_selection_config(cfg.candidate_selection),
-                **_candidate_coverage_summary(candidate_cache),
-            },
+            "candidate_selection": candidate_selection_config,
             **_single_market_profile_config(market_profiles),
         },
         "symbols": [
@@ -268,7 +274,7 @@ def _historical_candidate_info(
             day_cache[normalized_market] = {
                 "date": date,
                 "market": normalized_market,
-                "source": "disabled",
+                "source": "indicator_only",
                 "codes": set(),
                 "candidates": [],
                 "has_report": False,
@@ -282,7 +288,11 @@ def _historical_candidate_info(
     return day_cache[normalized_market]
 
 
-def _candidate_coverage_summary(cache: dict[str, dict[str, dict[str, Any]]]) -> dict[str, Any]:
+def _candidate_coverage_summary(
+    cache: dict[str, dict[str, dict[str, Any]]],
+    *,
+    enabled: bool,
+) -> dict[str, Any]:
     total_market_dates = 0
     covered_market_dates = 0
     source_counts: dict[str, int] = {}
@@ -293,14 +303,13 @@ def _candidate_coverage_summary(cache: dict[str, dict[str, dict[str, Any]]]) -> 
                 covered_market_dates += 1
             source = str(candidate_info.get("source") or "none")
             source_counts[source] = source_counts.get(source, 0) + 1
-    coverage_pct = (covered_market_dates / total_market_dates *
-                    100) if total_market_dates else 0.0
+    coverage_pct = (covered_market_dates / total_market_dates * 100) if total_market_dates else 0.0
     return {
         "report_coverage_pct": round(coverage_pct, 2),
         "covered_market_dates": covered_market_dates,
         "total_market_dates": total_market_dates,
         "source_counts": source_counts,
-        "fallback_mode": "indicator_only_when_reports_missing",
+        "fallback_mode": "indicator_only_when_reports_missing" if enabled else "indicator_only",
     }
 
 

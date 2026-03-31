@@ -7,7 +7,11 @@ from math import floor, sqrt
 from typing import Any
 
 from services.backtest_service import get_backtest_service
-from services.reliability_service import classify_walk_forward_reliability
+from services.reliability_service import (
+    build_reliability_diagnostic,
+    classify_walk_forward_reliability,
+    explain_walk_forward_reliability,
+)
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -293,6 +297,194 @@ def _classify_walk_forward_reliability(
     return assessment.label
 
 
+def _diagnose_walk_forward_result(payload: dict[str, Any]) -> dict[str, Any]:
+    oos_metrics = payload.get("segments", {}).get("oos") or {}
+    summary = payload.get("summary") or {}
+    positive_window_ratio = _to_float(summary.get("positive_window_ratio"), 0.0)
+    return explain_walk_forward_reliability(
+        trade_count=int(oos_metrics.get("trade_count", 0) or 0),
+        profit_factor=_to_float(oos_metrics.get("profit_factor"), 0.0),
+        sharpe=_to_float(oos_metrics.get("sharpe"), 0.0),
+        total_return_pct=_to_float(oos_metrics.get("total_return_pct"), 0.0),
+        positive_window_ratio=positive_window_ratio,
+    )
+
+
+def _query_number_or_none(query: dict[str, list[str]], name: str) -> float | None:
+    raw = (query.get(name, [""])[0] or "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clone_query(query: dict[str, list[str]]) -> dict[str, list[str]]:
+    return {key: list(values) for key, values in query.items()}
+
+
+def _apply_query_patch(query: dict[str, list[str]], patch: dict[str, float | int | None]) -> dict[str, list[str]]:
+    mutated = _clone_query(query)
+    for key, value in patch.items():
+        if value is None:
+            mutated[key] = [""]
+        elif isinstance(value, int) and not isinstance(value, bool):
+            mutated[key] = [str(value)]
+        else:
+            mutated[key] = [f"{float(value):.4f}".rstrip("0").rstrip(".")]
+    return mutated
+
+
+def _append_research_probe(
+    probes: list[dict[str, Any]],
+    seen: set[tuple[tuple[str, str], ...]],
+    *,
+    label: str,
+    rationale: str,
+    patch: dict[str, float | int | None],
+) -> None:
+    key = tuple(sorted((name, "" if value is None else str(value)) for name, value in patch.items()))
+    if not patch or key in seen:
+        return
+    seen.add(key)
+    probes.append({"label": label, "rationale": rationale, "patch": patch})
+
+
+def _bounded_local_research_probes(query: dict[str, list[str]], diagnosis: dict[str, Any]) -> list[dict[str, Any]]:
+    probes: list[dict[str, Any]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    blocker_metrics = {str(item.get("metric") or "") for item in diagnosis.get("blockers", [])}
+    needs_more_samples = bool({"trade_count", "positive_window_ratio"} & blocker_metrics)
+    needs_better_quality = bool({"profit_factor", "sharpe", "total_return_pct"} & blocker_metrics)
+
+    def add_shift(name: str, delta: float, *, label: str, rationale: str, minimum: float | None = None, maximum: float | None = None, integer: bool = False) -> None:
+        current = _query_number_or_none(query, name)
+        if current is None:
+            return
+        next_value = current + delta
+        if minimum is not None:
+            next_value = max(minimum, next_value)
+        if maximum is not None:
+            next_value = min(maximum, next_value)
+        if integer:
+            next_value = int(round(next_value))
+            if int(round(current)) == next_value:
+                return
+        elif abs(next_value - current) < 1e-9:
+            return
+        _append_research_probe(probes, seen, label=label, rationale=rationale, patch={name: next_value})
+
+    if needs_more_samples:
+        add_shift("rsi_min", -4.0, label="RSI 하한 완화", rationale="진입 조건을 조금 풀어서 표본 수를 늘리는 probe", minimum=10.0, maximum=90.0)
+        add_shift("rsi_max", 4.0, label="RSI 상한 완화", rationale="진입 허용 범위를 넓혀 거래 수와 윈도우 일관성을 확인", minimum=10.0, maximum=90.0)
+        add_shift("volume_ratio_min", -0.2, label="거래량 필터 완화", rationale="거래량 필터를 약간 낮춰 희소성을 줄이는 probe", minimum=0.5, maximum=5.0)
+        add_shift("adx_min", -5.0, label="ADX 필터 완화", rationale="추세 강도 필터를 완화해 표본 수 증가 여부를 확인", minimum=5.0, maximum=40.0)
+        add_shift("mfi_min", -10.0, label="MFI 하한 완화", rationale="오버필터링 여부를 점검하는 local probe", minimum=0.0, maximum=100.0)
+        add_shift("mfi_max", 10.0, label="MFI 상한 완화", rationale="진입 범위를 넓혀 검증 표본 확장 가능성 확인", minimum=0.0, maximum=100.0)
+
+    if needs_better_quality:
+        add_shift("max_holding_days", -5.0, label="보유 기간 단축", rationale="약한 포지션을 더 빨리 정리하면 PF/샤프가 나아지는지 확인", minimum=1.0, maximum=180.0, integer=True)
+        add_shift("stop_loss_pct", -1.5, label="손절 타이트닝", rationale="낙폭과 꼬리손실을 줄여 품질 지표 개선 여부 확인", minimum=1.0, maximum=50.0)
+        add_shift("take_profit_pct", -4.0, label="익절 조기화", rationale="수익 실현을 빠르게 해서 PF 개선 가능성 확인", minimum=1.0, maximum=100.0)
+        add_shift("take_profit_pct", 4.0, label="익절 여유 확대", rationale="추세 수익을 더 길게 가져가 수익률 개선 가능성 확인", minimum=1.0, maximum=100.0)
+
+    if needs_more_samples and needs_better_quality:
+        _append_research_probe(
+            probes,
+            seen,
+            label="진입 범위 완화 + 보유 단축",
+            rationale="표본 수를 늘리되 약한 포지션은 빨리 정리하는 2축 probe",
+            patch={
+                "rsi_min": max(10.0, (_query_number_or_none(query, "rsi_min") or 45.0) - 4.0),
+                "rsi_max": min(90.0, (_query_number_or_none(query, "rsi_max") or 65.0) + 4.0),
+                "max_holding_days": int(max(1.0, (_query_number_or_none(query, "max_holding_days") or 15.0) - 5.0)),
+            },
+        )
+
+    return probes[:10]
+
+
+def _label_rank(label: str) -> int:
+    return {"insufficient": 0, "low": 1, "medium": 2, "high": 3}.get(label, 0)
+
+
+def _summarize_patch(base_query: dict[str, list[str]], patch: dict[str, float | int | None]) -> list[str]:
+    lines: list[str] = []
+    for key, value in patch.items():
+        current = (base_query.get(key, [""])[0] or "").strip() or "미설정"
+        target = "미설정" if value is None else str(value)
+        lines.append(f"{key}: {current} → {target}")
+    return lines
+
+
+def _run_local_research(query: dict[str, list[str]], base_payload: dict[str, Any], diagnosis: dict[str, Any]) -> dict[str, Any]:
+    probes = _bounded_local_research_probes(query, diagnosis)
+    evaluated: list[dict[str, Any]] = []
+    errors: list[str] = []
+    base_rank = _label_rank(str(diagnosis.get("label") or ""))
+
+    for probe in probes:
+        mutated_query = _apply_query_patch(query, probe["patch"])
+        try:
+            payload = run_walk_forward_validation(mutated_query)
+        except Exception as exc:  # pragma: no cover - defensive route handling
+            errors.append(f"{probe['label']}: {exc}")
+            continue
+        if payload.get("error"):
+            errors.append(f"{probe['label']}: {payload['error']}")
+            continue
+
+        probe_diagnosis = _diagnose_walk_forward_result(payload)
+        oos = payload.get("segments", {}).get("oos") or {}
+        evaluated.append(
+            {
+                "label": str(probe_diagnosis.get("label") or "low"),
+                "reached_target": _label_rank(str(probe_diagnosis.get("label") or "")) >= _label_rank("medium"),
+                "improvement": _label_rank(str(probe_diagnosis.get("label") or "")) - base_rank,
+                "probe_label": probe["label"],
+                "rationale": probe["rationale"],
+                "patch": probe["patch"],
+                "changes": _summarize_patch(query, probe["patch"]),
+                "diagnosis": probe_diagnosis,
+                "metrics": {
+                    "trade_count": int(oos.get("trade_count", 0) or 0),
+                    "profit_factor": round(_to_float(oos.get("profit_factor"), 0.0), 4),
+                    "sharpe": round(_to_float(oos.get("sharpe"), 0.0), 4),
+                    "total_return_pct": round(_to_float(oos.get("total_return_pct"), 0.0), 4),
+                    "positive_window_ratio": round(_to_float((payload.get("summary") or {}).get("positive_window_ratio"), 0.0), 4),
+                },
+            }
+        )
+
+    evaluated.sort(
+        key=lambda item: (
+            1 if item["reached_target"] else 0,
+            _label_rank(item["label"]),
+            item["metrics"].get("total_return_pct", 0.0),
+            item["metrics"].get("sharpe", 0.0),
+            item["metrics"].get("profit_factor", 0.0),
+        ),
+        reverse=True,
+    )
+
+    best = evaluated[0] if evaluated else None
+    return {
+        "target_label": "medium",
+        "base_label": str(diagnosis.get("label") or "low"),
+        "trials_run": len(evaluated),
+        "trial_limit": len(probes),
+        "improvement_found": any(bool(item.get("reached_target")) for item in evaluated),
+        "best_label": str(best.get("label")) if best else str(diagnosis.get("label") or "low"),
+        "suggestions": evaluated[:5],
+        "errors": errors[:5],
+        "notes": [
+            "이 탐색은 전체 최적화가 아니라 현재 설정 주변의 작은 단일/이중 변경만 시험한 local probe입니다.",
+            "target_label은 medium이며, 근처 파라미터만 다시 평가합니다.",
+        ],
+    }
+
+
 def _regime_stats_from_curve(equity_curve: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     if len(equity_curve) < 25:
         return {}
@@ -335,8 +527,32 @@ def run_backtest_with_extended_metrics(query: dict[str, list[str]]) -> dict[str,
     payload["metrics"].update(_segment_metrics(equity_curve, trades))
     payload["metrics"]["exit_reason_stats"] = _exit_reason_stats(trades)
     payload["metrics"]["regime_stats"] = _regime_stats_from_curve(equity_curve)
+    payload["reliability_diagnostic"] = build_reliability_diagnostic(
+        trade_count=int(payload["metrics"].get("trade_count", 0) or 0),
+        validation_signals=int(payload["metrics"].get("trade_count", 0) or 0),
+        validation_sharpe=_to_float(payload["metrics"].get("sharpe"), 0.0),
+        max_drawdown_pct=_to_float(payload["metrics"].get("max_drawdown_pct"), 0.0),
+        target_label="medium",
+    )
     payload["scorecard"] = _build_strategy_scorecard(payload["metrics"], trades)
     return payload
+
+
+def run_validation_diagnostics(query: dict[str, list[str]]) -> dict[str, Any]:
+    base_payload = run_walk_forward_validation(query)
+    if not isinstance(base_payload, dict):
+        return {"ok": False, "error": "invalid_validation_payload"}
+    if base_payload.get("error"):
+        return {"ok": False, **base_payload}
+
+    diagnosis = _diagnose_walk_forward_result(base_payload)
+    research = _run_local_research(query, base_payload, diagnosis)
+    return {
+        "ok": True,
+        "validation": base_payload,
+        "diagnosis": diagnosis,
+        "research": research,
+    }
 
 
 def run_walk_forward_validation(query: dict[str, list[str]]) -> dict[str, Any]:
@@ -434,6 +650,13 @@ def run_walk_forward_validation(query: dict[str, list[str]]) -> dict[str, Any]:
         oos_metrics,
         positive_window_ratio=positive_window_ratio,
     )
+    reliability_diagnostic = build_reliability_diagnostic(
+        trade_count=int(oos_metrics.get("trade_count", 0) or 0),
+        validation_signals=int(oos_metrics.get("trade_count", 0) or 0),
+        validation_sharpe=_to_float(oos_metrics.get("sharpe"), 0.0),
+        max_drawdown_pct=_to_float(oos_metrics.get("max_drawdown_pct"), 0.0),
+        target_label="medium",
+    )
 
     return {
         "ok": True,
@@ -467,6 +690,7 @@ def run_walk_forward_validation(query: dict[str, list[str]]) -> dict[str, Any]:
             "positive_windows": positive_oos_windows,
             "positive_window_ratio": positive_window_ratio,
             "oos_reliability": reliability,
+            "reliability_diagnostic": reliability_diagnostic,
             "composite_score": oos_scorecard.get("composite_score"),
             "exit_reason_stats": _exit_reason_stats(trades),
             "regime_stats": _regime_stats_from_curve(equity_curve),

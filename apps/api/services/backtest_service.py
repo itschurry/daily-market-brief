@@ -23,6 +23,29 @@ _OPTIMIZED_PARAMS_PATH = Path(__file__).resolve().parent.parent / "config" / "op
 
 
 class BacktestService:
+    @staticmethod
+    def _parse_candidate_selection_config(
+        query: dict[str, list[str]],
+        *,
+        enabled: bool,
+        parse_float,
+        parse_int,
+        parse_bool,
+    ):
+        if not enabled:
+            # Keep indicator-only backtests independent from report/theme/news knobs.
+            return normalize_candidate_selection_config({})
+        return normalize_candidate_selection_config(
+            {
+                "min_score": parse_float("min_score", 50.0, 0.0, 100.0),
+                "include_neutral": parse_bool("include_neutral", True),
+                "theme_gate_enabled": parse_bool("theme_gate_enabled", True),
+                "theme_min_score": parse_float("theme_min_score", 2.5, 0.0, 30.0),
+                "theme_min_news": parse_int("theme_min_news", 1, 0, 10),
+                "theme_priority_bonus": parse_float("theme_priority_bonus", 2.0, 0.0, 10.0),
+            }
+        )
+
     def parse_config(self, query: dict[str, list[str]]) -> BacktestConfig:
         market_scope = (query.get("market_scope", ["kospi"])[0] or "kospi").strip().lower()
         if market_scope == "all":
@@ -128,16 +151,14 @@ class BacktestService:
                 )
             )
         primary_profile = market_profiles[0]
-        candidate_selection_enabled = _parse_bool("candidate_selection_enabled", True)
-        candidate_selection = normalize_candidate_selection_config(
-            {
-                "min_score": _parse_float("min_score", 50.0, 0.0, 100.0),
-                "include_neutral": _parse_bool("include_neutral", True),
-                "theme_gate_enabled": _parse_bool("theme_gate_enabled", True),
-                "theme_min_score": _parse_float("theme_min_score", 2.5, 0.0, 30.0),
-                "theme_min_news": _parse_int("theme_min_news", 1, 0, 10),
-                "theme_priority_bonus": _parse_float("theme_priority_bonus", 2.0, 0.0, 10.0),
-            }
+        # Historical report/news candidate filtering must be explicitly enabled.
+        candidate_selection_enabled = _parse_bool("candidate_selection_enabled", False)
+        candidate_selection = self._parse_candidate_selection_config(
+            query,
+            enabled=candidate_selection_enabled,
+            parse_float=_parse_float,
+            parse_int=_parse_int,
+            parse_bool=_parse_bool,
         )
 
         return BacktestConfig(
@@ -201,6 +222,9 @@ class BacktestService:
         return data
 
     def _config_cache_key(self, config: BacktestConfig) -> str:
+        candidate_selection_payload = {"enabled": config.candidate_selection_enabled}
+        if config.candidate_selection_enabled:
+            candidate_selection_payload.update(serialize_candidate_selection_config(config.candidate_selection))
         return json.dumps(
             {
                 "initial_cash": config.initial_cash,
@@ -208,10 +232,7 @@ class BacktestService:
                 "lookback_days": config.lookback_days,
                 "markets": list(config.markets),
                 "market_profiles": serialize_strategy_profiles(config.market_profiles),
-                "candidate_selection": {
-                    "enabled": config.candidate_selection_enabled,
-                    **serialize_candidate_selection_config(config.candidate_selection),
-                },
+                "candidate_selection": candidate_selection_payload,
             },
             ensure_ascii=False,
             sort_keys=True,

@@ -13,6 +13,54 @@ export interface StrategyScorecardPayload {
   tail_risk?: Record<string, number>;
 }
 
+export interface ReliabilityGapItem {
+  metric?: string;
+  current?: number | null;
+  required?: number;
+  gap?: number | null;
+  direction?: string;
+  blocking?: boolean;
+}
+
+export interface ReliabilityUpliftChange {
+  metric?: string;
+  from?: number | null;
+  to?: number | null;
+  delta?: number | null;
+}
+
+export interface ReliabilityUpliftPath {
+  cost?: number;
+  label?: string;
+  reason?: string;
+  changes?: ReliabilityUpliftChange[];
+}
+
+export interface ReliabilityDiagnosticPayload {
+  target_label?: string;
+  current?: {
+    label?: string;
+    reason?: string;
+    trade_count?: number;
+    validation_signals?: number;
+    validation_sharpe?: number;
+    max_drawdown_pct?: number | null;
+    passes_minimum_gate?: boolean;
+    is_reliable?: boolean;
+  };
+  target_reached?: boolean;
+  blocking_factors?: ReliabilityGapItem[];
+  threshold_gaps?: ReliabilityGapItem[];
+  uplift_search?: {
+    target_label?: string;
+    already_satisfies_target?: boolean;
+    searched_candidates?: number;
+    feasible?: boolean;
+    recommended_path?: ReliabilityUpliftPath | null;
+    alternatives?: ReliabilityUpliftPath[];
+  };
+}
+
 export interface SizeRecommendation {
   quantity?: number;
   reason?: string;
@@ -148,6 +196,7 @@ export interface ValidationResponse {
   ok?: boolean;
   metrics?: Record<string, number | string | Record<string, unknown>>;
   scorecard?: StrategyScorecardPayload;
+  reliability_diagnostic?: ReliabilityDiagnosticPayload;
   segments?: {
     train?: Record<string, number | string | Record<string, unknown>>;
     validation?: Record<string, number | string | Record<string, unknown>>;
@@ -158,7 +207,59 @@ export interface ValidationResponse {
     positive_windows?: number;
     oos_reliability?: string;
     composite_score?: number;
+    reliability_diagnostic?: ReliabilityDiagnosticPayload;
   };
+}
+
+export interface WalkForwardDiagnosisPayload {
+  label?: string;
+  target_label?: string;
+  summary_lines?: string[];
+  strengths?: string[];
+  blockers?: Array<{
+    metric?: string;
+    current?: number;
+    threshold?: number;
+    direction?: string;
+    severity?: string;
+    summary?: string;
+  }>;
+  target_adjustments?: Array<{
+    metric?: string;
+    current?: number;
+    target?: number;
+    gap?: number;
+    direction?: string;
+    summary?: string;
+  }>;
+}
+
+export interface ValidationDiagnosticsResponse {
+  ok?: boolean;
+  validation?: ValidationResponse;
+  diagnosis?: WalkForwardDiagnosisPayload;
+  research?: {
+    target_label?: string;
+    base_label?: string;
+    best_label?: string;
+    trials_run?: number;
+    trial_limit?: number;
+    improvement_found?: boolean;
+    notes?: string[];
+    errors?: string[];
+    suggestions?: Array<{
+      probe_label?: string;
+      rationale?: string;
+      label?: string;
+      reached_target?: boolean;
+      improvement?: number;
+      changes?: string[];
+      patch?: Record<string, unknown>;
+      metrics?: Record<string, number>;
+      diagnosis?: WalkForwardDiagnosisPayload;
+    }>;
+  };
+  error?: string;
 }
 
 export interface ReportsExplainResponse {

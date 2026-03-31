@@ -39,7 +39,11 @@ from routes.trading import (
     handle_paper_reset,
 )
 from routes.system import handle_notifications_status, handle_system_mode
-from routes.validation import handle_validation_backtest, handle_validation_walk_forward
+from routes.validation import (
+    handle_validation_backtest,
+    handle_validation_diagnostics,
+    handle_validation_walk_forward,
+)
 from routes.watchlist import (
     handle_watchlist_actions,
     handle_watchlist_get,
@@ -77,6 +81,7 @@ GET_ROUTES: tuple[Route, ...] = (
     ),
     Route("/api/validation/backtest", lambda _path, query: handle_validation_backtest(query)),
     Route("/api/validation/walk-forward", lambda _path, query: handle_validation_walk_forward(query)),
+    Route("/api/validation/diagnostics", lambda _path, query: handle_validation_diagnostics(query)),
     Route("/api/reports/explain", lambda _path, query: handle_reports_explain(_query_value(query, "date") or None)),
     Route("/api/reports/index", lambda _path, _query: handle_reports_index()),
     Route("/api/live-market", lambda _path, _query: handle_live_market()),

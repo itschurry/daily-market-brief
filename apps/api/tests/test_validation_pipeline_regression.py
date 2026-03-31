@@ -21,6 +21,7 @@ if "services.backtest_service" not in sys.modules:
 
 from services.validation_service import (
     run_backtest_with_extended_metrics,
+    run_validation_diagnostics,
     run_walk_forward_validation,
 )
 
@@ -99,6 +100,7 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
 
         self.assertIn("metrics", result)
         self.assertIn("scorecard", result)
+        self.assertIn("reliability_diagnostic", result)
         self.assertEqual(1.23, result["metrics"]["legacy_metric"])
         self.assertIn("exit_reason_stats", result["metrics"])
         self.assertIn("regime_stats", result["metrics"])
@@ -133,6 +135,9 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
         summary = result["summary"]
         self.assertIn("oos_reliability", summary)
         self.assertIn("positive_window_ratio", summary)
+        self.assertIn("reliability_diagnostic", summary)
+        self.assertIn("blocking_factors", summary["reliability_diagnostic"])
+        self.assertIn("uplift_search", summary["reliability_diagnostic"])
         self.assertGreaterEqual(summary["positive_window_ratio"], 0.0)
         self.assertLessEqual(summary["positive_window_ratio"], 1.0)
         self.assertEqual(
@@ -159,6 +164,31 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
         self.assertEqual("insufficient_equity_curve_length", result["config"]["effective_window"]["clipping_reason"])
         self.assertLess(result["config"]["effective_window"]["training_days"], 180)
         self.assertLess(result["config"]["effective_window"]["validation_days"], 60)
+
+
+    def test_validation_diagnostics_returns_diagnosis_and_local_research(self):
+        base_payload = _load_validation_payload()
+        walk_payload = _expand_for_walk_forward(base_payload, repeats=4)
+        stub = _StubBacktestService(payload_for_optional=base_payload, payload_for_run=walk_payload)
+
+        with patch("services.validation_service.get_backtest_service", return_value=stub):
+            result = run_validation_diagnostics({
+                "rsi_min": ["45"],
+                "rsi_max": ["62"],
+                "volume_ratio_min": ["1.0"],
+                "max_holding_days": ["15"],
+                "adx_min": ["10"],
+                "mfi_min": ["20"],
+                "mfi_max": ["80"],
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertIn("validation", result)
+        self.assertIn("diagnosis", result)
+        self.assertIn("research", result)
+        self.assertIn("summary_lines", result["diagnosis"])
+        self.assertIn("suggestions", result["research"])
+        self.assertGreaterEqual(result["research"]["trial_limit"], 1)
 
 
 if __name__ == "__main__":

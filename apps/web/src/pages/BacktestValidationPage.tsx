@@ -273,6 +273,14 @@ function SettingsSection({ title, description, children }: { title: string; desc
   );
 }
 
+function reliabilityMetricLabel(metric: string | undefined): string {
+  if (metric === 'trade_count') return '학습 거래 수';
+  if (metric === 'validation_signals') return '검증 신호 수';
+  if (metric === 'validation_sharpe') return '검증 Sharpe';
+  if (metric === 'max_drawdown_pct') return '최대 낙폭(%)';
+  return metric || '-';
+}
+
 export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefresh }: BacktestValidationPageProps) {
   const { pushToast } = useToast();
   const { entries, push, clear } = useConsoleLogs();
@@ -349,6 +357,12 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   const bestComponents = useMemo(() => strongestComponents(primaryScorecard), [primaryScorecard]);
   const weakComponents = useMemo(() => weakestComponents(primaryScorecard), [primaryScorecard]);
   const tailHeadline = useMemo(() => tailRiskHeadline(primaryScorecard), [primaryScorecard]);
+  const reliabilityDiagnostic = validationResult.summary?.reliability_diagnostic || validationResult.reliability_diagnostic;
+  const diagnosticBlockers = useMemo(
+    () => (Array.isArray(reliabilityDiagnostic?.blocking_factors) ? reliabilityDiagnostic.blocking_factors : []),
+    [reliabilityDiagnostic?.blocking_factors],
+  );
+  const diagnosticRecommended = reliabilityDiagnostic?.uplift_search?.recommended_path;
 
   const statusItems = useMemo<ActionBarStatusItem[]>(() => ([
     {
@@ -1028,6 +1042,47 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   </div>
                 )}
               </div>
+
+              {reliabilityDiagnostic && (
+                <div className="page-section" style={{ padding: 16 }}>
+                  <div className="section-head-row">
+                    <div>
+                      <div className="section-title">신뢰도 진단</div>
+                      <div className="section-copy">낮은 등급의 차단 요인과, 최소한 어떤 지표 변화가 필요할지 보여줍니다.</div>
+                    </div>
+                    <div className={`inline-badge ${reliabilityDiagnostic.target_reached ? 'is-success' : 'is-warning'}`}>
+                      목표 {String(reliabilityDiagnostic.target_label || 'medium')} · 현재 {String(reliabilityDiagnostic.current?.label || '-')}
+                    </div>
+                  </div>
+
+                  <div className="validation-report-grid" style={{ marginTop: 10 }}>
+                    <div className="detail-list">
+                      <div><strong>차단 요인</strong></div>
+                      {diagnosticBlockers.length === 0 && <div>차단 요인 없음</div>}
+                      {diagnosticBlockers.slice(0, 4).map((item, index) => (
+                        <div key={`${item.metric || 'm'}-${index}`}>
+                          {reliabilityMetricLabel(String(item.metric || ''))}: 현재 {String(item.current ?? '-')} / 필요 {String(item.required ?? '-')} (gap {String(item.gap ?? '-')})
+                        </div>
+                      ))}
+                    </div>
+                    <div className="detail-list">
+                      <div><strong>최소 개선 경로</strong></div>
+                      {!diagnosticRecommended && <div>탐색 범위 내에서 개선 경로를 찾지 못했습니다.</div>}
+                      {diagnosticRecommended && (
+                        <>
+                          <div>예상 결과: {String(diagnosticRecommended.label || '-')} ({String(diagnosticRecommended.reason || '-')})</div>
+                          {(diagnosticRecommended.changes || []).length === 0 && <div>변경 없음</div>}
+                          {(diagnosticRecommended.changes || []).slice(0, 3).map((change, index) => (
+                            <div key={`${change.metric || 'c'}-${index}`}>
+                              {reliabilityMetricLabel(String(change.metric || ''))}: {String(change.from ?? '-')} → {String(change.to ?? '-')} (Δ{String(change.delta ?? '-')})
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="validation-report-grid">
                 <div className="page-section" style={{ padding: 16 }}>

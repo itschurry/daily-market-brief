@@ -26,7 +26,8 @@ def main() -> int:
     parser.add_argument("--take-profit-pct", type=float)
     parser.add_argument("--candidate-selection-enabled", dest="candidate_selection_enabled", action="store_true")
     parser.add_argument("--candidate-selection-disabled", dest="candidate_selection_enabled", action="store_false")
-    parser.set_defaults(candidate_selection_enabled=True)
+    # Historical report/news candidate filtering must be explicitly enabled.
+    parser.set_defaults(candidate_selection_enabled=False)
     parser.add_argument("--min-score", type=float, default=50.0)
     parser.add_argument("--include-neutral", dest="include_neutral", action="store_true")
     parser.add_argument("--exclude-neutral", dest="include_neutral", action="store_false")

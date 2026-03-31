@@ -5,6 +5,7 @@ import type {
   PortfolioStateResponse,
   ReportsExplainResponse,
   SignalsRankResponse,
+  ValidationDiagnosticsResponse,
   ValidationResponse,
 } from '../types/domain';
 import type { BacktestQuery } from '../types';
@@ -60,6 +61,10 @@ export function fetchValidationBacktest(query?: BacktestQuery, settings?: Valida
 
 export function fetchValidationWalkForward(query?: BacktestQuery, settings?: ValidationSettings) {
   return getJSON<ValidationResponse>(`/api/validation/walk-forward${buildValidationQueryString(query, settings)}`, { noStore: true });
+}
+
+export function fetchValidationDiagnostics(query?: BacktestQuery, settings?: ValidationSettings) {
+  return getJSON<ValidationDiagnosticsResponse>(`/api/validation/diagnostics${buildValidationQueryString(query, settings)}`, { noStore: true });
 }
 
 export function fetchReportsExplain() {
