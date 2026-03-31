@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { ChangeEvent, ReactNode } from 'react';
 import { getJSON, postJSON } from '../api/client';
 import { fetchValidationWalkForward } from '../api/domain';
 import { ConsoleActionBar, ConsoleConfirmDialog } from '../components/ConsoleActionBar';
@@ -231,6 +231,19 @@ function FieldBlock({ label, help, children }: { label: string; help?: string; c
       {help && <span className="settings-field-help">{help}</span>}
       {children}
     </label>
+  );
+}
+
+
+function SettingsSection({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
+  return (
+    <section className="settings-panel-section">
+      <div className="settings-panel-section-head">
+        <div className="settings-panel-section-title">{title}</div>
+        {description && <div className="settings-panel-section-copy">{description}</div>}
+      </div>
+      <div className="settings-panel-section-grid">{children}</div>
+    </section>
   );
 }
 
@@ -576,7 +589,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     ].slice(0, 30), historyId, { status: '실패', totalReturnPct: null }));
     push('error', '백테스트 실행이 실패했습니다.', result.error || '상단 로그 보기에서 상세 원인을 확인하세요.', 'backtest');
     pushToast({ tone: 'error', title: '백테스트 실패', description: result.error || '로그와 서버 상태를 확인해 주세요.' });
-  }, [backtestPhase, push, pushToast, run, runHistory, updateRunHistory, validationStore.draftQuery]);
+  }, [backtestPhase, push, pushToast, refreshValidationResult, run, runHistory, updateRunHistory, validationStore.draftQuery, validationStore.draftSettings]);
 
   const handleRunOptimization = useCallback(async () => {
     if (optimizationRunning || optimizationPhase === 'requesting') return;
@@ -648,101 +661,167 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     pushToast({ tone: 'warning', title: '설정 초안 초기화', description: '기본값으로 되돌렸습니다. 저장하면 실행 패널에 반영됩니다.' });
   }, [push, pushToast, validationStore]);
 
+  const updateDraftQueryNumber = useCallback((key: keyof BacktestQuery, fallback: number, min?: number) => (event: ChangeEvent<HTMLInputElement>) => {
+    const raw = Number(event.target.value);
+    const nextValue = Number.isFinite(raw) ? raw : fallback;
+    validationStore.setDraftQuery((prev) => ({
+      ...prev,
+      [key]: typeof min === 'number' ? Math.max(min, nextValue) : nextValue,
+    }));
+  }, [validationStore]);
+
+  const updateDraftQueryNullableNumber = useCallback((key: keyof BacktestQuery, min?: number) => (event: ChangeEvent<HTMLInputElement>) => {
+    const { value } = event.target;
+    validationStore.setDraftQuery((prev) => {
+      if (value.trim() === '') {
+        return { ...prev, [key]: null };
+      }
+      const raw = Number(value);
+      const nextValue = Number.isFinite(raw) ? raw : null;
+      return {
+        ...prev,
+        [key]: nextValue === null ? null : (typeof min === 'number' ? Math.max(min, nextValue) : nextValue),
+      };
+    });
+  }, [validationStore]);
+
   const settingsPanel = (
     <div className="settings-panel-grid">
-      <FieldBlock label="시장" help="백테스트 대상 시장을 선택합니다.">
-        <select
-          className="backtest-input-wrap"
-          style={{ padding: '0 12px' }}
-          value={validationStore.draftQuery.market_scope}
-          onChange={(event) => validationStore.setDraftQuery((prev) => ({ ...prev, market_scope: event.target.value as BacktestQuery['market_scope'] }))}
-        >
-          <option value="kospi">KOSPI</option>
-          <option value="nasdaq">NASDAQ</option>
-        </select>
-      </FieldBlock>
+      <SettingsSection title="기본 설정" description="시장, 기간, 검증 기준을 여기서 관리합니다.">
+        <FieldBlock label="시장" help="백테스트 대상 시장을 선택합니다.">
+          <select
+            className="backtest-input-wrap"
+            style={{ padding: '0 12px' }}
+            value={validationStore.draftQuery.market_scope}
+            onChange={(event) => validationStore.setDraftQuery((prev) => ({ ...prev, market_scope: event.target.value as BacktestQuery['market_scope'] }))}
+          >
+            <option value="kospi">KOSPI</option>
+            <option value="nasdaq">NASDAQ</option>
+          </select>
+        </FieldBlock>
 
-      <FieldBlock label="전략 이름" help="실행 패널과 저장 이력에 함께 표시됩니다.">
-        <input
-          className="backtest-input-wrap"
-          style={{ padding: '0 12px' }}
-          value={validationStore.draftSettings.strategy}
-          onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, strategy: event.target.value }))}
-          placeholder="예: 공통 전략 엔진"
-        />
-      </FieldBlock>
+        <FieldBlock label="전략 이름" help="실행 패널과 저장 이력에 함께 표시됩니다.">
+          <input
+            className="backtest-input-wrap"
+            style={{ padding: '0 12px' }}
+            value={validationStore.draftSettings.strategy}
+            onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, strategy: event.target.value }))}
+            placeholder="예: 공통 전략 엔진"
+          />
+        </FieldBlock>
 
-      <FieldBlock label="백테스트 기간(일)" help="최소 180일, 30일 단위 권장">
-        <input
-          className="backtest-input-wrap"
-          style={{ padding: '0 12px' }}
-          type="number"
-          min={180}
-          step={30}
-          value={validationStore.draftQuery.lookback_days}
-          onChange={(event) => validationStore.setDraftQuery((prev) => ({ ...prev, lookback_days: Math.max(180, Number(event.target.value) || 180) }))}
-        />
-      </FieldBlock>
+        <FieldBlock label="백테스트 기간(일)" help="최소 180일, 30일 단위 권장">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={180} step={30} value={validationStore.draftQuery.lookback_days} onChange={updateDraftQueryNumber('lookback_days', 180, 180)} />
+        </FieldBlock>
 
-      <FieldBlock label="학습 기간(일)" help="최소 30일, 10일 단위">
-        <input
-          className="backtest-input-wrap"
-          style={{ padding: '0 12px' }}
-          type="number"
-          min={30}
-          step={10}
-          value={validationStore.draftSettings.trainingDays}
-          onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, trainingDays: Math.max(30, Number(event.target.value) || 30) }))}
-        />
-      </FieldBlock>
+        <FieldBlock label="학습 기간(일)" help="최소 30일, 10일 단위">
+          <input
+            className="backtest-input-wrap"
+            style={{ padding: '0 12px' }}
+            type="number"
+            min={30}
+            step={10}
+            value={validationStore.draftSettings.trainingDays}
+            onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, trainingDays: Math.max(30, Number(event.target.value) || 30) }))}
+          />
+        </FieldBlock>
 
-      <FieldBlock label="검증 기간(일)" help="최소 20일, 10일 단위">
-        <input
-          className="backtest-input-wrap"
-          style={{ padding: '0 12px' }}
-          type="number"
-          min={20}
-          step={10}
-          value={validationStore.draftSettings.validationDays}
-          onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, validationDays: Math.max(20, Number(event.target.value) || 20) }))}
-        />
-      </FieldBlock>
+        <FieldBlock label="검증 기간(일)" help="최소 20일, 10일 단위">
+          <input
+            className="backtest-input-wrap"
+            style={{ padding: '0 12px' }}
+            type="number"
+            min={20}
+            step={10}
+            value={validationStore.draftSettings.validationDays}
+            onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, validationDays: Math.max(20, Number(event.target.value) || 20) }))}
+          />
+        </FieldBlock>
 
-      <FieldBlock label="Walk-forward" help="구간별 재학습 여부">
-        <select
-          className="backtest-input-wrap"
-          style={{ padding: '0 12px' }}
-          value={validationStore.draftSettings.walkForward ? 'on' : 'off'}
-          onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, walkForward: event.target.value === 'on' }))}
-        >
-          <option value="on">사용</option>
-          <option value="off">미사용</option>
-        </select>
-      </FieldBlock>
+        <FieldBlock label="Walk-forward" help="구간별 재학습 여부">
+          <select
+            className="backtest-input-wrap"
+            style={{ padding: '0 12px' }}
+            value={validationStore.draftSettings.walkForward ? 'on' : 'off'}
+            onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, walkForward: event.target.value === 'on' }))}
+          >
+            <option value="on">사용</option>
+            <option value="off">미사용</option>
+          </select>
+        </FieldBlock>
 
-      <FieldBlock label="최소 거래 수(건)" help="검증 통과 최소 거래 수">
-        <input
-          className="backtest-input-wrap"
-          style={{ padding: '0 12px' }}
-          type="number"
-          min={1}
-          step={1}
-          value={validationStore.draftSettings.minTrades}
-          onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, minTrades: Math.max(1, Number(event.target.value) || 1) }))}
-        />
-      </FieldBlock>
+        <FieldBlock label="최소 거래 수(건)" help="검증 통과 최소 거래 수">
+          <input
+            className="backtest-input-wrap"
+            style={{ padding: '0 12px' }}
+            type="number"
+            min={1}
+            step={1}
+            value={validationStore.draftSettings.minTrades}
+            onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, minTrades: Math.max(1, Number(event.target.value) || 1) }))}
+          />
+        </FieldBlock>
 
-      <FieldBlock label="목표 함수" help="최적화 판단 기준">
-        <select
-          className="backtest-input-wrap"
-          style={{ padding: '0 12px' }}
-          value={validationStore.draftSettings.objective}
-          onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, objective: event.target.value }))}
-        >
-          <option>수익 우선</option>
-          <option>수익+안정 균형</option>
-        </select>
-      </FieldBlock>
+        <FieldBlock label="목표 함수" help="최적화 판단 기준">
+          <select
+            className="backtest-input-wrap"
+            style={{ padding: '0 12px' }}
+            value={validationStore.draftSettings.objective}
+            onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, objective: event.target.value }))}
+          >
+            <option>수익 우선</option>
+            <option>수익+안정 균형</option>
+          </select>
+        </FieldBlock>
+      </SettingsSection>
+
+      <SettingsSection title="고급 전략 설정" description="실제 진입·청산 파라미터를 바로 조정합니다.">
+        <FieldBlock label="초기 자금" help="시장 기본 통화 기준입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={1} step={1} value={validationStore.draftQuery.initial_cash} onChange={updateDraftQueryNumber('initial_cash', validationStore.draftQuery.initial_cash, 1)} />
+        </FieldBlock>
+        <FieldBlock label="최대 보유 종목 수" help="동시 보유 가능한 포지션 수입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={1} step={1} value={validationStore.draftQuery.max_positions} onChange={updateDraftQueryNumber('max_positions', validationStore.draftQuery.max_positions, 1)} />
+        </FieldBlock>
+        <FieldBlock label="최대 보유 일수" help="포지션 강제 정리 기준입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={1} step={1} value={validationStore.draftQuery.max_holding_days} onChange={updateDraftQueryNumber('max_holding_days', validationStore.draftQuery.max_holding_days, 1)} />
+        </FieldBlock>
+        <FieldBlock label="RSI 최소" help="진입 허용 하한선입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" step={1} value={validationStore.draftQuery.rsi_min} onChange={updateDraftQueryNumber('rsi_min', validationStore.draftQuery.rsi_min)} />
+        </FieldBlock>
+        <FieldBlock label="RSI 최대" help="진입 허용 상한선입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" step={1} value={validationStore.draftQuery.rsi_max} onChange={updateDraftQueryNumber('rsi_max', validationStore.draftQuery.rsi_max)} />
+        </FieldBlock>
+        <FieldBlock label="거래량 배수 최소" help="평균 대비 거래량 필터입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={0} step={0.1} value={validationStore.draftQuery.volume_ratio_min} onChange={updateDraftQueryNumber('volume_ratio_min', validationStore.draftQuery.volume_ratio_min, 0)} />
+        </FieldBlock>
+        <FieldBlock label="손절 폭(%)" help="비우면 손절 조건을 끕니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={0} step={0.1} value={validationStore.draftQuery.stop_loss_pct ?? ''} onChange={updateDraftQueryNullableNumber('stop_loss_pct', 0)} placeholder="예: 5" />
+        </FieldBlock>
+        <FieldBlock label="익절 폭(%)" help="비우면 익절 조건을 끕니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={0} step={0.1} value={validationStore.draftQuery.take_profit_pct ?? ''} onChange={updateDraftQueryNullableNumber('take_profit_pct', 0)} placeholder="예: 12" />
+        </FieldBlock>
+        <FieldBlock label="ADX 최소" help="추세 강도 필터입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={0} step={0.1} value={validationStore.draftQuery.adx_min ?? ''} onChange={updateDraftQueryNullableNumber('adx_min', 0)} />
+        </FieldBlock>
+        <FieldBlock label="MFI 최소" help="자금 유입 하한선입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" step={0.1} value={validationStore.draftQuery.mfi_min ?? ''} onChange={updateDraftQueryNullableNumber('mfi_min')} />
+        </FieldBlock>
+        <FieldBlock label="MFI 최대" help="과열 차단 상한선입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" step={0.1} value={validationStore.draftQuery.mfi_max ?? ''} onChange={updateDraftQueryNullableNumber('mfi_max')} />
+        </FieldBlock>
+        <FieldBlock label="BB 위치 최소" help="볼린저 밴드 위치 하한선입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={0} max={1} step={0.01} value={validationStore.draftQuery.bb_pct_min ?? ''} onChange={updateDraftQueryNullableNumber('bb_pct_min', 0)} />
+        </FieldBlock>
+        <FieldBlock label="BB 위치 최대" help="볼린저 밴드 위치 상한선입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={0} max={1} step={0.01} value={validationStore.draftQuery.bb_pct_max ?? ''} onChange={updateDraftQueryNullableNumber('bb_pct_max', 0)} />
+        </FieldBlock>
+        <FieldBlock label="Stoch K 최소" help="모멘텀 하한선입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" step={0.1} value={validationStore.draftQuery.stoch_k_min ?? ''} onChange={updateDraftQueryNullableNumber('stoch_k_min')} />
+        </FieldBlock>
+        <FieldBlock label="Stoch K 최대" help="모멘텀 상한선입니다.">
+          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" step={0.1} value={validationStore.draftQuery.stoch_k_max ?? ''} onChange={updateDraftQueryNullableNumber('stoch_k_max')} />
+        </FieldBlock>
+      </SettingsSection>
 
       <div className="settings-panel-actions">
         <button className="console-action-button is-primary" onClick={() => { void handleSaveSettings(); }} disabled={settingsSaving}>
@@ -1045,7 +1124,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
         title={UI_TEXT.confirm.resetValidationTitle}
         message={UI_TEXT.confirm.resetValidationMessage}
         details={[
-          '백테스트 기간, 학습/검증 기간, 목표 함수 초안이 기본값으로 되돌아갑니다.',
+          '기본 설정과 고급 전략 설정 초안이 모두 기본값으로 되돌아갑니다.',
           '저장하지 않은 변경 사항은 모두 사라집니다.',
         ]}
         tone="danger"

@@ -1166,6 +1166,38 @@ button:disabled {
   gap: 14px;
 }
 
+.settings-panel-section {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-panel) 94%, white 6%);
+}
+
+.settings-panel-section-head {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-panel-section-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--text-1);
+}
+
+.settings-panel-section-copy {
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.settings-panel-section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
 .settings-field {
   display: grid;
   gap: 8px;
