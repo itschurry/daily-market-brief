@@ -8,8 +8,19 @@
 
 `daily-market-brief` 는 아래 기능을 한 번에 다루는 투자 리서치/운영 앱입니다.
 
+운영자가 먼저 잡아야 할 개념은 **전략 모드가 둘**이라는 점입니다.
+
+- **퀀트 트레이딩 모드**: 백테스트 / walk-forward / 최적화로 전략을 검증하고 validation gate를 관리함
+- **AI·테마·뉴스 추천 모드**: 추천 종목 / 오늘의 픽 / 뉴스·테마 브리핑을 읽고 당일 운용 판단에 반영함
+
+둘은 **교집합(intersection)** 이 아니라 **합집합(union)** 으로 읽어야 합니다.
+즉, downstream 실행 후보는 두 모드가 동시에 같은 종목을 찍어야만 생기는 구조가 아니고, `today_picks` 우선 / `recommendations` fallback을 포함한 combined candidate flow를 사용합니다.
+
+앱이 제공하는 기능은 아래와 같습니다.
+
 - 일일 시장 브리프 생성
-- 추천 종목 / 오늘의 픽 제공
+- AI·테마·뉴스 추천 종목 / 오늘의 픽 제공
+- 퀀트 백테스트 / walk-forward / 최적화 결과 조회
 - 전일 대비 리포트 비교
 - 설명 가능한 리포트 API 제공
 - KOSPI / NASDAQ 대상 모의투자 엔진 운영
@@ -32,20 +43,26 @@
 - 날짜별 리포트 이력 비교
 - 설명 payload 기반 리포트 API 제공
 
-### 2-2. 추천/검증
+### 2-2. 퀀트 검증
 
-- 추천 종목 랭킹과 시그널 확인
-- 전략 scorecard, 신뢰도, tail risk 정보 확인
 - 백테스트 / walk-forward / 최적화 결과 조회
+- 전략 scorecard, 신뢰도, tail risk 정보 확인
+- validation gate와 optimized params 상태 확인
 
-### 2-3. 모의투자 엔진
+### 2-3. AI·테마·뉴스 추천
+
+- 추천 종목 / 오늘의 픽 / 뉴스·테마 브리핑 확인
+- 추천 기반 후보와 downstream 실행 판단 근거 확인
+- quant 검증과 별도로 읽되, 운영 단계에서는 합집합 후보 흐름으로 해석
+
+### 2-4. 모의투자 엔진
 
 - KOSPI / NASDAQ 대상 paper trading 엔진 구동
 - 시작 / 일시정지 / 재개 / 중지 API 제공
 - 주문/계좌/사이클 로그 확인
 - 알림 실패 시에도 엔진 루프는 계속 진행
 
-### 2-4. 운영 콘솔
+### 2-5. 운영 콘솔
 
 - 웹 콘솔에서 시스템 상태, 리포트, 추천, 엔진 상태 확인
 - API 결과를 운영자 관점에서 빠르게 점검
@@ -97,7 +114,7 @@
 핵심 흐름은 단순해.
 
 1. 사용자가 웹 콘솔(`apps/web`) 또는 직접 API를 호출
-2. 백엔드(`apps/api`)가 리포트 생성, 추천 계산, 엔진 제어를 수행
+2. 백엔드(`apps/api`)가 quant 검증, AI 추천 브리프 생성, 엔진 제어를 수행
 3. 결과는 `storage/reports`, `storage/logs` 에 저장
 4. 필요 시 OpenAI/Ollama, FRED/ECOS/DART, KIS 같은 외부 소스를 사용
 5. 텔레그램/이메일로 운영 알림 발송
@@ -105,7 +122,7 @@
 ### 4-3. 런타임 관점 정리
 
 - **web**: React + Vite UI, `/api` 프록시
-- **api**: FastAPI 서버, 리포트/추천/검증/모의투자 엔진 처리
+- **api**: FastAPI 서버, quant 검증 + AI 추천/브리프 + 모의투자 엔진 처리
 - **storage/reports**: 리포트 결과, explain payload, SQLite 캐시
 - **storage/logs**: 엔진 상태, 주문, 계좌, 사이클 로그
 - **scheduler.py**: 주기 실행 담당
@@ -391,10 +408,10 @@ bash scripts/manage_scheduler_systemd.sh install
 
 웹 콘솔은 운영자 시점에서 아래 기능 확인용입니다.
 
-- 시스템 모드/상태 확인
-- 리포트/추천/오늘의 픽 확인
+- quant 백테스트/최적화와 validation gate 확인
+- AI·테마·뉴스 추천 / 오늘의 픽 / 브리프 확인
 - 모의투자 엔진 상태 확인
-- API 결과 시각적 확인
+- downstream 후보를 교집합이 아닌 합집합으로 해석하며 API 결과를 시각적으로 확인
 
 ### 개발 환경
 
@@ -415,6 +432,12 @@ docker compose up -d --build
 ## 14. 모의투자 엔진 사용 방법
 
 백엔드가 먼저 떠 있어야 합니다.
+
+중요:
+
+- quant 검증(백테스트/최적화)은 이 엔진의 validation gate와 sizing 기준을 담당함
+- AI·테마·뉴스 추천은 `today_picks` / `recommendations` 후보 소스를 담당함
+- 실제 downstream 집행은 둘을 교집합으로 강제하지 않고, combined candidate flow(오늘의 픽 우선 / 추천 fallback)를 사용함
 
 ### 14-1. 상태 조회
 
@@ -478,7 +501,7 @@ curl http://127.0.0.1:8001/api/system/mode
 curl http://127.0.0.1:8001/api/system/notifications/status
 ```
 
-### 15-2. 리포트/추천
+### 15-2. AI 추천/리포트
 
 ```bash
 curl http://127.0.0.1:8001/api/reports

@@ -32,7 +32,7 @@ function emit() {
 
 function defaultValidationSettings(): ValidationSettings {
   return {
-    strategy: '공통 전략 엔진',
+    strategy: '퀀트 전략 엔진',
     trainingDays: 180,
     validationDays: 60,
     walkForward: true,

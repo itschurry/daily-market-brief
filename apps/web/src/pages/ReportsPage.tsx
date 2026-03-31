@@ -158,7 +158,7 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
           <span className="report-hero-meta">리포트 생성 {formatDateTime(view.generatedAt)}</span>
         </div>
         <div className="report-decision-title">오늘 결론: {modeLabel}</div>
-        <div className="report-hero-copy">근거보다 실행 순서를 먼저 고정합니다. 지금은 {guardAllowed ? '허용된 진입만 선별 실행' : '신규 진입 중단과 보유 리스크 관리'}이 우선입니다.</div>
+        <div className="report-hero-copy">근거보다 실행 순서를 먼저 고정합니다. 지금은 {guardAllowed ? '허용된 진입만 선별 실행' : '신규 진입 중단과 보유 리스크 관리'}이 우선입니다. 이 브리핑은 quant 검증 결과와 AI·테마·뉴스 추천을 함께 읽되, 둘을 교집합으로 묶진 않습니다.</div>
         <div className="report-decision-strip">
           <div className={`report-decision-chip ${guardAllowed ? 'is-good' : 'is-bad'}`}>
             진입 {guardAllowed ? '가능' : '제한'}
@@ -168,16 +168,27 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
         </div>
       </div>
 
+      <div className="report-grid-2">
+        <div className="page-section report-visual-card">
+          <div className="section-title">Mode 01 · 퀀트 검증</div>
+          <div className="section-copy">백테스트/최적화에서 채택 여부를 판단한 전략 점수와 tail risk를 읽는 영역입니다.</div>
+        </div>
+        <div className="page-section report-visual-card">
+          <div className="section-title">Mode 02 · AI/테마/뉴스 추천</div>
+          <div className="section-copy">today picks / recommendations 브리핑을 읽는 영역입니다. downstream 후보는 둘 다 동시에 필요하지 않은 합집합 흐름으로 해석합니다.</div>
+        </div>
+      </div>
+
       {scorecardCandidates.length > 0 && (
         <>
           <div className="report-grid-3">
             <div className={`page-section report-visual-card ${topScorecard?.decision.tone === 'good' ? 'is-good' : topScorecard?.decision.tone === 'bad' ? 'is-bad' : ''}`}>
-              <div className="report-card-title">허용 후보 평균 점수</div>
+              <div className="report-card-title">허용 quant 후보 평균 점수</div>
               <div className="report-card-value">{averageCompositeScore === null ? '-' : `${formatNumber(averageCompositeScore, 1)}점`}</div>
               <div className="report-card-copy">점수카드가 있는 허용 후보 {formatCount(approvedScorecards.length, '건')} 기준</div>
             </div>
             <div className={`page-section report-visual-card ${topScorecard?.tail.tone === 'good' ? 'is-good' : topScorecard?.tail.tone === 'bad' ? 'is-bad' : ''}`}>
-              <div className="report-card-title">오늘 1순위 전략 상태</div>
+              <div className="report-card-title">오늘 1순위 quant 전략 상태</div>
               <div className="report-card-value">{topScorecard?.decision.label || '-'}</div>
               <div className="report-card-copy">{topScorecard ? `${topScorecard.symbol} · ${formatNumber(topScorecard.compositeScore, 1)}점` : '점수카드 후보 없음'}</div>
             </div>
@@ -191,8 +202,8 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
           <div className="page-section" style={{ padding: 16 }}>
             <div className="section-head-row">
               <div>
-                <div className="section-title">오늘 전략 점수판</div>
-                <div className="section-copy">EV만 보지 않고 점수 구성과 꼬리손실까지 함께 확인하는 운영용 카드입니다.</div>
+                <div className="section-title">오늘 quant 전략 점수판</div>
+                <div className="section-copy">EV만 보지 않고 quant 점수 구성과 꼬리손실까지 함께 확인하는 운영용 카드입니다. AI 추천 점수판과는 별도입니다.</div>
               </div>
               <div className="inline-badge">상위 {formatCount(Math.min(scorecardCandidates.length, 3), '건')}</div>
             </div>
@@ -464,7 +475,7 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
           <span className="report-hero-meta">운영 경고 우선 확인</span>
         </div>
         <div className="report-decision-title">지금 조치 필요: {alerts.filter((item) => item.severity >= 2).length}건</div>
-        <div className="report-hero-copy">액션보드 대신 실제 운영에 영향을 주는 경고만 앞으로 모았습니다. 엔진 상태, 진입 차단, stale optimization, 실패 주문, 알림 이상부터 먼저 확인하면 됩니다.</div>
+        <div className="report-hero-copy">액션보드 대신 실제 운영에 영향을 주는 경고만 앞으로 모았습니다. 엔진 상태, 진입 차단, stale optimization, 실패 주문, 알림 이상부터 먼저 확인하면 됩니다. 여기서 보는 경고는 quant gate와 AI 추천 downstream 흐름 전체에 걸친 운영 경고입니다.</div>
         <div className="report-decision-strip">
           <div className={`report-decision-chip ${isRunning ? 'is-good' : 'is-bad'}`}>엔진 {isRunning ? '실행 중' : '정지'}</div>
           <div className={`report-decision-chip ${guardBlocked ? 'is-bad' : 'is-good'}`}>진입 {guardBlocked ? '차단' : '허용'}</div>
@@ -570,7 +581,7 @@ function renderWatchDecision(snapshot: ConsoleSnapshot) {
         <div className="report-hero-title-row">
           <div>
             <div className="report-hero-title">관망/관심목표 판단</div>
-            <div className="report-hero-copy">오늘 신규 진입 태도와 집중 포인트만 남겨 둔 짧은 판단 화면입니다.</div>
+            <div className="report-hero-copy">오늘 신규 진입 태도와 집중 포인트만 남겨 둔 짧은 판단 화면입니다. quant 검증과 AI·테마·뉴스 추천을 함께 읽지만, 둘을 동시에 만족해야만 후보가 되는 구조는 아닙니다.</div>
           </div>
           <div className={`report-mode-chip is-${view.mode === '공격' ? 'good' : view.mode === '관망' ? 'bad' : 'neutral'}`}>
             {view.mode}

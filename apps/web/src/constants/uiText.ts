@@ -8,7 +8,7 @@ export const UI_TEXT = {
     overview: '개요',
     signals: '신호',
     paper: '모의투자',
-    validation: '백테스트/검증',
+    validation: '퀀트 검증',
   },
   reportTabs: {
     todayReport: '오늘',

@@ -75,12 +75,12 @@ export function OverviewPage({ snapshot, loading, errorMessage, onRefresh }: Ove
           )}
           {staleOptimized && (
             <div className="page-section" style={{ padding: 12, border: '1px solid #e9b557', background: '#fff7e6', color: '#8a621a' }}>
-              경고: 최적화 파라미터가 stale 상태입니다. 최신 optimization 재실행을 권장합니다.
+              경고: quant 최적화 파라미터가 stale 상태입니다. 최신 optimization 재실행을 권장합니다.
             </div>
           )}
           <ConsoleActionBar
             title="엔진 개요"
-            subtitle="운영 지표 기준으로 엔진/손익/차단 상태를 즉시 확인합니다."
+            subtitle="모의투자 런타임, quant validation gate, downstream 실행 상태를 즉시 확인합니다. AI·테마·뉴스 추천 브리핑은 리포트 섹션에서 읽습니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage}

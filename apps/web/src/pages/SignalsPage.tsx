@@ -54,7 +54,7 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <ConsoleActionBar
             title="신호 관리"
-            subtitle="진입 허용/차단 사유와 검증 신뢰도를 운영 기준으로 확인합니다."
+            subtitle="today picks/recommendations 기반 합집합 후보 흐름에 quant gate를 얹은 최종 진입 허용/차단 사유를 운영 기준으로 확인합니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage}
@@ -66,6 +66,7 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
               <div style={{ display: 'grid', gap: 10, fontSize: 12, color: 'var(--text-3)' }}>
                 <div>표시 최대 건수: 80건</div>
                 <div>정렬 기준: EV 내림차순</div>
+                <div>today picks 우선, recommendations fallback 흐름입니다. 둘 다 동시에 있어야 하는 교집합 모델은 아닙니다.</div>
                 <div>차단 사유는 상세 보기로 확인하세요.</div>
               </div>
             )}

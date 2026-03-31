@@ -89,7 +89,7 @@ export function buildTodayReportView(snapshot: ConsoleSnapshot): TodayReportView
   const summaryFallback = [
     '거시/수급 지표 변화를 기준으로 시장 위험도를 점검합니다.',
     '리스크 가드 상태와 허용 신호 비율을 함께 확인합니다.',
-    '신규 진입은 EV와 유동성 조건을 동시에 충족한 종목만 고려합니다.',
+    '하류 후보는 quant와 AI 추천을 교집합으로 묶지 않고, EV·유동성·gate 기준을 만족한 합집합 흐름으로 해석합니다.',
   ];
   const summaryLines = dedupeKeepOrder([...analysisLines, ...summaryFallback]).slice(0, 5);
 

@@ -296,8 +296,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   const [runFinishedAt, setRunFinishedAt] = useState('');
   const [optimizationStartedAt, setOptimizationStartedAt] = useState('');
   const [optimizationUpdatedAt, setOptimizationUpdatedAt] = useState('');
-  const [backtestMessage, setBacktestMessage] = useState('현재 저장된 설정 요약을 확인한 뒤 실행하면 됩니다.');
-  const [optimizationMessage, setOptimizationMessage] = useState('최적화는 백그라운드 작업으로 분리되어 실행됩니다.');
+  const [backtestMessage, setBacktestMessage] = useState('현재 저장된 quant 설정 요약을 확인한 뒤 실행하면 됩니다.');
+  const [optimizationMessage, setOptimizationMessage] = useState('quant 최적화는 백그라운드 작업으로 분리되어 실행됩니다.');
   const [optimizationRunning, setOptimizationRunning] = useState(false);
   const [optimizedParams, setOptimizedParams] = useState<Record<string, unknown> | null>(null);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
@@ -601,7 +601,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     setRunFinishedAt('');
     setBacktestPhase('requesting');
     setBacktestMessage('저장된 설정으로 백테스트 요청을 전송했습니다.');
-    push('info', '백테스트 실행을 시작했습니다.', `시장 ${executedQuery.market_scope === 'kospi' ? 'KOSPI' : executedQuery.market_scope === 'nasdaq' ? 'NASDAQ' : 'KOSPI+NASDAQ'}, 기간 ${executedQuery.lookback_days}일`, 'backtest');
+    push('info', '퀀트 백테스트 실행을 시작했습니다.', `시장 ${executedQuery.market_scope === 'kospi' ? 'KOSPI' : executedQuery.market_scope === 'nasdaq' ? 'NASDAQ' : 'KOSPI+NASDAQ'}, 기간 ${executedQuery.lookback_days}일`, 'backtest');
     pushToast({ tone: 'info', title: '백테스트 실행 시작', description: '저장된 설정 기준으로 결과를 고정합니다.' });
 
     await Promise.resolve();
@@ -687,7 +687,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
         setOptimizationRunning(true);
         setOptimizationPhase(alreadyRunning ? 'running' : 'queued');
         setOptimizationMessage(alreadyRunning ? '이미 실행 중인 최적화 작업을 추적합니다.' : '최적화가 큐에 등록되었습니다.');
-        push('info', alreadyRunning ? '최적화가 이미 실행 중입니다.' : '최적화를 시작했습니다.', '완료 전까지 동일 작업은 다시 실행되지 않습니다.', 'optimization');
+        push('info', alreadyRunning ? '퀀트 최적화가 이미 실행 중입니다.' : '퀀트 최적화를 시작했습니다.', '완료 전까지 동일 작업은 다시 실행되지 않습니다.', 'optimization');
         pushToast({
           tone: 'info',
           title: alreadyRunning ? '최적화 작업 확인' : '최적화 시작',
@@ -728,16 +728,16 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       strategy: validationStore.draftSettings.strategy,
     };
     updateSaveHistory([historyItem, ...saveHistory].slice(0, 30));
-    push('success', '검증 설정을 저장했습니다.', `${validationStore.draftQuery.market_scope === 'kospi' ? 'KOSPI' : validationStore.draftQuery.market_scope === 'nasdaq' ? 'NASDAQ' : 'KOSPI+NASDAQ'} · ${validationStore.draftQuery.lookback_days}일`, 'settings');
-    pushToast({ tone: 'success', title: '설정 저장 완료', description: '실행 패널 요약과 저장 필요 배지가 즉시 갱신되었습니다.' });
+    push('success', '퀀트 검증 설정을 저장했습니다.', `${validationStore.draftQuery.market_scope === 'kospi' ? 'KOSPI' : validationStore.draftQuery.market_scope === 'nasdaq' ? 'NASDAQ' : 'KOSPI+NASDAQ'} · ${validationStore.draftQuery.lookback_days}일`, 'settings');
+    pushToast({ tone: 'success', title: '설정 저장 완료', description: '퀀트 실행 패널 요약과 저장 필요 배지가 즉시 갱신되었습니다.' });
     setSettingsSaving(false);
   }, [push, pushToast, saveHistory, settingsSaving, updateSaveHistory, validationStore]);
 
   const handleResetSettings = useCallback(() => {
     validationStore.resetDraft();
-    setBacktestMessage('설정 초안을 기본값으로 되돌렸습니다. 저장 후 실행할 수 있습니다.');
-    push('warning', '검증 설정 초안을 기본값으로 되돌렸습니다.', '저장 전까지는 저장 필요 상태가 유지됩니다.', 'settings');
-    pushToast({ tone: 'warning', title: '설정 초안 초기화', description: '기본값으로 되돌렸습니다. 저장하면 실행 패널에 반영됩니다.' });
+    setBacktestMessage('퀀트 설정 초안을 기본값으로 되돌렸습니다. 저장 후 실행할 수 있습니다.');
+    push('warning', '퀀트 검증 설정 초안을 기본값으로 되돌렸습니다.', '저장 전까지는 저장 필요 상태가 유지됩니다.', 'settings');
+    pushToast({ tone: 'warning', title: '설정 초안 초기화', description: '기본값으로 되돌렸습니다. 저장하면 quant 실행 패널에 반영됩니다.' });
   }, [push, pushToast, validationStore]);
 
   const updateDraftQueryNumber = useCallback((key: keyof BacktestQuery, fallback: number, min?: number) => (event: ChangeEvent<HTMLInputElement>) => {
@@ -766,7 +766,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
 
   const settingsPanel = (
     <div className="settings-panel-grid">
-      <SettingsSection title="기본 설정" description="시장, 기간, 검증 기준을 여기서 관리합니다.">
+      <SettingsSection title="기본 quant 설정" description="시장, 기간, 검증 기준을 여기서 관리합니다. AI·테마·뉴스 추천 모드는 이 패널에서 다루지 않습니다.">
         <FieldBlock label="시장" help="백테스트 대상 시장을 선택합니다.">
           <select
             className="backtest-input-wrap"
@@ -780,13 +780,13 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
           </select>
         </FieldBlock>
 
-        <FieldBlock label="전략 이름" help="실행 패널과 저장 이력에 함께 표시됩니다.">
+        <FieldBlock label="퀀트 전략 이름" help="실행 패널과 저장 이력에 함께 표시됩니다.">
           <input
             className="backtest-input-wrap"
             style={{ padding: '0 12px' }}
             value={validationStore.draftSettings.strategy}
             onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, strategy: event.target.value }))}
-            placeholder="예: 공통 전략 엔진"
+            placeholder="예: 퀀트 모멘텀 엔진"
           />
         </FieldBlock>
 
@@ -855,7 +855,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
         </FieldBlock>
       </SettingsSection>
 
-      <SettingsSection title="고급 전략 설정" description="실제 진입·청산 파라미터를 바로 조정합니다.">
+      <SettingsSection title="고급 quant 룰" description="실제 진입·청산 파라미터를 바로 조정합니다. 백테스트/최적화에만 반영됩니다.">
         <FieldBlock label="초기 자금" help="시장 기본 통화 기준입니다.">
           <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={1} step={1} value={validationStore.draftQuery.initial_cash} onChange={updateDraftQueryNumber('initial_cash', validationStore.draftQuery.initial_cash, 1)} />
         </FieldBlock>
@@ -917,8 +917,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       <div className="page-frame">
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <ConsoleActionBar
-            title="검증 콘솔"
-            subtitle="설정은 상단 패널에서 저장하고, 이 화면에서는 실행/상태/결과만 봅니다."
+            title="퀀트 검증 콘솔"
+            subtitle="이 화면은 quant 전략만 다룹니다. AI·테마·뉴스 추천 브리핑은 리포트/모의투자 흐름에서 별도로 봅니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage}
@@ -931,13 +931,26 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
             settingsSavedAt={validationStore.lastSavedAt}
           />
 
+          <div className="validation-report-grid">
+            <div className="page-section" style={{ padding: 16 }}>
+              <div className="section-kicker">Mode 01</div>
+              <div className="section-title">퀀트 트레이딩 검증</div>
+              <div className="section-copy">백테스트, walk-forward, 최적화로 전략을 채택/보류하는 전용 영역입니다. AI·테마·뉴스 추천 점수는 여기 통과 조건이 아닙니다.</div>
+            </div>
+            <div className="page-section" style={{ padding: 16 }}>
+              <div className="section-kicker">Mode 02</div>
+              <div className="section-title">AI/테마/뉴스 추천</div>
+              <div className="section-copy">오늘 리포트, 관망/관심목표, 모의투자 후보 선택에서 따로 읽습니다. 둘을 교집합으로 묶지 않고 downstream에서는 합집합 후보 흐름으로 봅니다.</div>
+            </div>
+          </div>
+
           <div className="validation-layout">
             <div className="validation-report-column">
               <div className={`page-section validation-report-card decision-state-card is-${adoptionDecision.tone}`}>
                 <div className="section-kicker">Adoption Decision</div>
                 <div className="section-head-row">
                   <div>
-                    <div className="section-title">전략 채택 상태: {adoptionDecision.label}</div>
+                    <div className="section-title">퀀트 전략 채택 상태: {adoptionDecision.label}</div>
                     <div className="section-copy">{adoptionDecision.action}</div>
                   </div>
                   <div className={`inline-badge ${adoptionDecision.tone === 'good' ? 'is-success' : adoptionDecision.tone === 'bad' ? 'is-danger' : 'is-warning'}`}>
@@ -967,8 +980,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
               <div className="page-section" style={{ padding: 16 }}>
                 <div className="section-head-row">
                   <div>
-                    <div className="section-title">전략 점수카드</div>
-                    <div className="section-copy">점수 하나로 끝내지 않고, 왜 채택/보류해야 하는지와 손실 꼬리를 같이 봅니다.</div>
+                    <div className="section-title">퀀트 전략 점수카드</div>
+                    <div className="section-copy">점수 하나로 끝내지 않고, 왜 채택/보류해야 하는지와 손실 꼬리를 같이 봅니다. AI 추천 점수와는 별도입니다.</div>
                   </div>
                   <div className={`inline-badge ${scoreDecision.tone === 'good' ? 'is-success' : scoreDecision.tone === 'bad' ? 'is-danger' : 'is-warning'}`}>
                     {primaryScoreSource}
@@ -1088,7 +1101,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 <div className="page-section" style={{ padding: 16 }}>
                   <div className="section-title">구간 성과</div>
                   <div className="detail-list">
-                    <div>전략: {executedRun?.settings.strategy || validationStore.savedSettings.strategy}</div>
+                    <div>퀀트 전략: {executedRun?.settings.strategy || validationStore.savedSettings.strategy}</div>
                     <div>시장: {(executedRun?.query.market_scope || validationStore.savedQuery.market_scope) === 'kospi' ? 'KOSPI' : (executedRun?.query.market_scope || validationStore.savedQuery.market_scope) === 'nasdaq' ? 'NASDAQ' : 'KOSPI+NASDAQ'}</div>
                     <div>학습 구간 수익률: {formatPercent(metricNumber(segmentTrain, 'total_return_pct'), 2)}</div>
                     <div>검증 구간 수익률: {formatPercent(metricNumber(segmentValidation, 'total_return_pct'), 2)}</div>
@@ -1113,8 +1126,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 <div className="section-kicker">Execution</div>
                 <div className="section-head-row">
                   <div>
-                    <div className="section-title">실행 패널</div>
-                    <div className="section-copy">초안, 저장됨, 마지막 실행 결과를 분리해서 보여줍니다.</div>
+                    <div className="section-title">퀀트 실행 패널</div>
+                    <div className="section-copy">초안, 저장됨, 마지막 quant 실행 결과를 분리해서 보여줍니다.</div>
                   </div>
                   <div className={`inline-badge ${validationStore.unsaved ? 'is-warning' : 'is-success'}`}>
                     {validationStore.unsaved ? '초안 변경 있음' : '저장된 설정과 동일'}
@@ -1153,7 +1166,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   >
                     {backtestPhase === 'requesting' || backtestPhase === 'running' || backtestPhase === 'finalizing'
                       ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />백테스트 진행 중...</span>
-                      : '저장된 설정으로 백테스트 실행'}
+                      : '저장된 설정으로 퀀트 백테스트 실행'}
                   </button>
                   <button
                     className="console-action-button"
@@ -1162,13 +1175,13 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   >
                     {optimizationRunning || optimizationPhase === 'requesting'
                       ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />최적화 진행 중...</span>
-                      : '저장된 설정으로 최적화 실행'}
+                      : '저장된 설정으로 퀀트 최적화 실행'}
                   </button>
                 </div>
 
                 <div className="validation-inline-status">
-                  <div>백테스트: {backtestPhaseLabel(backtestPhase)} · {backtestMessage}</div>
-                  <div>최적화: {optimizationPhaseLabel(optimizationPhase)} · {optimizationMessage}</div>
+                  <div>퀀트 백테스트: {backtestPhaseLabel(backtestPhase)} · {backtestMessage}</div>
+                  <div>퀀트 최적화: {optimizationPhaseLabel(optimizationPhase)} · {optimizationMessage}</div>
                   <div>마지막 실행 시각: {executedRun?.executedAt ? formatDateTime(executedRun.executedAt) : runFinishedAt ? formatDateTime(runFinishedAt) : '없음'}</div>
                   <div>화면 새로고침은 상태만 다시 불러오고, 결과 카드는 다시 계산하지 않습니다.</div>
                 </div>
@@ -1176,7 +1189,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
 
               <div className="process-grid">
                 <ProcessStepper
-                  title="백테스트 진행"
+                  title="퀀트 백테스트 진행"
                   steps={['요청', '계산', '정리', backtestPhase === 'error' ? '실패' : '완료']}
                   activeIndex={buildPhaseIndex(backtestPhase)}
                   error={backtestPhase === 'error'}
@@ -1184,7 +1197,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   timestamp={runStartedAt || runFinishedAt}
                 />
                 <ProcessStepper
-                  title="최적화 진행"
+                  title="퀀트 최적화 진행"
                   steps={['요청', '큐', '실행', optimizationPhase === 'error' ? '실패' : '완료']}
                   activeIndex={buildOptimizationPhaseIndex(optimizationPhase)}
                   error={optimizationPhase === 'error'}
