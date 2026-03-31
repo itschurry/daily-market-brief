@@ -158,10 +158,11 @@ export function saveBacktestQuery(query: BacktestQuery) {
   localStorage.setItem(BACKTEST_QUERY_STORAGE_KEY, JSON.stringify(query));
 }
 
-export function useBacktest(initialQuery: BacktestQuery = DEFAULT_BACKTEST_QUERY) {
+export function useBacktest(initialQuery: BacktestQuery = DEFAULT_BACKTEST_QUERY, options?: { autoRun?: boolean }) {
+  const autoRun = options?.autoRun ?? true;
   const [query, setQuery] = useState<BacktestQuery>(initialQuery);
   const [data, setData] = useState<BacktestData>({});
-  const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'ok' | 'error'>(autoRun ? 'loading' : 'ok');
   const [lastError, setLastError] = useState('');
 
   const run = useCallback(async (nextQuery: BacktestQuery) => {
@@ -184,8 +185,9 @@ export function useBacktest(initialQuery: BacktestQuery = DEFAULT_BACKTEST_QUERY
   }, []);
 
   useEffect(() => {
+    if (!autoRun) return;
     run(initialQuery);
-  }, [initialQuery, run]);
+  }, [autoRun, initialQuery, run]);
 
   return { data, query, status, lastError, run, setQuery };
 }

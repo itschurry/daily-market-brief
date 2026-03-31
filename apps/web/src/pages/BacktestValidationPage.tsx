@@ -11,8 +11,9 @@ import {
   useValidationSettingsStore,
 } from '../hooks/useValidationSettingsStore';
 import { useToast } from '../hooks/useToast';
-import type { BacktestQuery, BacktestTrade } from '../types';
+import type { BacktestData, BacktestQuery, BacktestTrade } from '../types';
 import type { ActionBarStatusItem, BacktestViewModel, ConsoleSnapshot } from '../types/consoleView';
+import type { ValidationResponse } from '../types/domain';
 import {
   buildScoreComponentRows,
   buildTailRiskRows,
@@ -30,6 +31,8 @@ interface BacktestValidationPageProps {
   errorMessage: string;
   onRefresh: () => void;
 }
+
+type ValidationStoreSnapshot = ReturnType<typeof useValidationSettingsStore>;
 
 interface RunHistoryItem {
   id: string;
@@ -61,6 +64,15 @@ type OptimizationPhase = 'idle' | 'requesting' | 'queued' | 'running' | 'success
 const RUN_HISTORY_KEY = 'console_validation_run_history_v1';
 const OPT_HISTORY_KEY = 'console_validation_optimization_history_v1';
 const SAVE_HISTORY_KEY = 'console_validation_save_history_v1';
+const EXECUTED_RUN_KEY = 'console_validation_executed_run_v1';
+
+interface ExecutedRunState {
+  executedAt: string;
+  query: BacktestQuery;
+  settings: ValidationStoreSnapshot['savedSettings'];
+  backtest: BacktestData;
+  validation: ValidationResponse;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -76,6 +88,20 @@ function readArray<T>(key: string): T[] {
 }
 
 function writeArray<T>(key: string, value: T[]) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function readJson<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function writeJson<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
@@ -252,7 +278,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   const { entries, push, clear } = useConsoleLogs();
   const validationStore = useValidationSettingsStore();
   const [initialQuery] = useState<BacktestQuery>(() => validationStore.savedQuery);
-  const { data, run } = useBacktest(initialQuery);
+  const { run } = useBacktest(initialQuery, { autoRun: false });
   const [runHistory, setRunHistory] = useState<RunHistoryItem[]>(() => readArray<RunHistoryItem>(RUN_HISTORY_KEY));
   const [optimizationHistory, setOptimizationHistory] = useState<OptimizationHistoryItem[]>(() => readArray<OptimizationHistoryItem>(OPT_HISTORY_KEY));
   const [saveHistory, setSaveHistory] = useState<SettingSaveItem[]>(() => readArray<SettingSaveItem>(SAVE_HISTORY_KEY));
@@ -268,11 +294,13 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   const [optimizedParams, setOptimizedParams] = useState<Record<string, unknown> | null>(null);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [validationResult, setValidationResult] = useState(snapshot.validation);
+  const [executedRun, setExecutedRun] = useState<ExecutedRunState | null>(() => readJson<ExecutedRunState>(EXECUTED_RUN_KEY));
 
-  const metrics = data.metrics as Record<string, unknown> | undefined;
+  const activeBacktest = executedRun?.backtest || null;
+  const validationResult = executedRun?.validation || snapshot.validation;
+  const metrics = activeBacktest?.metrics as Record<string, unknown> | undefined;
   const oos = validationResult.segments?.oos;
-  const reasonRows = useMemo(() => aggregateByReason(data.trades || []), [data.trades]);
+  const reasonRows = useMemo(() => aggregateByReason(activeBacktest?.trades || []), [activeBacktest?.trades]);
 
   const viewModel = useMemo<BacktestViewModel>(() => ({
     totalReturnPct: metricNumber(metrics, 'total_return_pct'),
@@ -288,6 +316,14 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     () => formatValidationSettingsLabel(validationStore.draftSettings, validationStore.draftQuery),
     [validationStore.draftQuery, validationStore.draftSettings],
   );
+  const savedSettingsSummaryLines = useMemo(
+    () => formatValidationSettingsLabel(validationStore.savedSettings, validationStore.savedQuery),
+    [validationStore.savedQuery, validationStore.savedSettings],
+  );
+  const executedSettingsSummaryLines = useMemo(
+    () => executedRun ? formatValidationSettingsLabel(executedRun.settings, executedRun.query) : [],
+    [executedRun],
+  );
 
   const segmentTrain = validationResult.segments?.train as Record<string, unknown> | undefined;
   const segmentValidation = validationResult.segments?.validation as Record<string, unknown> | undefined;
@@ -302,8 +338,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     [segmentOos, validationResult.scorecard],
   );
   const latestBacktestScorecard = useMemo(
-    () => extractStrategyScorecard(data.scorecard),
-    [data.scorecard],
+    () => extractStrategyScorecard(activeBacktest?.scorecard),
+    [activeBacktest?.scorecard],
   );
   const primaryScorecard = walkForwardScorecard || latestBacktestScorecard;
   const primaryScoreSource = walkForwardScorecard ? 'Walk-forward OOS' : latestBacktestScorecard ? '최근 백테스트' : '데이터 없음';
@@ -486,46 +522,61 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     return () => window.clearInterval(timer);
   }, [optimizationHistory, optimizationRunning, push, pushToast, updateOptimizationHistory]);
 
-  const refreshValidationResult = useCallback(async (query = validationStore.draftQuery, settings = validationStore.draftSettings) => {
+  const refreshValidationResult = useCallback(async (query: BacktestQuery, settings: ValidationStoreSnapshot['savedSettings']) => {
     try {
-      const payload = await fetchValidationWalkForward(query, settings);
-      setValidationResult(payload);
-      return payload;
+      return await fetchValidationWalkForward(query, settings);
     } catch {
-      push('warning', '검증 요약을 최신 설정으로 다시 계산하지 못했습니다.', '백엔드 validation 응답을 확인하세요.', 'backtest');
+      push('warning', '검증 요약을 다시 계산하지 못했습니다.', '백엔드 validation 응답을 확인하세요.', 'backtest');
       return null;
     }
-  }, [push, validationStore.draftQuery, validationStore.draftSettings]);
+  }, [push]);
 
-  useEffect(() => {
-    setValidationResult(snapshot.validation);
-  }, [snapshot.validation]);
-
-  useEffect(() => {
-    void refreshValidationResult(validationStore.savedQuery, validationStore.savedSettings);
-  }, [refreshValidationResult, validationStore.savedQuery, validationStore.savedSettings]);
-
-  const handleRefreshAll = useCallback(() => {
+  const handleRefreshAll = useCallback(async () => {
     onRefresh();
-    void refreshValidationResult();
-    push('info', '검증 화면 데이터를 새로고침했습니다.', '실행 상태와 리포트 스냅샷을 다시 불러옵니다.', 'refresh');
+
+    try {
+      const [statusPayload, paramsPayload] = await Promise.all([
+        getJSON<{ running?: boolean }>('/api/optimization-status', { noStore: true }),
+        getJSON<Record<string, unknown>>('/api/optimized-params', { noStore: true }),
+      ]);
+
+      setOptimizationRunning(Boolean(statusPayload.running));
+      if (statusPayload.running) {
+        setOptimizationPhase('running');
+        setOptimizationMessage('이미 실행 중인 최적화 작업을 추적 중입니다.');
+      }
+      if (paramsPayload.status === 'ok') {
+        setOptimizedParams(paramsPayload);
+      }
+    } catch {
+      push('warning', '상태 새로고침 중 일부 정보를 가져오지 못했습니다.', '최적화 상태와 최신 파라미터는 다시 시도해 주세요.', 'refresh');
+    }
+
+    push('info', '화면 상태만 새로고침했습니다.', '마지막 실행 결과 카드는 그대로 유지합니다.', 'refresh');
     pushToast({
       tone: 'info',
-      title: '화면을 새로고침했습니다.',
-      description: '실행 상태와 리포트 스냅샷을 최신 값으로 다시 불러옵니다.',
+      title: '상태만 새로고침했습니다.',
+      description: '마지막 실행 결과는 다시 계산하지 않았습니다.',
     });
-  }, [onRefresh, push, pushToast, refreshValidationResult]);
+  }, [onRefresh, push, pushToast]);
 
   const handleRunBacktest = useCallback(async () => {
     if (backtestPhase === 'requesting' || backtestPhase === 'running' || backtestPhase === 'finalizing') return;
+    if (validationStore.unsaved) {
+      push('warning', '저장된 설정만 실행할 수 있습니다.', '먼저 설정 저장을 눌러 실행 기준을 확정해 주세요.', 'backtest');
+      pushToast({ tone: 'warning', title: '먼저 설정 저장', description: '실행 결과와 초안을 섞지 않도록 저장된 설정만 실행합니다.' });
+      return;
+    }
 
+    const executedQuery = validationStore.savedQuery;
+    const executedSettings = validationStore.savedSettings;
     const historyId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     updateRunHistory([
       {
         id: historyId,
         at: nowIso(),
-        market: validationStore.draftQuery.market_scope,
-        lookbackDays: validationStore.draftQuery.lookback_days,
+        market: executedQuery.market_scope,
+        lookbackDays: executedQuery.lookback_days,
         status: '실행 중',
         totalReturnPct: null,
       },
@@ -535,16 +586,16 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     setRunStartedAt(nowIso());
     setRunFinishedAt('');
     setBacktestPhase('requesting');
-    setBacktestMessage('백테스트 요청을 전송했습니다.');
-    push('info', '백테스트 실행을 시작했습니다.', `시장 ${validationStore.draftQuery.market_scope.toUpperCase()}, 기간 ${validationStore.draftQuery.lookback_days}일`, 'backtest');
-    pushToast({ tone: 'info', title: '백테스트 실행 시작', description: '완료될 때까지 중복 실행은 잠시 잠깁니다.' });
+    setBacktestMessage('저장된 설정으로 백테스트 요청을 전송했습니다.');
+    push('info', '백테스트 실행을 시작했습니다.', `시장 ${executedQuery.market_scope.toUpperCase()}, 기간 ${executedQuery.lookback_days}일`, 'backtest');
+    pushToast({ tone: 'info', title: '백테스트 실행 시작', description: '저장된 설정 기준으로 결과를 고정합니다.' });
 
     await Promise.resolve();
     setBacktestPhase('running');
     setBacktestMessage('서버에서 성과 계산과 검증 요약을 생성하고 있습니다.');
 
-    const result = await run(validationStore.draftQuery);
-    await refreshValidationResult(validationStore.draftQuery, validationStore.draftSettings);
+    const result = await run(executedQuery);
+    const validationPayload = result.ok ? await refreshValidationResult(executedQuery, executedSettings) : null;
     setBacktestPhase('finalizing');
     setBacktestMessage('결과를 정리 중입니다.');
     await new Promise((resolve) => window.setTimeout(resolve, 180));
@@ -552,25 +603,34 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     const finishedAt = nowIso();
     setRunFinishedAt(finishedAt);
 
-    if (result.ok) {
+    if (result.ok && result.payload && validationPayload) {
+      const nextExecutedRun: ExecutedRunState = {
+        executedAt: finishedAt,
+        query: executedQuery,
+        settings: executedSettings,
+        backtest: result.payload,
+        validation: validationPayload,
+      };
+      setExecutedRun(nextExecutedRun);
+      writeJson(EXECUTED_RUN_KEY, nextExecutedRun);
       setBacktestPhase('success');
-      setBacktestMessage('백테스트가 완료되었습니다.');
+      setBacktestMessage('백테스트가 완료되었습니다. 결과 카드는 마지막 명시적 실행 기준으로 고정됩니다.');
       updateRunHistory(updateHistoryItem([
         {
           id: historyId,
           at: finishedAt,
-          market: validationStore.draftQuery.market_scope,
-          lookbackDays: validationStore.draftQuery.lookback_days,
+          market: executedQuery.market_scope,
+          lookbackDays: executedQuery.lookback_days,
           status: '완료',
-          totalReturnPct: metricNumber(result.payload?.metrics as Record<string, unknown> | undefined, 'total_return_pct'),
+          totalReturnPct: metricNumber(result.payload.metrics as Record<string, unknown> | undefined, 'total_return_pct'),
         },
         ...runHistory,
       ].slice(0, 30), historyId, {
         status: '완료',
-        totalReturnPct: metricNumber(result.payload?.metrics as Record<string, unknown> | undefined, 'total_return_pct'),
+        totalReturnPct: metricNumber(result.payload.metrics as Record<string, unknown> | undefined, 'total_return_pct'),
       }));
-      push('success', '백테스트가 완료되었습니다.', '성과 요약과 최근 실행 이력이 갱신되었습니다.', 'backtest');
-      pushToast({ tone: 'success', title: '백테스트 완료', description: '성과 요약과 최근 실행 이력이 갱신되었습니다.' });
+      push('success', '백테스트가 완료되었습니다.', '마지막 실행 결과 카드와 최근 실행 이력이 갱신되었습니다.', 'backtest');
+      pushToast({ tone: 'success', title: '백테스트 완료', description: '결과 카드를 마지막 실행 기준으로 고정했습니다.' });
       return;
     }
 
@@ -580,8 +640,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       {
         id: historyId,
         at: finishedAt,
-        market: validationStore.draftQuery.market_scope,
-        lookbackDays: validationStore.draftQuery.lookback_days,
+        market: executedQuery.market_scope,
+        lookbackDays: executedQuery.lookback_days,
         status: '실패',
         totalReturnPct: null,
       },
@@ -589,10 +649,15 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     ].slice(0, 30), historyId, { status: '실패', totalReturnPct: null }));
     push('error', '백테스트 실행이 실패했습니다.', result.error || '상단 로그 보기에서 상세 원인을 확인하세요.', 'backtest');
     pushToast({ tone: 'error', title: '백테스트 실패', description: result.error || '로그와 서버 상태를 확인해 주세요.' });
-  }, [backtestPhase, push, pushToast, refreshValidationResult, run, runHistory, updateRunHistory, validationStore.draftQuery, validationStore.draftSettings]);
+  }, [backtestPhase, push, pushToast, refreshValidationResult, run, runHistory, updateRunHistory, validationStore.savedQuery, validationStore.savedSettings, validationStore.unsaved]);
 
   const handleRunOptimization = useCallback(async () => {
     if (optimizationRunning || optimizationPhase === 'requesting') return;
+    if (validationStore.unsaved) {
+      push('warning', '저장된 설정을 먼저 확정해 주세요.', '초안 상태에서는 최적화를 시작하지 않습니다.', 'optimization');
+      pushToast({ tone: 'warning', title: '먼저 설정 저장', description: '최적화도 저장된 설정 기준으로만 시작합니다.' });
+      return;
+    }
 
     setOptimizationPhase('requesting');
     setOptimizationStartedAt(nowIso());
@@ -634,7 +699,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       push('error', '최적화 요청 중 오류가 발생했습니다.', '네트워크 또는 서버 상태를 확인하세요.', 'optimization');
       pushToast({ tone: 'error', title: '최적화 요청 실패', description: '요청 전송 중 오류가 발생했습니다.' });
     }
-  }, [optimizationHistory, optimizationPhase, optimizationRunning, push, pushToast, updateOptimizationHistory]);
+  }, [optimizationHistory, optimizationPhase, optimizationRunning, push, pushToast, updateOptimizationHistory, validationStore.unsaved]);
 
   const handleSaveSettings = useCallback(async () => {
     if (settingsSaving) return;
@@ -967,8 +1032,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 <div className="page-section" style={{ padding: 16 }}>
                   <div className="section-title">구간 성과</div>
                   <div className="detail-list">
-                    <div>전략: {validationStore.draftSettings.strategy}</div>
-                    <div>시장: {validationStore.draftQuery.market_scope.toUpperCase()}</div>
+                    <div>전략: {executedRun?.settings.strategy || validationStore.savedSettings.strategy}</div>
+                    <div>시장: {(executedRun?.query.market_scope || validationStore.savedQuery.market_scope).toUpperCase()}</div>
                     <div>학습 구간 수익률: {formatPercent(metricNumber(segmentTrain, 'total_return_pct'), 2)}</div>
                     <div>검증 구간 수익률: {formatPercent(metricNumber(segmentValidation, 'total_return_pct'), 2)}</div>
                     <div>OOS 구간 수익률: {formatPercent(metricNumber(segmentOos, 'total_return_pct'), 2)}</div>
@@ -993,21 +1058,35 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 <div className="section-head-row">
                   <div>
                     <div className="section-title">실행 패널</div>
-                    <div className="section-copy">설정 확인 후 백테스트/최적화만 빠르게 실행합니다.</div>
+                    <div className="section-copy">초안, 저장됨, 마지막 실행 결과를 분리해서 보여줍니다.</div>
                   </div>
                   <div className={`inline-badge ${validationStore.unsaved ? 'is-warning' : 'is-success'}`}>
-                    {validationStore.unsaved ? '저장 필요' : '저장됨'}
+                    {validationStore.unsaved ? '초안 변경 있음' : '저장된 설정과 동일'}
                   </div>
                 </div>
 
                 <div className="summary-rail is-compact">
-                  {settingsSummaryLines.slice(0, 3).map((line) => (
-                    <div key={line} className="summary-rail-item">{line}</div>
-                  ))}
+                  <div className="summary-rail-item"><strong>초안</strong> · {settingsSummaryLines[0]}</div>
+                  <div className="summary-rail-item">{settingsSummaryLines[1]}</div>
+                  <div className="summary-rail-item">{settingsSummaryLines[2]}</div>
                 </div>
 
+                <div className="summary-rail is-compact" style={{ marginTop: 8 }}>
+                  <div className="summary-rail-item"><strong>저장됨</strong> · {savedSettingsSummaryLines[0]}</div>
+                  <div className="summary-rail-item">{savedSettingsSummaryLines[1]}</div>
+                  <div className="summary-rail-item">{savedSettingsSummaryLines[2]}</div>
+                </div>
+
+                {executedRun && (
+                  <div className="summary-rail is-compact" style={{ marginTop: 8 }}>
+                    <div className="summary-rail-item"><strong>마지막 실행</strong> · {executedSettingsSummaryLines[0]}</div>
+                    <div className="summary-rail-item">{executedSettingsSummaryLines[1]}</div>
+                    <div className="summary-rail-item">{executedSettingsSummaryLines[2]}</div>
+                  </div>
+                )}
+
                 {validationStore.unsaved && (
-                  <div className="inline-warning-card">저장하지 않은 변경 사항이 있습니다. 실행값 확정 전 저장을 권장합니다.</div>
+                  <div className="inline-warning-card">초안이 저장된 설정과 다릅니다. 실행은 저장된 설정으로만 진행합니다.</div>
                 )}
 
                 <div className="execution-button-row is-split">
@@ -1018,7 +1097,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   >
                     {backtestPhase === 'requesting' || backtestPhase === 'running' || backtestPhase === 'finalizing'
                       ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />백테스트 진행 중...</span>
-                      : '백테스트 실행'}
+                      : '저장된 설정으로 백테스트 실행'}
                   </button>
                   <button
                     className="console-action-button"
@@ -1027,14 +1106,15 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   >
                     {optimizationRunning || optimizationPhase === 'requesting'
                       ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />최적화 진행 중...</span>
-                      : '최적화 실행'}
+                      : '저장된 설정으로 최적화 실행'}
                   </button>
                 </div>
 
                 <div className="validation-inline-status">
                   <div>백테스트: {backtestPhaseLabel(backtestPhase)} · {backtestMessage}</div>
                   <div>최적화: {optimizationPhaseLabel(optimizationPhase)} · {optimizationMessage}</div>
-                  <div>최근 실행: {runFinishedAt ? formatDateTime(runFinishedAt) : '없음'}</div>
+                  <div>마지막 실행 시각: {executedRun?.executedAt ? formatDateTime(executedRun.executedAt) : runFinishedAt ? formatDateTime(runFinishedAt) : '없음'}</div>
+                  <div>화면 새로고침은 상태만 다시 불러오고, 결과 카드는 다시 계산하지 않습니다.</div>
                 </div>
               </div>
 
