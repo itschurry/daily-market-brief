@@ -45,9 +45,20 @@
 
 ### 2-2. 퀀트 검증
 
+- baseline → diagnosis → candidate search → re-validation → save → runtime apply 흐름 관리
 - 백테스트 / walk-forward / 최적화 결과 조회
 - 전략 scorecard, 신뢰도, tail risk 정보 확인
-- validation gate와 optimized params 상태 확인
+- validation gate와 optimized params 상태, 저장 후보, runtime apply 상태 확인
+
+### 2-2-1. Quant Ops 운영 규칙
+
+퀀트 검증 화면은 이제 단순 도구 모음이 아니라 운영 플로우를 따라간다.
+
+- optimizer 결과는 **탐색 후보**로만 표시
+- 재검증(candidate re-validation) 전에는 저장 버튼이 열리지 않음
+- 저장 전 후보와 runtime 반영 상태를 분리 표시
+- runtime apply는 저장된 후보만 가능
+- paper engine은 search 결과가 아니라 **runtime 적용본**을 우선 사용
 
 ### 2-3. AI·테마·뉴스 추천
 

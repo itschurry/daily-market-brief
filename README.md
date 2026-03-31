@@ -23,6 +23,25 @@
 - 웹 콘솔 기반 운영 상태 확인
 - 텔레그램 알림 연동
 
+## Quant Ops 워크플로우
+
+이제 퀀트 운영 흐름을 아래처럼 명시적으로 따라가도록 정리했어.
+
+1. **Baseline** — 저장된 설정으로 백테스트 실행
+2. **Diagnosis** — 차단 요인, tail risk, exit weakness 진단
+3. **Candidate Search** — optimizer 결과를 탐색 후보로만 취급
+4. **Re-validation** — optimizer global overlay를 현재 baseline 기준으로 다시 검증
+5. **Save** — 재검증 통과 후보만 저장
+6. **Runtime Apply** — 저장된 후보만 paper/runtime 설정으로 반영
+
+중요한 분리:
+
+- `optimized_params.json` = **탐색 결과(search)**
+- `runtime_optimized_params.json` = **운영 반영(runtime)**
+- `storage/logs/quant_ops_state.json` = **후보 / 저장 / 반영 상태 추적**
+
+즉, optimizer 결과를 바로 런타임에 쓰지 않고, 중간에 재검증/저장 가드를 하나 더 둔다.
+
 ## 저장소 구조
 
 ```text

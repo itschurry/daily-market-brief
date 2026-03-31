@@ -12,6 +12,12 @@ from routes.optimization import (
     handle_run_optimization,
 )
 from routes.portfolio import handle_portfolio_state
+from routes.quant_ops import (
+    handle_get_quant_ops_workflow,
+    handle_quant_ops_apply_runtime,
+    handle_quant_ops_revalidate,
+    handle_quant_ops_save_candidate,
+)
 from routes.reports import (
     handle_analysis,
     handle_compare,
@@ -82,6 +88,7 @@ GET_ROUTES: tuple[Route, ...] = (
     Route("/api/validation/backtest", lambda _path, query: handle_validation_backtest(query)),
     Route("/api/validation/walk-forward", lambda _path, query: handle_validation_walk_forward(query)),
     Route("/api/validation/diagnostics", lambda _path, query: handle_validation_diagnostics(query)),
+    Route("/api/quant-ops/workflow", lambda _path, _query: handle_get_quant_ops_workflow()),
     Route("/api/reports/explain", lambda _path, query: handle_reports_explain(_query_value(query, "date") or None)),
     Route("/api/reports/index", lambda _path, _query: handle_reports_index()),
     Route("/api/live-market", lambda _path, _query: handle_live_market()),
@@ -133,6 +140,9 @@ POST_ROUTES: tuple[Route, ...] = (
     Route("/api/paper/engine/resume", lambda _path, _payload: handle_paper_engine_resume()),
     Route("/api/paper/engine/stop", lambda _path, _payload: handle_paper_engine_stop()),
     Route("/api/run-optimization", lambda _path, _payload: handle_run_optimization()),
+    Route("/api/quant-ops/revalidate", lambda _path, payload: handle_quant_ops_revalidate(payload)),
+    Route("/api/quant-ops/save-candidate", lambda _path, payload: handle_quant_ops_save_candidate(payload)),
+    Route("/api/quant-ops/apply-runtime", lambda _path, payload: handle_quant_ops_apply_runtime(payload)),
 )
 
 

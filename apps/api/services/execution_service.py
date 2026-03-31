@@ -29,6 +29,13 @@ from config.market_calendar import is_market_open
 from config.settings import LOGS_DIR
 from market_utils import normalize_market, resolve_market
 from services.notification_service import get_notification_service
+from services.optimized_params_store import (
+    RUNTIME_OPTIMIZED_PARAMS_PATH as STORE_RUNTIME_OPTIMIZED_PARAMS_PATH,
+    SEARCH_OPTIMIZED_PARAMS_PATH as STORE_SEARCH_OPTIMIZED_PARAMS_PATH,
+    load_effective_optimized_params,
+    load_runtime_optimized_params,
+    load_search_optimized_params,
+)
 from services.paper_runtime_store import (
     append_account_snapshot,
     append_engine_cycle,
@@ -53,9 +60,24 @@ from services.strategy_engine import build_signal_book, select_entry_candidates
 _DEFAULT_THEME_FOCUS = ["automotive", "robotics", "physical_ai"]
 _ALLOWED_THEME_FOCUS = set(_DEFAULT_THEME_FOCUS)
 
-_OPTIMIZED_PARAMS_PATH = Path(
-    __file__).resolve().parent.parent / "config" / "optimized_params.json"
+_OPTIMIZED_PARAMS_PATH = STORE_SEARCH_OPTIMIZED_PARAMS_PATH
+_RUNTIME_OPTIMIZED_PARAMS_PATH = STORE_RUNTIME_OPTIMIZED_PARAMS_PATH
 _OPTIMIZED_PARAMS_MAX_AGE_DAYS = 30
+_OPTIMIZABLE_KEYS = {
+    "stop_loss_pct",
+    "take_profit_pct",
+    "max_holding_days",
+    "rsi_min",
+    "rsi_max",
+    "volume_ratio_min",
+    "adx_min",
+    "mfi_min",
+    "mfi_max",
+    "bb_pct_min",
+    "bb_pct_max",
+    "stoch_k_min",
+    "stoch_k_max",
+}
 
 _paper_engine: PaperExecutionEngine | None = None
 _auto_trader_lock = threading.Lock()
@@ -141,9 +163,11 @@ def _default_validation_policy() -> dict[str, Any]:
 
 
 def _optimized_params_status() -> dict[str, Any]:
-    payload = _load_optimized_params() or {}
-    optimized_at = str(payload.get("optimized_at") or "")
-    version = str(payload.get("version") or optimized_at or "unknown")
+    effective_payload = _load_optimized_params() or {}
+    search_payload = load_search_optimized_params() or {}
+    runtime_payload = load_runtime_optimized_params() or {}
+    optimized_at = str(effective_payload.get("optimized_at") or "")
+    version = str(effective_payload.get("version") or optimized_at or "unknown")
     stale = False
     if optimized_at:
         try:
@@ -155,13 +179,22 @@ def _optimized_params_status() -> dict[str, Any]:
             stale = age_days > _OPTIMIZED_PARAMS_MAX_AGE_DAYS
         except Exception:
             stale = True
+    runtime_meta = runtime_payload.get("meta") if isinstance(runtime_payload.get("meta"), dict) else {}
+    effective_meta = effective_payload.get("meta") if isinstance(effective_payload.get("meta"), dict) else {}
     return {
         "version": version,
         "optimized_at": optimized_at,
         "is_stale": stale,
-        "source": str(_OPTIMIZED_PARAMS_PATH),
-        "global_overlay_source": ((payload.get("meta") or {}).get("global_overlay_source") if isinstance(payload.get("meta"), dict) else None),
-        "overlay_policy": ((payload.get("meta") or {}).get("overlay_policy") if isinstance(payload.get("meta"), dict) else overlay_policy_metadata()),
+        "source": str(_RUNTIME_OPTIMIZED_PARAMS_PATH if runtime_payload else _OPTIMIZED_PARAMS_PATH),
+        "effective_source": "runtime" if runtime_payload else "search" if search_payload else "missing",
+        "search_version": str(search_payload.get("version") or search_payload.get("optimized_at") or ""),
+        "search_optimized_at": str(search_payload.get("optimized_at") or ""),
+        "search_source": str(_OPTIMIZED_PARAMS_PATH),
+        "runtime_candidate_id": runtime_meta.get("applied_candidate_id"),
+        "runtime_applied_at": runtime_payload.get("applied_at"),
+        "runtime_source": str(_RUNTIME_OPTIMIZED_PARAMS_PATH),
+        "global_overlay_source": effective_meta.get("global_overlay_source"),
+        "overlay_policy": effective_meta.get("overlay_policy") if isinstance(effective_meta.get("overlay_policy"), dict) else overlay_policy_metadata(),
     }
 
 
@@ -330,13 +363,11 @@ def _notification_order_hook(event: dict[str, Any], _account: dict[str, Any]) ->
     get_notification_service().notify_order_filled(event)
 
 def _load_optimized_params() -> dict | None:
-    """config/optimized_params.json을 읽어 반환한다.
-    파일이 없거나 30일 이상 오래된 경우 None 반환.
-    """
-    if not _OPTIMIZED_PARAMS_PATH.exists():
-        return None
+    """탐색 결과(search) 또는 적용된 runtime overlay 중 현재 유효한 payload를 반환한다."""
     try:
-        data = json.loads(_OPTIMIZED_PARAMS_PATH.read_text(encoding="utf-8"))
+        data = load_effective_optimized_params()
+        if not data:
+            return None
         optimized_at = datetime.datetime.fromisoformat(
             data.get("optimized_at", "2000-01-01"))
         age_days = (datetime.datetime.now(datetime.timezone.utc)
@@ -345,7 +376,7 @@ def _load_optimized_params() -> dict | None:
             logger.warning("최적화 파라미터가 {}일 지났습니다. 재실행 권장.", age_days)
         return data
     except Exception as exc:
-        logger.warning("optimized_params.json 로드 실패: {}", exc)
+        logger.warning("optimized_params payload 로드 실패: {}", exc)
         return None
 
 
@@ -685,6 +716,33 @@ def _sync_primary_strategy_fields(cfg: dict) -> dict:
     cfg["take_profit_pct"] = primary.get("take_profit_pct")
     cfg["max_holding_days"] = int(primary.get("max_holding_days") or 30)
     return cfg
+
+
+def _apply_quant_candidate_patch(cfg: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(cfg or _default_auto_trader_config())
+    patch = candidate.get("patch") if isinstance(candidate.get("patch"), dict) else {}
+    settings = candidate.get("settings") if isinstance(candidate.get("settings"), dict) else {}
+
+    for key, value in patch.items():
+        if key in _OPTIMIZABLE_KEYS and value not in (None, ""):
+            merged[key] = value
+
+    profile_map = merged.get("market_profiles") if isinstance(merged.get("market_profiles"), dict) else _auto_trader_profile_map(merged)
+    next_profile_map: dict[str, dict[str, Any]] = {}
+    for market, payload in profile_map.items():
+        current_payload = dict(payload) if isinstance(payload, dict) else {}
+        for key, value in patch.items():
+            if key in _OPTIMIZABLE_KEYS and value not in (None, ""):
+                current_payload[key] = value
+        next_profile_map[market] = current_payload
+    merged["market_profiles"] = next_profile_map
+
+    if settings.get("minTrades") not in (None, ""):
+        merged["validation_min_trades"] = max(0, min(200, int(settings.get("minTrades") or 0)))
+    if settings.get("walkForward") is not None:
+        merged["validation_gate_enabled"] = bool(merged.get("validation_gate_enabled", True))
+    merged = _sync_primary_strategy_fields(merged)
+    return merged
 
 
 def _should_enter_by_indicators(technicals: dict, cfg: dict, market: str) -> bool:
@@ -1504,6 +1562,24 @@ def _auto_trader_status() -> dict:
             _persist_auto_trader_state_locked()
     engine = _get_paper_engine()
     account = engine.get_account(refresh_quotes=False)
+    return _build_status_payload(state, account)
+
+
+def apply_quant_candidate_runtime_config(candidate: dict[str, Any]) -> dict[str, Any]:
+    _hydrate_auto_trader_state()
+    with _auto_trader_lock:
+        base_cfg = dict(_auto_trader_state.get("current_config") or _default_auto_trader_config())
+        merged = _apply_quant_candidate_patch(base_cfg, candidate)
+        _auto_trader_state["current_config"] = merged
+        _auto_trader_state["config"] = dict(merged)
+        _auto_trader_state["validation_policy"] = {
+            key: merged.get(key)
+            for key in _default_validation_policy().keys()
+        }
+        _auto_trader_state["optimized_params"] = _optimized_params_status()
+        _persist_auto_trader_state_locked()
+        state = dict(_auto_trader_state)
+    account = _get_paper_engine().get_account(refresh_quotes=False)
     return _build_status_payload(state, account)
 
 

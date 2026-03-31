@@ -29,6 +29,12 @@ def _install_server_route_stubs() -> None:
             "handle_run_optimization": lambda: (200, {"ok": True}),
         },
         "routes.portfolio": {"handle_portfolio_state": lambda refresh=True: (200, {"refresh": refresh})},
+        "routes.quant_ops": {
+            "handle_get_quant_ops_workflow": lambda: (200, {"ok": True}),
+            "handle_quant_ops_apply_runtime": lambda payload: (200, {"payload": payload}),
+            "handle_quant_ops_revalidate": lambda payload: (200, {"payload": payload}),
+            "handle_quant_ops_save_candidate": lambda payload: (200, {"payload": payload}),
+        },
         "routes.reports": {
             "handle_analysis": lambda date=None: (200, {"date": date}),
             "handle_compare": lambda base=None, prev=None: (200, {"base": base, "prev": prev}),
@@ -164,6 +170,20 @@ class ApiServerDispatchTests(unittest.TestCase):
 
         self.assertEqual((200, {"ok": True, "research": {}}), result)
         mock_handler.assert_called_once_with({"lookback_days": ["365"]})
+
+    def test_dispatch_get_routes_quant_ops_workflow(self):
+        with patch("server.handle_get_quant_ops_workflow", return_value=(200, {"ok": True, "stage_status": {}})) as mock_handler:
+            result = dispatch_get("/api/quant-ops/workflow", {})
+
+        self.assertEqual((200, {"ok": True, "stage_status": {}}), result)
+        mock_handler.assert_called_once_with()
+
+    def test_dispatch_post_routes_quant_ops_actions(self):
+        with patch("server.handle_quant_ops_revalidate", return_value=(200, {"ok": True})) as mock_handler:
+            result = dispatch_post("/api/quant-ops/revalidate", {"query": {"market_scope": "kospi"}})
+
+        self.assertEqual((200, {"ok": True}), result)
+        mock_handler.assert_called_once_with({"query": {"market_scope": "kospi"}})
 
     def test_dispatch_returns_none_for_unknown_route(self):
         self.assertIsNone(dispatch_get("/api/unknown", {}))

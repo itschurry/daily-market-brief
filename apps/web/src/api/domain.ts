@@ -1,8 +1,10 @@
-import { getJSON } from './client';
+import { getJSON, postJSON } from './client';
 import type {
   EngineStatusResponse,
   NotificationStatusResponse,
   PortfolioStateResponse,
+  QuantOpsActionResponse,
+  QuantOpsWorkflowResponse,
   ReportsExplainResponse,
   SignalsRankResponse,
   ValidationDiagnosticsResponse,
@@ -65,6 +67,22 @@ export function fetchValidationWalkForward(query?: BacktestQuery, settings?: Val
 
 export function fetchValidationDiagnostics(query?: BacktestQuery, settings?: ValidationSettings) {
   return getJSON<ValidationDiagnosticsResponse>(`/api/validation/diagnostics${buildValidationQueryString(query, settings)}`, { noStore: true });
+}
+
+export function fetchQuantOpsWorkflow() {
+  return getJSON<QuantOpsWorkflowResponse>('/api/quant-ops/workflow', { noStore: true });
+}
+
+export function revalidateQuantOpsCandidate(query: BacktestQuery, settings: ValidationSettings) {
+  return postJSON<QuantOpsActionResponse>('/api/quant-ops/revalidate', { query, settings });
+}
+
+export function saveQuantOpsCandidate(candidateId?: string, note?: string) {
+  return postJSON<QuantOpsActionResponse>('/api/quant-ops/save-candidate', { candidate_id: candidateId, note });
+}
+
+export function applyQuantOpsRuntime(candidateId?: string) {
+  return postJSON<QuantOpsActionResponse>('/api/quant-ops/apply-runtime', { candidate_id: candidateId });
 }
 
 export function fetchReportsExplain() {

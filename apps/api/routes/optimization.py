@@ -6,7 +6,7 @@ import threading
 import os
 from pathlib import Path
 
-from services.execution_service import _load_optimized_params
+from services.optimized_params_store import load_search_optimized_params
 
 _optimization_lock = threading.Lock()
 _optimization_running = False
@@ -32,7 +32,7 @@ def _is_running() -> bool:
 def handle_get_optimized_params() -> tuple[int, dict]:
     """GET /api/optimized-params — 최적화 결과 반환."""
     try:
-        data = _load_optimized_params()
+        data = load_search_optimized_params()
         if data is None:
             return 200, {"status": "not_optimized", "message": "최적화 미실행 또는 파일 없음"}
         return 200, {"status": "ok", **data}

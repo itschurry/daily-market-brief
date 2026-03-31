@@ -29,6 +29,12 @@ def _install_server_route_stubs() -> None:
             "handle_run_optimization": lambda: (200, {"ok": True}),
         },
         "routes.portfolio": {"handle_portfolio_state": lambda refresh=True: (200, {"refresh": refresh})},
+        "routes.quant_ops": {
+            "handle_get_quant_ops_workflow": lambda: (200, {"ok": True}),
+            "handle_quant_ops_apply_runtime": lambda payload: (200, {"payload": payload}),
+            "handle_quant_ops_revalidate": lambda payload: (200, {"payload": payload}),
+            "handle_quant_ops_save_candidate": lambda payload: (200, {"payload": payload}),
+        },
         "routes.reports": {
             "handle_analysis": lambda date=None: (200, {"date": date}),
             "handle_compare": lambda base=None, prev=None: (200, {"base": base, "prev": prev}),

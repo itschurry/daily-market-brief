@@ -651,7 +651,7 @@ curl http://127.0.0.1:8001/api/optimization-status
 
 ## 6-7. `GET /api/optimized-params`
 
-최적화된 파라미터 조회.
+최적화된 파라미터 조회. 이 엔드포인트는 **탐색 결과(search)** 만 보여준다. runtime에 실제 반영된 후보와는 분리된다.
 
 ```bash
 curl http://127.0.0.1:8001/api/optimized-params
@@ -664,6 +664,65 @@ curl http://127.0.0.1:8001/api/optimized-params
 - `version`
 - `optimized_at`
 - 기타 최적화 메타데이터
+
+## 6-8. `GET /api/quant-ops/workflow`
+
+퀀트 운영 워크플로우 상태 조회.
+
+```bash
+curl http://127.0.0.1:8001/api/quant-ops/workflow | jq
+```
+
+주요 필드:
+
+- `search_result` — optimizer 탐색 결과 요약
+- `latest_candidate` — 가장 최근 재검증 후보
+- `saved_candidate` — 저장된 후보
+- `runtime_apply` — 실제 runtime 반영 상태
+- `stage_status` — `candidate_search` / `revalidation` / `save` / `runtime_apply`
+
+## 6-9. `POST /api/quant-ops/revalidate`
+
+optimizer 탐색 결과를 현재 baseline 기준으로 다시 검증한다.
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/quant-ops/revalidate   -H "Content-Type: application/json"   -d '{
+    "query": {"market_scope":"kospi","lookback_days":1095,"stop_loss_pct":5},
+    "settings": {"strategy":"운영 전략","trainingDays":180,"validationDays":60,"walkForward":true,"minTrades":8}
+  }' | jq
+```
+
+주의:
+
+- optimizer 결과가 없으면 실패
+- 결과는 `latest_candidate` 로 저장되지만 아직 runtime 반영은 아님
+
+## 6-10. `POST /api/quant-ops/save-candidate`
+
+재검증 통과 후보 저장.
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/quant-ops/save-candidate   -H "Content-Type: application/json"   -d '{"candidate_id":"cand-...","note":"operator 승인"}' | jq
+```
+
+가드레일:
+
+- `latest_candidate.guardrails.can_save` 가 `true` 인 경우에만 성공
+- 보류/거절 후보거나 optimizer 버전이 바뀌면 차단
+
+## 6-11. `POST /api/quant-ops/apply-runtime`
+
+저장된 후보를 paper/runtime 설정으로 반영.
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/quant-ops/apply-runtime   -H "Content-Type: application/json"   -d '{"candidate_id":"cand-..."}' | jq
+```
+
+동작:
+
+- `runtime_optimized_params.json` 생성/갱신
+- paper engine current config 갱신
+- 다음 cycle부터 runtime 적용본 우선 사용
 
 ---
 

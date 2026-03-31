@@ -10,12 +10,12 @@ from typing import Any
 from helpers import _KST
 from routes.reports import _get_market_context
 from services.ev_calibration_service import compute_ev_metrics
+from services.optimized_params_store import load_effective_optimized_params
 from services.risk_guard_service import build_risk_guard_state
 from services.signal_service import collect_pick_candidates
 from services.sizing_service import recommend_position_size
 from services.strategy_allocator_service import allocator_weight, determine_strategy_type
 
-_OPTIMIZED_PARAMS_PATH = Path(__file__).resolve().parent.parent / "config" / "optimized_params.json"
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -26,13 +26,8 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 
 def _load_optimized_params() -> dict[str, Any]:
-    try:
-        if not _OPTIMIZED_PARAMS_PATH.exists():
-            return {}
-        payload = json.loads(_OPTIMIZED_PARAMS_PATH.read_text(encoding="utf-8"))
-        return payload if isinstance(payload, dict) else {}
-    except Exception:
-        return {}
+    payload = load_effective_optimized_params()
+    return payload if isinstance(payload, dict) else {}
 
 
 def _context_snapshot() -> tuple[str, str]:

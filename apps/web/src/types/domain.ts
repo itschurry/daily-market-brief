@@ -387,6 +387,104 @@ export interface ValidationDiagnosticsResponse {
   error?: string;
 }
 
+export interface QuantOpsDecisionPayload {
+  status?: string;
+  label?: string;
+  summary?: string;
+  hard_reasons?: string[];
+}
+
+export interface QuantOpsGuardrailsPayload {
+  can_save?: boolean;
+  can_apply?: boolean;
+  reasons?: string[];
+}
+
+export interface QuantOpsSearchResultPayload {
+  available?: boolean;
+  version?: string;
+  optimized_at?: string;
+  is_stale?: boolean;
+  global_params?: Record<string, unknown>;
+  param_count?: number;
+  per_symbol_count?: number;
+  n_symbols_optimized?: number;
+  n_reliable?: number;
+  n_medium?: number;
+  global_overlay_source?: string;
+  source?: string;
+}
+
+export interface QuantOpsCandidatePayload {
+  id?: string;
+  created_at?: string;
+  saved_at?: string;
+  applied_at?: string;
+  source?: string;
+  strategy_label?: string;
+  search_version?: string;
+  search_optimized_at?: string;
+  search_is_stale?: boolean;
+  base_query?: Record<string, unknown>;
+  candidate_query?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+  patch?: Record<string, unknown>;
+  patch_lines?: string[];
+  metrics?: {
+    oos_return_pct?: number;
+    profit_factor?: number;
+    max_drawdown_pct?: number;
+    trade_count?: number;
+    win_rate_pct?: number;
+    positive_window_ratio?: number;
+    windows?: number;
+    reliability?: string;
+    composite_score?: number;
+    expected_shortfall_5_pct?: number;
+    return_p05_pct?: number;
+    reliability_target_reached?: boolean;
+  };
+  decision?: QuantOpsDecisionPayload;
+  guardrails?: QuantOpsGuardrailsPayload;
+  diagnosis?: WalkForwardDiagnosisPayload;
+  research?: ValidationDiagnosticsResponse['research'];
+  validation?: ValidationResponse;
+  save_note?: string;
+}
+
+export interface QuantOpsRuntimeApplyPayload {
+  available?: boolean;
+  status?: string;
+  candidate_id?: string;
+  applied_at?: string;
+  version?: string;
+  effective_source?: string;
+  source?: string;
+  engine_state?: string;
+  next_run_at?: string;
+}
+
+export interface QuantOpsWorkflowResponse {
+  ok?: boolean;
+  search_result?: QuantOpsSearchResultPayload;
+  latest_candidate?: QuantOpsCandidatePayload;
+  saved_candidate?: QuantOpsCandidatePayload;
+  runtime_apply?: QuantOpsRuntimeApplyPayload;
+  stage_status?: Record<string, string>;
+  notes?: string[];
+  error?: string;
+}
+
+export interface QuantOpsActionResponse {
+  ok?: boolean;
+  candidate?: QuantOpsCandidatePayload;
+  runtime_apply?: QuantOpsRuntimeApplyPayload;
+  workflow?: QuantOpsWorkflowResponse;
+  engine?: EngineStatusResponse;
+  error?: string;
+  details?: Record<string, unknown>;
+}
+
 export interface ReportsExplainResponse {
   ok?: boolean;
   generated_at?: string;

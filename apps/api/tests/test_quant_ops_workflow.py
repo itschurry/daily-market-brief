@@ -1,0 +1,210 @@
+from __future__ import annotations
+
+import datetime as dt
+import json
+import sys
+import tempfile
+import types
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
+validation_stub = types.ModuleType("services.validation_service")
+validation_stub.run_validation_diagnostics = lambda payload: {"ok": True, "validation": {}, "diagnosis": {}, "research": {}}
+settings_stub = types.ModuleType("config.settings")
+settings_stub.LOGS_DIR = Path(tempfile.gettempdir()) / "daily-market-brief-test-logs"
+settings_stub.LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+with patch.dict(sys.modules, {
+    "services.validation_service": validation_stub,
+    "config.settings": settings_stub,
+}):
+    from services import quant_ops_service as svc  # noqa: E402
+
+
+_NOW = dt.datetime(2026, 3, 31, 12, 0, tzinfo=dt.timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def _adopt_diagnostics() -> dict:
+    return {
+        "ok": True,
+        "validation": {
+            "ok": True,
+            "segments": {
+                "oos": {
+                    "total_return_pct": 8.4,
+                    "profit_factor": 1.26,
+                    "max_drawdown_pct": -12.4,
+                    "trade_count": 18,
+                    "win_rate_pct": 56.0,
+                    "strategy_scorecard": {
+                        "composite_score": 32.0,
+                        "tail_risk": {
+                            "expected_shortfall_5_pct": -9.4,
+                            "return_p05_pct": -6.8,
+                        },
+                    },
+                },
+            },
+            "summary": {
+                "windows": 6,
+                "positive_window_ratio": 0.67,
+                "oos_reliability": "high",
+                "reliability_diagnostic": {"target_reached": True},
+            },
+            "scorecard": {
+                "composite_score": 32.0,
+                "tail_risk": {
+                    "expected_shortfall_5_pct": -9.4,
+                    "return_p05_pct": -6.8,
+                },
+            },
+        },
+        "diagnosis": {
+            "label": "high",
+            "summary_lines": ["OOS 표본과 PF가 모두 안정권입니다."],
+        },
+        "research": {
+            "target_label": "medium",
+            "best_label": "high",
+            "suggestions": [],
+        },
+    }
+
+
+def _reject_diagnostics() -> dict:
+    payload = _adopt_diagnostics()
+    payload["validation"]["segments"]["oos"].update({
+        "total_return_pct": -4.8,
+        "profit_factor": 0.82,
+        "max_drawdown_pct": -35.0,
+        "trade_count": 4,
+    })
+    payload["validation"]["summary"].update({
+        "positive_window_ratio": 0.2,
+        "oos_reliability": "low",
+    })
+    payload["validation"]["scorecard"]["tail_risk"]["expected_shortfall_5_pct"] = -25.0
+    return payload
+
+
+class QuantOpsWorkflowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.state_path = Path(self.tmpdir.name) / "quant_ops_state.json"
+        self.runtime_store: dict[str, dict] = {"payload": {}}
+        self.search_payload = {
+            "optimized_at": _NOW,
+            "version": "search-2026-03-31T12:00:00+09:00",
+            "global_params": {
+                "stop_loss_pct": 6.0,
+                "take_profit_pct": 18.0,
+                "max_holding_days": 18,
+                "rsi_min": 38.0,
+                "rsi_max": 72.0,
+            },
+            "per_symbol": {
+                "AAA": {"is_reliable": True, "strategy_reliability": "high"},
+            },
+            "meta": {
+                "n_symbols_optimized": 1,
+                "n_reliable": 1,
+                "n_medium": 0,
+                "global_overlay_source": "high_only",
+            },
+        }
+
+    def _runtime_writer(self, payload: dict) -> Path:
+        self.runtime_store["payload"] = json.loads(json.dumps(payload))
+        return Path(self.tmpdir.name) / "runtime_optimized_params.json"
+
+    def test_revalidate_builds_candidate_and_workflow_summary(self):
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \
+             patch.object(svc, "load_runtime_optimized_params", return_value=None), \
+             patch.object(svc, "run_validation_diagnostics", return_value=_adopt_diagnostics()):
+            result = svc.revalidate_optimizer_candidate({
+                "query": {
+                    "market_scope": "kospi",
+                    "lookback_days": 365,
+                    "stop_loss_pct": 5.0,
+                    "take_profit_pct": 15.0,
+                    "max_holding_days": 21,
+                },
+                "settings": {
+                    "strategy": "퀀트 운영 전략",
+                    "trainingDays": 180,
+                    "validationDays": 60,
+                    "walkForward": True,
+                    "minTrades": 8,
+                },
+            })
+
+        self.assertTrue(result["ok"])
+        candidate = result["candidate"]
+        self.assertEqual("optimizer_global_overlay", candidate["source"])
+        self.assertEqual("adopt", candidate["decision"]["status"])
+        self.assertTrue(candidate["guardrails"]["can_save"])
+        self.assertIn("stop_loss_pct: 5.0 → 6.0", candidate["patch_lines"])
+        self.assertEqual(18, candidate["candidate_query"]["max_holding_days"])
+        self.assertTrue(result["workflow"]["search_result"]["available"])
+        self.assertEqual("adopt", result["workflow"]["stage_status"]["revalidation"])
+        self.assertTrue(self.state_path.exists())
+
+    def test_save_blocks_when_revalidation_failed_guardrails(self):
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \
+             patch.object(svc, "load_runtime_optimized_params", return_value=None), \
+             patch.object(svc, "run_validation_diagnostics", return_value=_reject_diagnostics()):
+            svc.revalidate_optimizer_candidate({
+                "query": {"market_scope": "kospi", "lookback_days": 365},
+                "settings": {"strategy": "실패 전략", "minTrades": 8},
+            })
+            result = svc.save_validated_candidate({})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual("save_guardrail_blocked", result["error"])
+        self.assertEqual("reject", result["candidate"]["decision"]["status"])
+        self.assertFalse(result["candidate"]["guardrails"]["can_save"])
+
+    def test_apply_runtime_writes_runtime_overlay_and_updates_state(self):
+        execution_stub = types.ModuleType("services.execution_service")
+        execution_stub.apply_quant_candidate_runtime_config = lambda candidate: {
+            "ok": True,
+            "state": {
+                "engine_state": "stopped",
+                "next_run_at": "",
+                "config": {"stop_loss_pct": candidate.get("patch", {}).get("stop_loss_pct")},
+            },
+        }
+
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \
+             patch.object(svc, "load_runtime_optimized_params", side_effect=lambda: self.runtime_store.get("payload") or None), \
+             patch.object(svc, "write_runtime_optimized_params", side_effect=self._runtime_writer), \
+             patch.object(svc, "run_validation_diagnostics", return_value=_adopt_diagnostics()), \
+             patch.dict(sys.modules, {"services.execution_service": execution_stub}):
+            svc.revalidate_optimizer_candidate({
+                "query": {"market_scope": "kospi", "lookback_days": 365, "stop_loss_pct": 5.0},
+                "settings": {"strategy": "운영 전략", "minTrades": 8},
+            })
+            save_result = svc.save_validated_candidate({"note": "operator 승인"})
+            apply_result = svc.apply_saved_candidate_to_runtime({})
+
+        self.assertTrue(save_result["ok"])
+        self.assertTrue(apply_result["ok"])
+        self.assertEqual("runtime", apply_result["workflow"]["runtime_apply"]["effective_source"])
+        self.assertEqual("applied", apply_result["workflow"]["runtime_apply"]["status"])
+        self.assertTrue(self.runtime_store["payload"])
+        self.assertEqual("validated_candidate", self.runtime_store["payload"]["meta"]["global_overlay_source"])
+        self.assertEqual(save_result["candidate"]["id"], self.runtime_store["payload"]["meta"]["applied_candidate_id"])
+
+
+if __name__ == "__main__":
+    unittest.main()
