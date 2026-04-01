@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 import datetime
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,9 @@ from services.signal_service import collect_pick_candidates
 from services.sizing_service import recommend_position_size
 from services.strategy_allocator_service import allocator_weight, determine_strategy_type
 
+
+_SIGNAL_BOOK_CACHE_TTL_SECONDS = 5.0
+_signal_book_cache: dict[str, dict[str, Any]] = {}
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -130,6 +135,23 @@ def build_signal_book(
     target_markets = [str(m).upper() for m in (markets or ["KOSPI", "NASDAQ"]) if str(m).upper() in {"KOSPI", "NASDAQ"}]
     if not target_markets:
         target_markets = ["KOSPI", "NASDAQ"]
+
+    cache_key = ""
+    if account is None:
+        cache_key = json.dumps(
+            {
+                "markets": target_markets,
+                "cfg": merged_cfg,
+            },
+            sort_keys=True,
+            default=str,
+        )
+        cached = _signal_book_cache.get(cache_key)
+        now = time.time()
+        if cached and now - _to_float(cached.get("ts"), 0.0) <= _SIGNAL_BOOK_CACHE_TTL_SECONDS:
+            payload = cached.get("payload")
+            if isinstance(payload, dict):
+                return copy.deepcopy(payload)
 
     regime, risk_level = _context_snapshot()
     optimized_params = _load_optimized_params()
@@ -297,7 +319,7 @@ def build_signal_book(
 
     signals.sort(key=lambda item: float((item.get("ev_metrics") or {}).get("expected_value") or -9999.0), reverse=True)
 
-    return {
+    payload = {
         "generated_at": datetime.datetime.now(_KST).isoformat(timespec="seconds"),
         "regime": regime,
         "risk_level": risk_level,
@@ -307,6 +329,14 @@ def build_signal_book(
         "blocked_count": blocked,
         "entry_allowed_count": max(0, len(signals) - blocked),
     }
+
+    if account is None and cache_key:
+        _signal_book_cache[cache_key] = {
+            "ts": time.time(),
+            "payload": copy.deepcopy(payload),
+        }
+
+    return payload
 
 
 def select_entry_candidates(

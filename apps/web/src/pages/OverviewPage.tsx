@@ -90,9 +90,9 @@ export function OverviewPage({ snapshot, loading, errorMessage, onRefresh }: Ove
             onClearLogs={clear}
             settingsPanel={(
               <div style={{ display: 'grid', gap: 10, fontSize: 12, color: 'var(--text-3)' }}>
-                <div>빠른 polling(8초): 엔진/계좌</div>
-                <div>중간 polling(20초): 시그널</div>
-                <div>느린 polling(60초): 검증/리포트</div>
+                <div>Overview는 엔진/신호/알림만 갱신합니다.</div>
+                <div>validation·reports 계산은 각 전용 화면에서만 불러옵니다.</div>
+                <div>공용 폴링에서는 live quote 강제 refresh를 하지 않습니다.</div>
                 <div>콘솔 데이터 기준 시각: {formatDateTime(snapshot.fetchedAt)}</div>
               </div>
             )}

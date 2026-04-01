@@ -166,6 +166,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
   } = usePaperTrading();
 
   const positions = account.positions || [];
+  const riskGuardState = snapshot.engine.risk_guard_state || snapshot.portfolio.risk_guard_state || {};
   const orders = [...(account.orders || [])].sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
   const mergedOrderHistory = (orderEvents.length > 0 ? orderEvents : orders as unknown as Record<string, unknown>[])
     .slice(0, 80)
@@ -197,8 +198,8 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
     },
     {
       label: '리스크 가드',
-      value: snapshot.portfolio.risk_guard_state?.entry_allowed ? UI_TEXT.status.active : UI_TEXT.status.inactive,
-      tone: snapshot.portfolio.risk_guard_state?.entry_allowed ? 'good' : 'bad',
+      value: riskGuardState.entry_allowed ? UI_TEXT.status.active : UI_TEXT.status.inactive,
+      tone: riskGuardState.entry_allowed ? 'good' : 'bad',
     },
     {
       label: '계좌 상태',
@@ -210,7 +211,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
       value: `${vm.positionCount}건`,
       tone: 'neutral',
     },
-  ]), [engineState.engine_state, engineState.running, snapshot.portfolio.risk_guard_state?.entry_allowed, status, vm.positionCount]);
+  ]), [engineState.engine_state, engineState.running, riskGuardState.entry_allowed, status, vm.positionCount]);
 
   const handleRefreshAll = useCallback(async () => {
     onRefresh();
@@ -515,7 +516,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
   const skipReasonCounts = engineState.last_summary?.skip_reason_counts || {};
   const orderFailureSummary = engineState.order_failure_summary || {};
   const repeatedCashRetries = orderFailureSummary.repeated_insufficient_cash || [];
-  const entryAllowed = Boolean(snapshot.portfolio.risk_guard_state?.entry_allowed);
+  const entryAllowed = Boolean(riskGuardState.entry_allowed);
   const todayFailCount = Number(engineState.today_order_counts?.failed || 0);
   const todayInsufficientCashFailCount = Number(orderFailureSummary.insufficient_cash_failed || 0);
   const trustScore = useMemo(() => {

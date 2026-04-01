@@ -113,7 +113,7 @@ function replacePath(path: string) {
 export default function App() {
   const [route, setRoute] = useState<RouteState>(() => toRouteState(location.pathname));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { snapshot, loading, hasError, errorMessage, refresh } = useConsoleData();
+  const { snapshot, loading, hasError, errorMessage, refresh } = useConsoleData(route);
   const validationSettings = useValidationSettingsStore();
   const activeConsoleTab = CONSOLE_TABS.find((tab) => tab.id === route.consoleTab);
   const activeReportTab = REPORT_TABS.find((tab) => tab.id === route.reportTab);

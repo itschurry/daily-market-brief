@@ -2,17 +2,33 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchEngineStatus,
   fetchNotificationStatus,
-  fetchPortfolioState,
   fetchReportsExplain,
   fetchSignals,
   fetchValidationWalkForward,
 } from '../api/domain';
 import { UI_TEXT } from '../constants/uiText';
 import type { ConsoleDataState, ConsoleSnapshot } from '../types/consoleView';
+import type { ConsoleTab, ReportTab, TopSection } from '../types/navigation';
 
-const FAST_POLLING_MS = 8_000;
-const MID_POLLING_MS = 20_000;
+const FAST_POLLING_MS = 15_000;
+const MID_POLLING_MS = 30_000;
 const SLOW_POLLING_MS = 60_000;
+
+type SnapshotKey = keyof Omit<ConsoleSnapshot, 'fetchedAt'>;
+
+interface ConsoleDataRoute {
+  section: TopSection;
+  consoleTab: ConsoleTab;
+  reportTab: ReportTab;
+}
+
+interface ConsoleDataProfile {
+  signalLimit: number;
+  initialTargets: SnapshotKey[];
+  fastTargets: SnapshotKey[];
+  midTargets: SnapshotKey[];
+  slowTargets: SnapshotKey[];
+}
 
 function emptySnapshot(): ConsoleSnapshot {
   const nowIso = new Date().toISOString();
@@ -27,15 +43,67 @@ function emptySnapshot(): ConsoleSnapshot {
   };
 }
 
-type SnapshotKey = keyof Omit<ConsoleSnapshot, 'fetchedAt'>;
+function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
+  if (route.section === 'home') {
+    return {
+      signalLimit: 40,
+      initialTargets: ['engine', 'signals', 'notifications'],
+      fastTargets: ['engine'],
+      midTargets: ['signals'],
+      slowTargets: ['notifications'],
+    };
+  }
 
-export function useConsoleData() {
+  if (route.section === 'reports') {
+    return {
+      signalLimit: 80,
+      initialTargets: ['engine', 'signals', 'validation', 'reports', 'notifications'],
+      fastTargets: ['engine'],
+      midTargets: ['signals'],
+      slowTargets: ['validation', 'reports', 'notifications'],
+    };
+  }
+
+  if (route.consoleTab === 'paper') {
+    return {
+      signalLimit: 0,
+      initialTargets: ['engine', 'notifications'],
+      fastTargets: ['engine'],
+      midTargets: [],
+      slowTargets: ['notifications'],
+    };
+  }
+
+  if (route.consoleTab === 'validation') {
+    return {
+      signalLimit: 0,
+      initialTargets: ['engine', 'validation', 'notifications'],
+      fastTargets: ['engine'],
+      midTargets: [],
+      slowTargets: ['validation', 'notifications'],
+    };
+  }
+
+  return {
+    signalLimit: route.consoleTab === 'signals' ? 120 : 80,
+    initialTargets: ['engine', 'signals', 'notifications'],
+    fastTargets: ['engine'],
+    midTargets: ['signals'],
+    slowTargets: ['notifications'],
+  };
+}
+
+export function useConsoleData(route: ConsoleDataRoute) {
   const [state, setState] = useState<ConsoleDataState>({
     snapshot: emptySnapshot(),
     loading: true,
     hasError: false,
     errorMessage: '',
   });
+  const profile = useMemo(
+    () => resolveDataProfile(route),
+    [route.consoleTab, route.reportTab, route.section],
+  );
 
   const patchSnapshot = useCallback((partial: Partial<ConsoleSnapshot>, hasError: boolean) => {
     setState((prev) => ({
@@ -51,13 +119,15 @@ export function useConsoleData() {
   }, []);
 
   const fetchPartition = useCallback(async (targets: SnapshotKey[]) => {
+    if (targets.length === 0) return;
+
     const tasks = targets.map((key) => {
       if (key === 'engine') return fetchEngineStatus();
-      if (key === 'signals') return fetchSignals(150);
-      if (key === 'portfolio') return fetchPortfolioState(true);
+      if (key === 'signals') return fetchSignals(profile.signalLimit);
       if (key === 'validation') return fetchValidationWalkForward();
       if (key === 'notifications') return fetchNotificationStatus();
-      return fetchReportsExplain();
+      if (key === 'reports') return fetchReportsExplain();
+      return Promise.resolve({});
     });
     const results = await Promise.allSettled(tasks);
     const partial: Partial<ConsoleSnapshot> = {};
@@ -72,37 +142,40 @@ export function useConsoleData() {
       }
     });
     patchSnapshot(partial, hasError);
-  }, [patchSnapshot]);
+  }, [patchSnapshot, profile.signalLimit]);
 
   const refresh = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, hasError: false, errorMessage: '' }));
-    await fetchPartition(['engine', 'signals', 'portfolio', 'validation', 'reports', 'notifications']);
-  }, [fetchPartition]);
+    await fetchPartition(profile.initialTargets);
+  }, [fetchPartition, profile.initialTargets]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   useEffect(() => {
+    if (profile.fastTargets.length === 0) return undefined;
     const timer = window.setInterval(() => {
-      void fetchPartition(['engine', 'portfolio']);
+      void fetchPartition(profile.fastTargets);
     }, FAST_POLLING_MS);
     return () => window.clearInterval(timer);
-  }, [fetchPartition]);
+  }, [fetchPartition, profile.fastTargets]);
 
   useEffect(() => {
+    if (profile.midTargets.length === 0) return undefined;
     const timer = window.setInterval(() => {
-      void fetchPartition(['signals']);
+      void fetchPartition(profile.midTargets);
     }, MID_POLLING_MS);
     return () => window.clearInterval(timer);
-  }, [fetchPartition]);
+  }, [fetchPartition, profile.midTargets]);
 
   useEffect(() => {
+    if (profile.slowTargets.length === 0) return undefined;
     const timer = window.setInterval(() => {
-      void fetchPartition(['validation', 'reports', 'notifications']);
+      void fetchPartition(profile.slowTargets);
     }, SLOW_POLLING_MS);
     return () => window.clearInterval(timer);
-  }, [fetchPartition]);
+  }, [fetchPartition, profile.slowTargets]);
 
   return useMemo(
     () => ({

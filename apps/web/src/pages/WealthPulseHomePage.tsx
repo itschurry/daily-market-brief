@@ -67,9 +67,9 @@ export function WealthPulseHomePage({
 }: WealthPulseHomePageProps) {
   const todayView = buildTodayReportView(snapshot);
   const watchView = buildWatchDecisionView(snapshot);
-  const portfolioAccount = snapshot.portfolio.account || {};
   const engineState = snapshot.engine.execution?.state || {};
   const engineAccount = snapshot.engine.execution?.account || {};
+  const portfolioAccount = snapshot.portfolio.account || engineAccount || {};
   const rawPositions = normalizePositionArray(portfolioAccount.positions || engineAccount.positions);
 
   const positions: PositionView[] = rawPositions
@@ -108,9 +108,13 @@ export function WealthPulseHomePage({
     .filter((item) => marketLabel(item.market) === 'NASDAQ')
     .reduce((sum, item) => sum + item.marketValueKrw, 0);
 
+  const allocator = snapshot.engine.allocator || {};
   const signals = snapshot.signals.signals || [];
   const allowedSignals = signals.filter((item) => item.entry_allowed);
   const blockedSignals = signals.filter((item) => !item.entry_allowed);
+  const totalAllowedSignals = Number(allocator.entry_allowed_count ?? allowedSignals.length);
+  const totalBlockedSignals = Number(allocator.blocked_count ?? blockedSignals.length);
+  const totalSignalCount = Math.max(0, totalAllowedSignals + totalBlockedSignals);
   const topSignals = [...allowedSignals]
     .sort((left, right) => toNumber(right.ev_metrics?.expected_value) - toNumber(left.ev_metrics?.expected_value))
     .slice(0, 5);
@@ -155,7 +159,7 @@ export function WealthPulseHomePage({
             <article className="page-section wealth-kpi-card">
               <div className="wealth-kpi-label">보유 포지션</div>
               <div className="wealth-kpi-value">{formatNumber(positions.length, 0)}개</div>
-              <div className="wealth-kpi-copy">허용 신호 {formatNumber(allowedSignals.length, 0)}건 · 차단 {formatNumber(blockedSignals.length, 0)}건</div>
+              <div className="wealth-kpi-copy">허용 신호 {formatNumber(totalAllowedSignals, 0)}건 · 차단 {formatNumber(totalBlockedSignals, 0)}건</div>
             </article>
           </section>
 
@@ -187,16 +191,16 @@ export function WealthPulseHomePage({
               <div className="wealth-bars">
                 <div className="wealth-bar-row">
                   <div className="wealth-bar-label">허용</div>
-                  <div className="wealth-bar-track"><div className="wealth-bar-fill is-allowed" style={{ width: ratioPercent(allowedSignals.length, signals.length || 1) }} /></div>
-                  <div className="wealth-bar-value">{formatNumber(allowedSignals.length, 0)}건</div>
+                  <div className="wealth-bar-track"><div className="wealth-bar-fill is-allowed" style={{ width: ratioPercent(totalAllowedSignals, totalSignalCount || 1) }} /></div>
+                  <div className="wealth-bar-value">{formatNumber(totalAllowedSignals, 0)}건</div>
                 </div>
                 <div className="wealth-bar-row">
                   <div className="wealth-bar-label">차단</div>
-                  <div className="wealth-bar-track"><div className="wealth-bar-fill is-blocked" style={{ width: ratioPercent(blockedSignals.length, signals.length || 1) }} /></div>
-                  <div className="wealth-bar-value">{formatNumber(blockedSignals.length, 0)}건</div>
+                  <div className="wealth-bar-track"><div className="wealth-bar-fill is-blocked" style={{ width: ratioPercent(totalBlockedSignals, totalSignalCount || 1) }} /></div>
+                  <div className="wealth-bar-value">{formatNumber(totalBlockedSignals, 0)}건</div>
                 </div>
               </div>
-              <div className="wealth-home-muted" style={{ marginTop: 12 }}>장세 {snapshot.signals.regime || '-'} · 위험도 {snapshot.signals.risk_level || '-'}</div>
+              <div className="wealth-home-muted" style={{ marginTop: 12 }}>장세 {allocator.regime || snapshot.signals.regime || '-'} · 위험도 {allocator.risk_level || snapshot.signals.risk_level || '-'}</div>
             </article>
           </section>
 
