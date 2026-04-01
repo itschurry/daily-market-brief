@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _install_server_route_stubs() -> None:
+def _install_server_route_stubs() -> list[str]:
     modules: dict[str, dict[str, object]] = {
         "routes.backtest": {
             "handle_backtest_run": lambda query: (200, {"ok": True, "query": query}),
@@ -78,6 +78,9 @@ def _install_server_route_stubs() -> None:
         "routes.validation": {
             "handle_validation_backtest": lambda query: (200, {"query": query}),
             "handle_validation_diagnostics": lambda query: (200, {"query": query}),
+            "handle_validation_settings_get": lambda: (200, {"ok": True}),
+            "handle_validation_settings_reset": lambda: (200, {"ok": True}),
+            "handle_validation_settings_save": lambda payload: (200, {"payload": payload}),
             "handle_validation_walk_forward": lambda query: (200, {"query": query}),
         },
         "routes.watchlist": {
@@ -86,18 +89,28 @@ def _install_server_route_stubs() -> None:
             "handle_watchlist_save": lambda payload: (200, {"payload": payload}),
         },
     }
+    installed: list[str] = []
     for module_name, attrs in modules.items():
         module = types.ModuleType(module_name)
         for attr_name, value in attrs.items():
             setattr(module, attr_name, value)
         sys.modules[module_name] = module
+        installed.append(module_name)
+    return installed
 
 
-_install_server_route_stubs()
+def _remove_server_route_stubs(module_names: list[str]) -> None:
+    for module_name in module_names:
+        sys.modules.pop(module_name, None)
+
+
+_INSTALLED_ROUTE_STUBS = _install_server_route_stubs()
 
 from fastapi.testclient import TestClient
 
 from api_server import app
+
+_remove_server_route_stubs(_INSTALLED_ROUTE_STUBS)
 
 
 class FastApiAppTests(unittest.TestCase):
@@ -118,3 +131,13 @@ class FastApiAppTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertEqual({"ok": True}, response.json())
         mock_dispatch.assert_called_once_with("/api/system/mode", {})
+
+    def test_legacy_api_post_route_uses_dispatcher(self):
+        client = TestClient(app)
+
+        with patch("api_server.dispatch_post", return_value=(200, {"ok": True, "saved_at": "2026-04-01T08:00:00+09:00"})) as mock_dispatch:
+            response = client.post("/api/validation/settings/save", json={"query": {"market_scope": "kospi"}})
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual({"ok": True, "saved_at": "2026-04-01T08:00:00+09:00"}, response.json())
+        mock_dispatch.assert_called_once_with("/api/validation/settings/save", {"query": {"market_scope": "kospi"}})

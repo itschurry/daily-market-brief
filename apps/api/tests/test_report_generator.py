@@ -10,12 +10,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+_INSTALLED_STUBS: list[str] = []
+
 if "config.settings" not in sys.modules:
     settings_stub = types.ModuleType("config.settings")
     settings_stub.API_DIR = ROOT
     settings_stub.BASE_DIR = ROOT.parent
     settings_stub.REPORT_OUTPUT_DIR = Path("/tmp")
     sys.modules["config.settings"] = settings_stub
+    _INSTALLED_STUBS.append("config.settings")
 
 from collectors.models import DailyData, MarketContext, MarketSnapshot
 
@@ -26,6 +29,9 @@ except ModuleNotFoundError as exc:
     _IMPORT_ERROR = exc
 else:
     _IMPORT_ERROR = None
+
+for _module_name in _INSTALLED_STUBS:
+    sys.modules.pop(_module_name, None)
 
 
 class ReportGeneratorRegressionTests(unittest.TestCase):

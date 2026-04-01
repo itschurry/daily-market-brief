@@ -437,8 +437,11 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   const [optimizedParams, setOptimizedParams] = useState<Record<string, unknown> | null>(null);
   const [diagnosticsResult, setDiagnosticsResult] = useState<ValidationDiagnosticsResponse | null>(null);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
-  const [settingsSaving, setSettingsSaving] = useState(false);
   const [executedRun, setExecutedRun] = useState<ExecutedRunState | null>(() => readJson<ExecutedRunState>(EXECUTED_RUN_KEY));
+  const settingsLoading = validationStore.syncStatus === 'loading';
+  const settingsSaving = validationStore.syncStatus === 'saving';
+  const settingsResetting = validationStore.syncStatus === 'resetting';
+  const settingsSyncBusy = settingsLoading || settingsSaving || settingsResetting;
 
   const activeBacktest = executedRun?.backtest || null;
   const validationResult = executedRun?.validation || snapshot.validation;
@@ -608,6 +611,14 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       setSelectedSymbol(String(symbolCandidates[0]?.symbol || ''));
     }
   }, [selectedSymbol, symbolCandidates]);
+
+  useEffect(() => {
+    void validationStore.loadSavedFromServer().catch(() => {
+      push('warning', '서버 저장된 quant 설정을 불러오지 못했습니다.', '로컬 초안은 유지하고 계속 작업할 수 있습니다.', 'settings');
+      pushToast({ tone: 'warning', title: '서버 저장값 로드 실패', description: '현재 브라우저 초안으로 계속 작업합니다.' });
+    });
+  }, []);
+
   const diagnosisLines = diagnosticsResult?.diagnosis?.summary_lines || [];
   const diagnosisBlockers = diagnosticsResult?.diagnosis?.blockers || [];
   const diagnosisSuggestions = diagnosticsResult?.research?.suggestions || [];
@@ -991,6 +1002,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
         getJSON<{ running?: boolean }>('/api/optimization-status', { noStore: true }),
         getJSON<Record<string, unknown>>('/api/optimized-params', { noStore: true }),
         quantWorkflow.refresh(),
+        validationStore.loadSavedFromServer(),
       ]);
 
       setOptimizationRunning(Boolean(statusPayload.running));
@@ -1011,7 +1023,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       title: '상태만 새로고침했습니다.',
       description: '마지막 실행 결과는 다시 계산하지 않았습니다.',
     });
-  }, [onRefresh, push, pushToast]);
+  }, [onRefresh, push, pushToast, quantWorkflow, validationStore]);
 
   const handleRunBacktest = useCallback(async () => {
     if (backtestPhase === 'requesting' || backtestPhase === 'running' || backtestPhase === 'finalizing') return;
@@ -1159,29 +1171,50 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   }, [optimizationHistory, optimizationPhase, optimizationRunning, push, pushToast, updateOptimizationHistory, validationStore.savedQuery, validationStore.savedSettings, validationStore.unsaved]);
 
   const handleSaveSettings = useCallback(async () => {
-    if (settingsSaving) return;
-    setSettingsSaving(true);
-    await new Promise((resolve) => window.setTimeout(resolve, 120));
-    const savedAt = validationStore.saveDraft();
-    const historyItem: SettingSaveItem = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      at: savedAt,
-      market: validationStore.draftQuery.market_scope,
-      lookbackDays: validationStore.draftQuery.lookback_days,
-      strategy: validationStore.draftSettings.strategy,
-    };
-    updateSaveHistory([historyItem, ...saveHistory].slice(0, 30));
-    push('success', '퀀트 검증 설정을 저장했습니다.', `${validationStore.draftQuery.market_scope === 'kospi' ? 'KOSPI' : validationStore.draftQuery.market_scope === 'nasdaq' ? 'NASDAQ' : 'KOSPI+NASDAQ'} · ${validationStore.draftQuery.lookback_days}일`, 'settings');
-    pushToast({ tone: 'success', title: '설정 저장 완료', description: '퀀트 실행 패널 요약과 저장 필요 배지가 즉시 갱신되었습니다.' });
-    setSettingsSaving(false);
-  }, [push, pushToast, saveHistory, settingsSaving, updateSaveHistory, validationStore]);
+    if (settingsSyncBusy) return;
+    try {
+      const savedAt = await validationStore.saveDraftToServer();
+      const historyItem: SettingSaveItem = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        at: savedAt,
+        market: validationStore.draftQuery.market_scope,
+        lookbackDays: validationStore.draftQuery.lookback_days,
+        strategy: validationStore.draftSettings.strategy,
+      };
+      updateSaveHistory([historyItem, ...saveHistory].slice(0, 30));
+      push('success', '퀀트 검증 설정을 서버에 저장했습니다.', `${validationStore.draftQuery.market_scope === 'kospi' ? 'KOSPI' : validationStore.draftQuery.market_scope === 'nasdaq' ? 'NASDAQ' : 'KOSPI+NASDAQ'} · ${validationStore.draftQuery.lookback_days}일`, 'settings');
+      pushToast({ tone: 'success', title: '서버 저장 완료', description: '이 저장값은 다른 브라우저/기기에서도 같은 기준으로 불러옵니다.' });
+    } catch {
+      push('error', '퀀트 검증 설정 저장이 실패했습니다.', '서버 설정 저장 API 또는 JSON 파일 상태를 확인하세요.', 'settings');
+      pushToast({ tone: 'error', title: '서버 저장 실패', description: '잠시 후 다시 시도해 주세요.' });
+    }
+  }, [push, pushToast, saveHistory, settingsSyncBusy, updateSaveHistory, validationStore]);
 
-  const handleResetSettings = useCallback(() => {
-    validationStore.resetDraft();
-    setBacktestMessage('퀀트 설정 초안을 기본값으로 되돌렸습니다. 저장 후 실행할 수 있습니다.');
-    push('warning', '퀀트 검증 설정 초안을 기본값으로 되돌렸습니다.', '저장 전까지는 저장 필요 상태가 유지됩니다.', 'settings');
-    pushToast({ tone: 'warning', title: '설정 초안 초기화', description: '기본값으로 되돌렸습니다. 저장하면 quant 실행 패널에 반영됩니다.' });
-  }, [push, pushToast, validationStore]);
+  const handleLoadSavedSettings = useCallback(async () => {
+    if (settingsSyncBusy) return;
+    try {
+      await validationStore.loadSavedFromServer({ forceDraft: true });
+      setBacktestMessage('서버 저장값을 초안으로 다시 불러왔습니다. 저장된 기준으로 바로 실행할 수 있습니다.');
+      push('info', '서버 저장값을 초안으로 불러왔습니다.', '다른 기기에서 저장한 값도 여기로 즉시 동기화됩니다.', 'settings');
+      pushToast({ tone: 'info', title: '저장값 불러오기 완료', description: '서버 저장값으로 draft를 덮어썼습니다.' });
+    } catch {
+      push('error', '서버 저장값을 불러오지 못했습니다.', '네트워크 또는 백엔드 상태를 확인하세요.', 'settings');
+      pushToast({ tone: 'error', title: '저장값 불러오기 실패', description: '현재 브라우저 초안은 유지했습니다.' });
+    }
+  }, [push, pushToast, settingsSyncBusy, validationStore]);
+
+  const handleResetSettings = useCallback(async () => {
+    if (settingsSyncBusy) return;
+    try {
+      await validationStore.resetSavedToServer();
+      setBacktestMessage('서버 저장값을 기본 quant 값으로 초기화했습니다. 모든 기기에서 같은 기본값을 다시 읽습니다.');
+      push('warning', '서버 저장된 quant 설정을 기본값으로 초기화했습니다.', '브라우저 초안도 함께 기본값으로 덮어썼습니다.', 'settings');
+      pushToast({ tone: 'warning', title: '서버 저장값 초기화', description: '공유 기준이 기본값으로 재설정되었습니다.' });
+    } catch {
+      push('error', '서버 저장값 초기화가 실패했습니다.', '백엔드 상태 또는 저장 파일 권한을 확인하세요.', 'settings');
+      pushToast({ tone: 'error', title: '서버 저장값 초기화 실패', description: '기존 초안과 저장값은 그대로 유지했습니다.' });
+    }
+  }, [push, pushToast, settingsSyncBusy, validationStore]);
 
   const updateDraftQueryNumber = useCallback((key: keyof BacktestQuery, fallback: number, min?: number) => (event: ChangeEvent<HTMLInputElement>) => {
     const raw = Number(event.target.value);
@@ -1347,10 +1380,21 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       </SettingsSection>
 
       <div className="settings-panel-actions">
-        <button className="console-action-button is-primary" onClick={() => { void handleSaveSettings(); }} disabled={settingsSaving}>
-          {settingsSaving ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />저장 중...</span> : '설정 저장'}
+        <button className="console-action-button is-primary" onClick={() => { void handleSaveSettings(); }} disabled={settingsSyncBusy}>
+          {settingsSaving ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />서버 저장 중...</span> : '서버에 저장'}
         </button>
-        <button className="console-action-button is-danger" onClick={() => setResetConfirmOpen(true)} disabled={settingsSaving}>초안 초기화</button>
+        <button className="console-action-button" onClick={() => { void handleLoadSavedSettings(); }} disabled={settingsSyncBusy}>
+          {settingsLoading ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />불러오는 중...</span> : '저장값 불러오기'}
+        </button>
+        <button className="console-action-button is-danger" onClick={() => setResetConfirmOpen(true)} disabled={settingsSyncBusy}>
+          {settingsResetting ? <span className="button-content"><span className="button-spinner" aria-hidden="true" />초기화 중...</span> : '서버 저장 초기화'}
+        </button>
+      </div>
+      <div className="detail-list" style={{ marginTop: 8 }}>
+        <div>저장값은 서버 JSON 파일에 보관되어 브라우저/기기/세션이 달라도 같은 기준으로 불러옵니다.</div>
+        <div>이 저장값은 runtime optimized params와 분리되며, baseline·진단·재검증 기준만 공유합니다.</div>
+        <div>마지막 서버 저장: {validationStore.lastSavedAt ? formatDateTime(validationStore.lastSavedAt) : '없음'}</div>
+        {validationStore.syncMessage && <div>동기화 상태: {validationStore.syncMessage}</div>}
       </div>
     </div>
   );
@@ -1989,7 +2033,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 <div className="section-head-row">
                   <div>
                     <div className="section-title">퀀트 실행 패널</div>
-                    <div className="section-copy">초안, 저장됨, 마지막 quant 실행 결과를 분리해서 보여줍니다.</div>
+                    <div className="section-copy">브라우저 초안, 서버 저장값, 마지막 quant 실행 결과를 분리해서 보여줍니다.</div>
                   </div>
                   <div className={`inline-badge ${validationStore.unsaved ? 'is-warning' : 'is-success'}`}>
                     {validationStore.unsaved ? '초안 변경 있음' : '저장된 설정과 동일'}
@@ -2003,9 +2047,10 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 </div>
 
                 <div className="summary-rail is-compact" style={{ marginTop: 8 }}>
-                  <div className="summary-rail-item"><strong>저장됨</strong> · {savedSettingsSummaryLines[0]}</div>
+                  <div className="summary-rail-item"><strong>서버 저장됨</strong> · {savedSettingsSummaryLines[0]}</div>
                   <div className="summary-rail-item">{savedSettingsSummaryLines[1]}</div>
                   <div className="summary-rail-item">{savedSettingsSummaryLines[2]}</div>
+                  <div className="summary-rail-item">마지막 서버 저장 · {validationStore.lastSavedAt ? formatDateTime(validationStore.lastSavedAt) : '없음'}</div>
                 </div>
 
                 {executedRun && (
@@ -2017,7 +2062,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 )}
 
                 {validationStore.unsaved && (
-                  <div className="inline-warning-card">초안이 저장된 설정과 다릅니다. 실행은 저장된 설정으로만 진행합니다.</div>
+                  <div className="inline-warning-card">초안이 서버 저장값과 다릅니다. 실행은 서버 저장값 기준으로만 진행합니다.</div>
                 )}
 
                 <div className="execution-button-row is-split">
@@ -2044,7 +2089,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   <div>저장 후보 / runtime: {savedValidatedCandidate?.saved_at ? formatDateTime(savedValidatedCandidate.saved_at) : '없음'} / {runtimeApplyState?.status === 'applied' ? formatDateTime(runtimeApplyState.applied_at) : '미반영'}</div>
                   <div>runtime 종목 반영: {formatCount(runtimeApplyState?.applied_symbol_count, '건')} · {Array.isArray(runtimeApplyState?.applied_symbols) && runtimeApplyState?.applied_symbols?.length ? runtimeApplyState.applied_symbols.join(', ') : '없음'}</div>
                   <div>마지막 실행 시각: {executedRun?.executedAt ? formatDateTime(executedRun.executedAt) : runFinishedAt ? formatDateTime(runFinishedAt) : '없음'}</div>
-                  <div>화면 새로고침은 상태만 다시 불러오고, 결과 카드는 다시 계산하지 않습니다.</div>
+                  <div>서버 저장 기준: {validationStore.lastSavedAt ? formatDateTime(validationStore.lastSavedAt) : '없음'} · runtime 최적화 반영과는 별개로 관리합니다.</div>
+                  <div>화면 새로고침은 상태와 서버 저장값을 다시 불러오고, 결과 카드는 다시 계산하지 않습니다.</div>
                 </div>
               </div>
 
@@ -2134,12 +2180,13 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
         title={UI_TEXT.confirm.resetValidationTitle}
         message={UI_TEXT.confirm.resetValidationMessage}
         details={[
-          '기본 설정과 고급 전략 설정 초안이 모두 기본값으로 되돌아갑니다.',
-          '저장하지 않은 변경 사항은 모두 사라집니다.',
+          '서버에 저장된 quant 기준을 기본값으로 되돌립니다.',
+          '현재 브라우저 초안도 함께 기본값으로 덮어씁니다.',
+          'runtime optimized params와는 별개라서 운영 반영값은 건드리지 않습니다.',
         ]}
         tone="danger"
         onConfirm={() => {
-          handleResetSettings();
+          void handleResetSettings();
           setResetConfirmOpen(false);
         }}
         onCancel={() => setResetConfirmOpen(false)}

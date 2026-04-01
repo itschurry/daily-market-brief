@@ -14,10 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+_INSTALLED_STUBS: list[str] = []
+
 if "services.backtest_service" not in sys.modules:
     stub = types.ModuleType("services.backtest_service")
     stub.get_backtest_service = lambda: None
     sys.modules["services.backtest_service"] = stub
+    _INSTALLED_STUBS.append("services.backtest_service")
 
 from services.validation_service import (
     _build_exit_reason_analysis,
@@ -25,6 +28,9 @@ from services.validation_service import (
     run_validation_diagnostics,
     run_walk_forward_validation,
 )
+
+for _module_name in _INSTALLED_STUBS:
+    sys.modules.pop(_module_name, None)
 
 
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"

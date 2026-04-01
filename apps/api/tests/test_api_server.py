@@ -11,7 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _install_server_route_stubs() -> None:
+def _install_server_route_stubs() -> list[str]:
     modules: dict[str, dict[str, object]] = {
         "routes.backtest": {
             "handle_backtest_run": lambda query: (200, {"ok": True, "query": query}),
@@ -78,6 +78,9 @@ def _install_server_route_stubs() -> None:
         "routes.validation": {
             "handle_validation_backtest": lambda query: (200, {"query": query}),
             "handle_validation_diagnostics": lambda query: (200, {"query": query}),
+            "handle_validation_settings_get": lambda: (200, {"ok": True}),
+            "handle_validation_settings_reset": lambda: (200, {"ok": True}),
+            "handle_validation_settings_save": lambda payload: (200, {"payload": payload}),
             "handle_validation_walk_forward": lambda query: (200, {"query": query}),
         },
         "routes.watchlist": {
@@ -86,16 +89,26 @@ def _install_server_route_stubs() -> None:
             "handle_watchlist_save": lambda payload: (200, {"payload": payload}),
         },
     }
+    installed: list[str] = []
     for module_name, attrs in modules.items():
         module = types.ModuleType(module_name)
         for attr_name, value in attrs.items():
             setattr(module, attr_name, value)
         sys.modules[module_name] = module
+        installed.append(module_name)
+    return installed
 
 
-_install_server_route_stubs()
+def _remove_server_route_stubs(module_names: list[str]) -> None:
+    for module_name in module_names:
+        sys.modules.pop(module_name, None)
+
+
+_INSTALLED_ROUTE_STUBS = _install_server_route_stubs()
 
 from server import dispatch_get, dispatch_post
+
+_remove_server_route_stubs(_INSTALLED_ROUTE_STUBS)
 
 
 class ApiServerDispatchTests(unittest.TestCase):
@@ -181,6 +194,24 @@ class ApiServerDispatchTests(unittest.TestCase):
 
         self.assertEqual((200, {"ok": True, "research": {}}), result)
         mock_handler.assert_called_once_with({"lookback_days": ["365"]})
+
+    def test_dispatch_get_routes_validation_settings(self):
+        with patch("server.handle_validation_settings_get", return_value=(200, {"ok": True, "saved_at": "2026-04-01T08:00:00+09:00"})) as mock_handler:
+            result = dispatch_get("/api/validation/settings", {})
+
+        self.assertEqual((200, {"ok": True, "saved_at": "2026-04-01T08:00:00+09:00"}), result)
+        mock_handler.assert_called_once_with()
+
+    def test_dispatch_post_routes_validation_settings_actions(self):
+        with patch("server.handle_validation_settings_save", return_value=(200, {"ok": True})) as mock_save, \
+             patch("server.handle_validation_settings_reset", return_value=(200, {"ok": True, "saved_at": "2026-04-01T08:00:00+09:00"})) as mock_reset:
+            save_result = dispatch_post("/api/validation/settings/save", {"query": {"market_scope": "kospi"}})
+            reset_result = dispatch_post("/api/validation/settings/reset", {"ignored": True})
+
+        self.assertEqual((200, {"ok": True}), save_result)
+        self.assertEqual((200, {"ok": True, "saved_at": "2026-04-01T08:00:00+09:00"}), reset_result)
+        mock_save.assert_called_once_with({"query": {"market_scope": "kospi"}})
+        mock_reset.assert_called_once_with()
 
     def test_dispatch_get_routes_quant_ops_workflow(self):
         with patch("server.handle_get_quant_ops_workflow", return_value=(200, {"ok": True, "stage_status": {}})) as mock_handler:

@@ -4,6 +4,7 @@ import type {
   NotificationStatusResponse,
   PortfolioStateResponse,
   QuantOpsActionResponse,
+  PersistedValidationSettingsResponse,
   QuantOpsWorkflowResponse,
   ReportsExplainResponse,
   SignalsRankResponse,
@@ -67,6 +68,18 @@ export function fetchValidationWalkForward(query?: BacktestQuery, settings?: Val
 
 export function fetchValidationDiagnostics(query?: BacktestQuery, settings?: ValidationSettings) {
   return getJSON<ValidationDiagnosticsResponse>(`/api/validation/diagnostics${buildValidationQueryString(query, settings)}`, { noStore: true });
+}
+
+export function fetchValidationSettings() {
+  return getJSON<PersistedValidationSettingsResponse>('/api/validation/settings', { noStore: true });
+}
+
+export function saveValidationSettings(query: BacktestQuery, settings: ValidationSettings) {
+  return postJSON<PersistedValidationSettingsResponse>('/api/validation/settings/save', { query, settings });
+}
+
+export function resetValidationSettings() {
+  return postJSON<PersistedValidationSettingsResponse>('/api/validation/settings/reset', {});
 }
 
 export function fetchQuantOpsWorkflow() {

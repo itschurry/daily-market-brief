@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+_INSTALLED_STUBS: list[str] = []
+
 if "config.settings" not in sys.modules:
     settings_stub = types.ModuleType("config.settings")
     settings_stub.API_DIR = ROOT
@@ -20,8 +22,12 @@ if "config.settings" not in sys.modules:
     settings_stub.RECOMMENDATIONS_OUTPUT_DIR = Path("/tmp")
     settings_stub.TODAY_PICKS_OUTPUT_DIR = Path("/tmp")
     sys.modules["config.settings"] = settings_stub
+    _INSTALLED_STUBS.append("config.settings")
 
 from routes.reports import _fallback_today_picks, _map_strategy_signal
+
+for _module_name in _INSTALLED_STUBS:
+    sys.modules.pop(_module_name, None)
 
 
 class ReportsRegressionTests(unittest.TestCase):

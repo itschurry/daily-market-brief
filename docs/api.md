@@ -611,7 +611,61 @@ curl "http://127.0.0.1:8001/api/validation/walk-forward?market_scope=kospi&lookb
 
 - equity curve 포인트가 60 미만이면 `insufficient_equity_curve_for_walk_forward` 에러가 날 수 있음
 
-## 6-4. `GET /api/backtest/kospi`
+## 6-4. `GET /api/validation/settings`
+
+퀀트 검증 baseline 저장값 조회.
+
+용도:
+
+- 백테스트/진단/재검증에서 공통으로 쓸 저장 기준 확인
+- 다른 브라우저/기기에서 같은 저장값 재사용
+- `runtime_optimized_params.json` 과 별개로 관리되는 baseline 확인
+
+```bash
+curl http://127.0.0.1:8001/api/validation/settings | jq
+```
+
+주요 필드:
+
+- `ok`
+- `query`
+- `settings`
+- `saved_at`
+- `source`
+
+## 6-5. `POST /api/validation/settings/save`
+
+현재 draft를 서버 저장값으로 반영.
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/validation/settings/save \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": {"market_scope":"kospi","lookback_days":1095,"max_holding_days":15},
+    "settings": {"strategy":"공유 baseline","trainingDays":180,"validationDays":60,"walkForward":true,"minTrades":8}
+  }' | jq
+```
+
+동작:
+
+- 서버 JSON 저장소 갱신
+- `saved_at` 갱신
+- 이후 UI의 baseline 실행 기준으로 사용
+
+## 6-6. `POST /api/validation/settings/reset`
+
+서버 저장값을 기본 quant 설정으로 초기화.
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/validation/settings/reset | jq
+```
+
+주의:
+
+- baseline 저장값만 기본값으로 되돌림
+- runtime optimized params / saved candidate는 그대로 둠
+
+## 6-7. `GET /api/backtest/kospi`
 
 KOSPI 전용 백테스트 결과 조회/실행용 보조 엔드포인트.
 
@@ -619,7 +673,7 @@ KOSPI 전용 백테스트 결과 조회/실행용 보조 엔드포인트.
 curl http://127.0.0.1:8001/api/backtest/kospi
 ```
 
-## 6-5. `POST /api/run-optimization`
+## 6-8. `POST /api/run-optimization`
 
 최적화 작업 시작.
 
@@ -635,7 +689,7 @@ curl -X POST http://127.0.0.1:8001/api/run-optimization
 - `{"status":"already_running"}`
 - `{"status":"error", "error":"..."}`
 
-## 6-6. `GET /api/optimization-status`
+## 6-9. `GET /api/optimization-status`
 
 최적화 작업 진행 상태 확인.
 
@@ -649,7 +703,7 @@ curl http://127.0.0.1:8001/api/optimization-status
 - `error`
 - 상태 설명용 필드들
 
-## 6-7. `GET /api/optimized-params`
+## 6-10. `GET /api/optimized-params`
 
 최적화된 파라미터 조회. 이 엔드포인트는 **탐색 결과(search)** 만 보여준다. runtime에 실제 반영된 후보와는 분리된다.
 
@@ -665,7 +719,7 @@ curl http://127.0.0.1:8001/api/optimized-params
 - `optimized_at`
 - 기타 최적화 메타데이터
 
-## 6-8. `GET /api/quant-ops/workflow`
+## 6-11. `GET /api/quant-ops/workflow`
 
 퀀트 운영 워크플로우 상태 조회.
 
@@ -681,7 +735,7 @@ curl http://127.0.0.1:8001/api/quant-ops/workflow | jq
 - `runtime_apply` — 실제 runtime 반영 상태
 - `stage_status` — `candidate_search` / `revalidation` / `save` / `runtime_apply`
 
-## 6-9. `POST /api/quant-ops/revalidate`
+## 6-12. `POST /api/quant-ops/revalidate`
 
 optimizer 탐색 결과를 현재 baseline 기준으로 다시 검증한다.
 
@@ -697,7 +751,7 @@ curl -X POST http://127.0.0.1:8001/api/quant-ops/revalidate   -H "Content-Type: 
 - optimizer 결과가 없으면 실패
 - 결과는 `latest_candidate` 로 저장되지만 아직 runtime 반영은 아님
 
-## 6-10. `POST /api/quant-ops/save-candidate`
+## 6-13. `POST /api/quant-ops/save-candidate`
 
 재검증 통과 후보 저장.
 
@@ -710,7 +764,7 @@ curl -X POST http://127.0.0.1:8001/api/quant-ops/save-candidate   -H "Content-Ty
 - `latest_candidate.guardrails.can_save` 가 `true` 인 경우에만 성공
 - 보류/거절 후보거나 optimizer 버전이 바뀌면 차단
 
-## 6-11. `POST /api/quant-ops/apply-runtime`
+## 6-14. `POST /api/quant-ops/apply-runtime`
 
 저장된 후보를 paper/runtime 설정으로 반영.
 

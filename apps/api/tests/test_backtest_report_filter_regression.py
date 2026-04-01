@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+_INSTALLED_STUBS: list[str] = []
+
 if "broker.kis_client" not in sys.modules:
     stub = types.ModuleType("broker.kis_client")
 
@@ -21,8 +23,12 @@ if "broker.kis_client" not in sys.modules:
 
     stub.KISClient = _StubKISClient
     sys.modules["broker.kis_client"] = stub
+    _INSTALLED_STUBS.append("broker.kis_client")
 
 from analyzer.kospi_backtest import BacktestConfig, run_kospi_backtest
+
+for _module_name in _INSTALLED_STUBS:
+    sys.modules.pop(_module_name, None)
 
 
 class BacktestReportFilterRegressionTests(unittest.TestCase):

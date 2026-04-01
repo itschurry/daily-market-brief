@@ -11,12 +11,18 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+_INSTALLED_STUBS: list[str] = []
+
 quant_ops_stub = types.ModuleType("services.quant_ops_service")
 quant_ops_stub.register_optimizer_search_handoff = lambda payload=None: payload
 quant_ops_stub.finalize_optimizer_search_handoff = lambda **kwargs: {"ok": True, **kwargs}
 sys.modules["services.quant_ops_service"] = quant_ops_stub
+_INSTALLED_STUBS.append("services.quant_ops_service")
 
 from routes import optimization as route  # noqa: E402
+
+for _module_name in _INSTALLED_STUBS:
+    sys.modules.pop(_module_name, None)
 
 
 class _ImmediateThread:

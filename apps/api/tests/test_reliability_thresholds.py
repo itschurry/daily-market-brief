@@ -16,10 +16,13 @@ if "loguru" not in sys.modules:
         logger=types.SimpleNamespace(debug=lambda *a, **k: None, info=lambda *a, **k: None, warning=lambda *a, **k: None)
     )
 
+_INSTALLED_STUBS: list[str] = []
+
 if "services.backtest_service" not in sys.modules:
     stub = types.ModuleType("services.backtest_service")
     stub.get_backtest_service = lambda: None
     sys.modules["services.backtest_service"] = stub
+    _INSTALLED_STUBS.append("services.backtest_service")
 
 import numpy as np
 
@@ -44,6 +47,9 @@ from services.reliability_service import (
     find_minimal_reliability_uplift,
 )
 from services.validation_service import _classify_walk_forward_reliability
+
+for _module_name in _INSTALLED_STUBS:
+    sys.modules.pop(_module_name, None)
 
 
 class MonteCarloReliabilityTests(unittest.TestCase):

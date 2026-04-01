@@ -40,6 +40,7 @@
 - `optimized_params.json` = **탐색 결과(search)**
 - `runtime_optimized_params.json` = **운영 반영(runtime)**
 - `storage/logs/quant_ops_state.json` = **후보 / 저장 / 반영 상태 추적**
+- `storage/logs/backtest_validation_settings.json` = **공유 baseline 저장값(브라우저/기기 공통)**
 - 종목별로도 `latest/approval/saved/runtime-applied` 상태를 별도로 추적
 
 즉, optimizer 결과를 바로 런타임에 쓰지 않고, 중간에 재검증/저장 가드를 하나 더 둔다.

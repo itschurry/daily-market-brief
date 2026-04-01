@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react';
+import { fetchValidationSettings, resetValidationSettings, saveValidationSettings } from '../api/domain';
 import { defaultBacktestQuery, loadBacktestQuery, saveBacktestQuery } from './useBacktest';
 import type { BacktestQuery } from '../types';
+import type { PersistedValidationSettingsResponse } from '../types/domain';
 
 export interface ValidationSettings {
   strategy: string;
@@ -17,6 +19,9 @@ interface ValidationStoreState {
   draftSettings: ValidationSettings;
   savedSettings: ValidationSettings;
   lastSavedAt: string;
+  syncStatus: 'idle' | 'loading' | 'saving' | 'resetting' | 'ready' | 'error';
+  syncMessage: string;
+  serverLoaded: boolean;
 }
 
 const SAVED_SETTINGS_KEY = 'console_validation_settings_v1';
@@ -63,6 +68,43 @@ function readJson<T>(key: string): T | null {
   }
 }
 
+function readNumber(value: unknown, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function readNullableNumber(value: unknown, fallback: number | null | undefined) {
+  if (value === null) return null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : (fallback ?? null);
+}
+
+function clampBacktestQuery(raw: Partial<BacktestQuery> | null | undefined): BacktestQuery {
+  const marketScope = raw?.market_scope === 'nasdaq'
+    ? 'nasdaq'
+    : raw?.market_scope === 'all'
+      ? 'all'
+      : 'kospi';
+  const preset = defaultBacktestQuery(marketScope);
+  return {
+    market_scope: marketScope,
+    lookback_days: Math.max(180, readNumber(raw?.lookback_days, preset.lookback_days)),
+    initial_cash: Math.max(1, readNumber(raw?.initial_cash, preset.initial_cash)),
+    max_positions: Math.max(1, readNumber(raw?.max_positions, preset.max_positions)),
+    max_holding_days: Math.max(1, readNumber(raw?.max_holding_days, preset.max_holding_days)),
+    rsi_min: readNumber(raw?.rsi_min, preset.rsi_min),
+    rsi_max: readNumber(raw?.rsi_max, preset.rsi_max),
+    volume_ratio_min: Math.max(0, readNumber(raw?.volume_ratio_min, preset.volume_ratio_min)),
+    stop_loss_pct: readNullableNumber(raw?.stop_loss_pct, preset.stop_loss_pct),
+    take_profit_pct: readNullableNumber(raw?.take_profit_pct, preset.take_profit_pct),
+    adx_min: readNullableNumber(raw?.adx_min, preset.adx_min),
+    mfi_min: readNullableNumber(raw?.mfi_min, preset.mfi_min),
+    mfi_max: readNullableNumber(raw?.mfi_max, preset.mfi_max),
+    bb_pct_min: readNullableNumber(raw?.bb_pct_min, preset.bb_pct_min),
+    bb_pct_max: readNullableNumber(raw?.bb_pct_max, preset.bb_pct_max),
+    stoch_k_min: readNullableNumber(raw?.stoch_k_min, preset.stoch_k_min),
+    stoch_k_max: readNullableNumber(raw?.stoch_k_max, preset.stoch_k_max),
+  };
+}
+
 function persistDraft(state: ValidationStoreState) {
   saveBacktestQuery(state.draftQuery);
   localStorage.setItem(DRAFT_SETTINGS_KEY, JSON.stringify(state.draftSettings));
@@ -89,11 +131,14 @@ function hydrateState(): ValidationStoreState {
       draftSettings: settings,
       savedSettings: settings,
       lastSavedAt: '',
+      syncStatus: 'idle',
+      syncMessage: '',
+      serverLoaded: false,
     };
   }
 
   const draftQuery = loadBacktestQuery();
-  const savedQuery = readJson<BacktestQuery>(SAVED_QUERY_KEY) || draftQuery;
+  const savedQuery = clampBacktestQuery(readJson<Partial<BacktestQuery>>(SAVED_QUERY_KEY) || draftQuery);
   const savedSettings = clampValidationSettings(readJson<Partial<ValidationSettings>>(SAVED_SETTINGS_KEY));
   const draftSettings = clampValidationSettings(
     readJson<Partial<ValidationSettings>>(DRAFT_SETTINGS_KEY)
@@ -106,6 +151,9 @@ function hydrateState(): ValidationStoreState {
     draftSettings,
     savedSettings,
     lastSavedAt: readMetaSavedAt(),
+    syncStatus: 'idle',
+    syncMessage: '',
+    serverLoaded: false,
   };
 }
 
@@ -124,9 +172,44 @@ function isSame<T>(left: T, right: T): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function hasUnsavedDraft(state: ValidationStoreState): boolean {
+  return !isSame(state.draftQuery, state.savedQuery) || !isSame(state.draftSettings, state.savedSettings);
+}
+
+function normalizeServerPayload(payload: PersistedValidationSettingsResponse | null | undefined) {
+  return {
+    query: clampBacktestQuery((payload?.query || null) as Partial<BacktestQuery> | null),
+    settings: clampValidationSettings((payload?.settings || null) as Partial<ValidationSettings> | null),
+    savedAt: payload?.saved_at || '',
+  };
+}
+
+function applyServerPayload(payload: PersistedValidationSettingsResponse | null | undefined, options?: { replaceDraft?: boolean }) {
+  const normalized = normalizeServerPayload(payload);
+  storeState = {
+    ...storeState,
+    savedQuery: normalized.query,
+    savedSettings: normalized.settings,
+    lastSavedAt: normalized.savedAt,
+    syncStatus: 'ready',
+    syncMessage: normalized.savedAt ? '서버 저장값을 동기화했습니다.' : '서버 기본값을 동기화했습니다.',
+    serverLoaded: true,
+    ...(options?.replaceDraft ? {
+      draftQuery: normalized.query,
+      draftSettings: normalized.settings,
+    } : {}),
+  };
+  persistSaved(storeState);
+  if (options?.replaceDraft) {
+    persistDraft(storeState);
+  }
+  emit();
+  return storeState;
+}
+
 export function useValidationSettingsStore() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const unsaved = !isSame(snapshot.draftQuery, snapshot.savedQuery) || !isSame(snapshot.draftSettings, snapshot.savedSettings);
+  const unsaved = hasUnsavedDraft(snapshot);
 
   return {
     ...snapshot,
@@ -134,7 +217,7 @@ export function useValidationSettingsStore() {
     setDraftQuery(next: BacktestQuery | ((current: BacktestQuery) => BacktestQuery)) {
       storeState = {
         ...storeState,
-        draftQuery: typeof next === 'function' ? next(storeState.draftQuery) : next,
+        draftQuery: clampBacktestQuery(typeof next === 'function' ? next(storeState.draftQuery) : next),
       };
       persistDraft(storeState);
       emit();
@@ -147,27 +230,79 @@ export function useValidationSettingsStore() {
       persistDraft(storeState);
       emit();
     },
-    saveDraft() {
+    async loadSavedFromServer(options?: { forceDraft?: boolean }) {
+      const replaceDraft = options?.forceDraft || !hasUnsavedDraft(storeState);
       storeState = {
         ...storeState,
-        savedQuery: storeState.draftQuery,
-        savedSettings: storeState.draftSettings,
-        lastSavedAt: new Date().toISOString(),
+        syncStatus: 'loading',
+        syncMessage: '서버 저장값을 불러오는 중입니다.',
       };
-      persistSaved(storeState);
-      persistDraft(storeState);
       emit();
-      return storeState.lastSavedAt;
+      try {
+        const payload = await fetchValidationSettings();
+        return applyServerPayload(payload, { replaceDraft });
+      } catch (error) {
+        storeState = {
+          ...storeState,
+          syncStatus: 'error',
+          syncMessage: '서버 저장값을 불러오지 못했습니다.',
+        };
+        emit();
+        throw error;
+      }
     },
-    resetDraft() {
-      const defaultQuery = defaultBacktestQuery(storeState.draftQuery.market_scope);
+    async saveDraftToServer() {
       storeState = {
         ...storeState,
-        draftQuery: defaultQuery,
-        draftSettings: defaultValidationSettings(),
+        syncStatus: 'saving',
+        syncMessage: '현재 초안을 서버에 저장하는 중입니다.',
+      };
+      emit();
+      try {
+        const payload = await saveValidationSettings(storeState.draftQuery, storeState.draftSettings);
+        applyServerPayload(payload, { replaceDraft: true });
+        return storeState.lastSavedAt;
+      } catch (error) {
+        storeState = {
+          ...storeState,
+          syncStatus: 'error',
+          syncMessage: '서버 저장에 실패했습니다.',
+        };
+        emit();
+        throw error;
+      }
+    },
+    loadSavedIntoDraft() {
+      storeState = {
+        ...storeState,
+        draftQuery: storeState.savedQuery,
+        draftSettings: storeState.savedSettings,
+        syncStatus: 'ready',
+        syncMessage: '서버 저장값을 초안으로 불러왔습니다.',
       };
       persistDraft(storeState);
       emit();
+    },
+    async resetSavedToServer() {
+      storeState = {
+        ...storeState,
+        syncStatus: 'resetting',
+        syncMessage: '서버 저장값을 기본값으로 초기화하는 중입니다.',
+      };
+      emit();
+      try {
+        const payload = await resetValidationSettings();
+        applyServerPayload(payload, { replaceDraft: true });
+        return storeState.lastSavedAt;
+      } catch (error) {
+        storeState = {
+          ...storeState,
+          syncStatus: 'error',
+          syncMessage: '서버 저장값 초기화에 실패했습니다.',
+        };
+        emit();
+        throw error;
+      }
     },
   };
 }

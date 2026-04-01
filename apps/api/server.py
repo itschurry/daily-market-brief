@@ -51,6 +51,9 @@ from routes.system import handle_notifications_status, handle_system_mode
 from routes.validation import (
     handle_validation_backtest,
     handle_validation_diagnostics,
+    handle_validation_settings_get,
+    handle_validation_settings_reset,
+    handle_validation_settings_save,
     handle_validation_walk_forward,
 )
 from routes.watchlist import (
@@ -91,6 +94,7 @@ GET_ROUTES: tuple[Route, ...] = (
     Route("/api/validation/backtest", lambda _path, query: handle_validation_backtest(query)),
     Route("/api/validation/walk-forward", lambda _path, query: handle_validation_walk_forward(query)),
     Route("/api/validation/diagnostics", lambda _path, query: handle_validation_diagnostics(query)),
+    Route("/api/validation/settings", lambda _path, _query: handle_validation_settings_get()),
     Route("/api/quant-ops/workflow", lambda _path, _query: handle_get_quant_ops_workflow()),
     Route("/api/reports/explain", lambda _path, query: handle_reports_explain(_query_value(query, "date") or None)),
     Route("/api/reports/index", lambda _path, _query: handle_reports_index()),
@@ -143,6 +147,8 @@ POST_ROUTES: tuple[Route, ...] = (
     Route("/api/paper/engine/resume", lambda _path, _payload: handle_paper_engine_resume()),
     Route("/api/paper/engine/stop", lambda _path, _payload: handle_paper_engine_stop()),
     Route("/api/run-optimization", lambda _path, _payload: handle_run_optimization(_payload)),
+    Route("/api/validation/settings/save", lambda _path, payload: handle_validation_settings_save(payload)),
+    Route("/api/validation/settings/reset", lambda _path, _payload: handle_validation_settings_reset()),
     Route("/api/quant-ops/revalidate", lambda _path, payload: handle_quant_ops_revalidate(payload)),
     Route("/api/quant-ops/revalidate-symbol", lambda _path, payload: handle_quant_ops_revalidate_symbol(payload)),
     Route("/api/quant-ops/set-symbol-approval", lambda _path, payload: handle_quant_ops_set_symbol_approval(payload)),

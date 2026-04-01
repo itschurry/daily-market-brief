@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+_INSTALLED_STUBS: list[str] = []
+
 if "config.settings" not in sys.modules:
     settings_stub = types.ModuleType("config.settings")
     settings_stub.REPORT_OUTPUT_DIR = Path("/tmp")
@@ -22,6 +24,7 @@ if "config.settings" not in sys.modules:
     settings_stub.OLLAMA_MODEL = "llama3"
     settings_stub.OLLAMA_HOST = "http://localhost:11434"
     sys.modules["config.settings"] = settings_stub
+    _INSTALLED_STUBS.append("config.settings")
 
 if "broker.kis_client" not in sys.modules:
     broker_stub = types.ModuleType("broker.kis_client")
@@ -33,6 +36,7 @@ if "broker.kis_client" not in sys.modules:
 
     broker_stub.KISClient = _StubKISClient
     sys.modules["broker.kis_client"] = broker_stub
+    _INSTALLED_STUBS.append("broker.kis_client")
 
 if "services.execution_service" not in sys.modules:
     execution_stub = types.ModuleType("services.execution_service")
@@ -44,9 +48,13 @@ if "services.execution_service" not in sys.modules:
     }
     execution_stub.get_execution_service = lambda: None
     sys.modules["services.execution_service"] = execution_stub
+    _INSTALLED_STUBS.append("services.execution_service")
 
 from routes.backtest import _parse_backtest_config
 from routes.trading import _default_auto_trader_config
+
+for _module_name in _INSTALLED_STUBS:
+    sys.modules.pop(_module_name, None)
 
 
 class StrategyConfigTests(unittest.TestCase):

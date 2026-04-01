@@ -13,6 +13,8 @@ if str(ROOT) not in sys.path:
 
 import types
 
+_INSTALLED_STUBS: list[str] = []
+
 if "config.settings" not in sys.modules:
     settings_stub = types.ModuleType("config.settings")
     settings_stub.KIS_ACCOUNT_ACNT_PRDT_CD = ""
@@ -22,8 +24,12 @@ if "config.settings" not in sys.modules:
     settings_stub.KIS_BASE_URL = "https://example.com"
     settings_stub.LOGS_DIR = Path("/tmp")
     sys.modules["config.settings"] = settings_stub
+    _INSTALLED_STUBS.append("config.settings")
 
 from broker.kis_client import KISClient, KISCredentials
+
+for _module_name in _INSTALLED_STUBS:
+    sys.modules.pop(_module_name, None)
 
 
 def _response(payload: dict) -> Mock:

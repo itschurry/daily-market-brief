@@ -387,6 +387,15 @@ export interface ValidationDiagnosticsResponse {
   error?: string;
 }
 
+export interface PersistedValidationSettingsResponse {
+  ok?: boolean;
+  query?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+  saved_at?: string;
+  source?: string;
+  error?: string;
+}
+
 export interface QuantOpsDecisionPayload {
   status?: string;
   label?: string;
