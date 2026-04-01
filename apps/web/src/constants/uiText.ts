@@ -1,8 +1,9 @@
 export const UI_TEXT = {
-  appName: '투자 리서치 워크스페이스',
+  appName: 'WealthPulse',
   topTabs: {
-    console: '투자 운영',
-    reports: '투자 리서치',
+    home: '내 대시보드',
+    console: '운영 콘솔',
+    reports: '리서치 리포트',
   },
   consoleTabs: {
     overview: '운용 개요',

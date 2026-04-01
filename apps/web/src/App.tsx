@@ -7,6 +7,7 @@ import { OverviewPage } from './pages/OverviewPage';
 import { PaperPortfolioPage } from './pages/PaperPortfolioPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SignalsPage } from './pages/SignalsPage';
+import { WealthPulseHomePage } from './pages/WealthPulseHomePage';
 import type { ConsoleTab, ReportTab, TopSection } from './types/navigation';
 
 interface RouteState {
@@ -30,11 +31,13 @@ const REPORT_TABS: Array<{ id: ReportTab; label: string; path: string }> = [
 ];
 
 const SECTION_COPY: Record<TopSection, string> = {
+  home: '개인 투자자 관점에서 오늘 자산, 시그널, 리스크를 요약해서 보는 WealthPulse 홈입니다.',
   console: '검증된 전략과 paper/live 실행 준비 상태를 운영하는 화면입니다. 리서치 브리프는 투자 리서치 섹션에서 봅니다.',
   reports: '시장 브리프가 아니라 투자 리서치와 실행 시나리오를 읽는 화면입니다. quant와 AI 후보는 합집합 후보 흐름으로 해석합니다.',
 };
 
 const SECTION_BADGE: Record<TopSection, string> = {
+  home: 'Portfolio + Signals + Risk',
   console: 'Validation + Execution + Observability',
   reports: 'Research + Scenarios + Decisions',
 };
@@ -44,6 +47,8 @@ function toRouteState(pathname: string): RouteState {
   const normalize = (nextPath: string): RouteState => toRouteState(nextPath);
 
   const legacyRedirects: Record<string, string> = {
+    '/home': '/',
+    '/dashboard': '/',
     '/overview': '/console/overview',
     '/signals': '/console/signals',
     '/paper': '/console/paper',
@@ -54,9 +59,17 @@ function toRouteState(pathname: string): RouteState {
     '/reports/recommendations': '/reports/today-report',
     '/reports/today-recommendations': '/reports/today-report',
     '/reports/action-board': '/reports/alerts',
-    '/': '/console/overview',
   };
   if (legacyRedirects[path]) return normalize(legacyRedirects[path]);
+
+  if (path === '/') {
+    return {
+      section: 'home',
+      consoleTab: 'overview',
+      reportTab: 'today-report',
+      canonicalPath: '/',
+    };
+  }
 
   if (path.startsWith('/console/')) {
     const segment = path.replace('/console/', '');
@@ -86,7 +99,7 @@ function toRouteState(pathname: string): RouteState {
     return normalize('/reports/today-report');
   }
 
-  return normalize('/console/overview');
+  return normalize('/');
 }
 
 function pushPath(path: string) {
@@ -106,9 +119,11 @@ export default function App() {
   const notifications = snapshot.notifications || {};
   const alertingDisabled = !notifications.enabled;
   const alertingUnconfigured = Boolean(notifications.enabled) && !(notifications.configured && notifications.chat_id_configured);
-  const activeLabel = route.section === 'console'
-    ? activeConsoleTab?.label || UI_TEXT.consoleTabs.overview
-    : activeReportTab?.label || UI_TEXT.reportTabs.todayReport;
+  const activeLabel = route.section === 'home'
+    ? UI_TEXT.topTabs.home
+    : route.section === 'console'
+      ? activeConsoleTab?.label || UI_TEXT.consoleTabs.overview
+      : activeReportTab?.label || UI_TEXT.reportTabs.todayReport;
 
   useEffect(() => {
     const initial = toRouteState(location.pathname);
@@ -129,7 +144,11 @@ export default function App() {
   }, []);
 
   function moveToSection(section: TopSection) {
-    const targetPath = section === 'console' ? '/console/overview' : '/reports/today-report';
+    const targetPath = section === 'home'
+      ? '/'
+      : section === 'console'
+        ? '/console/overview'
+        : '/reports/today-report';
     const next = toRouteState(targetPath);
     pushPath(next.canonicalPath);
     setRoute(next);
@@ -166,7 +185,7 @@ export default function App() {
       <div className="app-chrome-shell">
         <div className="app-chrome-header">
           <div>
-            <div className="app-chrome-kicker">Daily Market Brief · Investing OS</div>
+            <div className="app-chrome-kicker">WealthPulse · Investor Workspace</div>
             <div className="app-chrome-title">{activeLabel}</div>
             <div className="app-chrome-copy">{SECTION_COPY[route.section]}</div>
           </div>
@@ -197,11 +216,19 @@ export default function App() {
           <div className="tab-shell-row">
             <div className="tab-strip">
               <button
+                onClick={() => moveToSection('home')}
+                className={`tab-button ${route.section === 'home' ? 'active' : ''}`}
+                aria-current={route.section === 'home' ? 'page' : undefined}
+              >
+                <span className="tab-step">01</span>
+                <span className="tab-label">{UI_TEXT.topTabs.home}</span>
+              </button>
+              <button
                 onClick={() => moveToSection('console')}
                 className={`tab-button ${route.section === 'console' ? 'active' : ''}`}
                 aria-current={route.section === 'console' ? 'page' : undefined}
               >
-                <span className="tab-step">01</span>
+                <span className="tab-step">02</span>
                 <span className="tab-label">{UI_TEXT.topTabs.console}</span>
               </button>
               <button
@@ -209,48 +236,57 @@ export default function App() {
                 className={`tab-button ${route.section === 'reports' ? 'active' : ''}`}
                 aria-current={route.section === 'reports' ? 'page' : undefined}
               >
-                <span className="tab-step">02</span>
+                <span className="tab-step">03</span>
                 <span className="tab-label">{UI_TEXT.topTabs.reports}</span>
               </button>
             </div>
           </div>
         </div>
 
-        <div className="tab-shell tab-shell-secondary">
-          <div className="tab-shell-row">
-            <div className="tab-strip">
-              {route.section === 'console' && CONSOLE_TABS.map((tab, index) => (
-                <button
-                  key={tab.id}
-                  onClick={() => moveToConsoleTab(tab.id)}
-                  className={`tab-button ${route.consoleTab === tab.id ? 'active' : ''}`}
-                  aria-current={route.consoleTab === tab.id ? 'page' : undefined}
-                >
-                  <span className="tab-step">{String(index + 1).padStart(2, '0')}</span>
-                  <span className="tab-label">
-                    {tab.label}
-                    {tab.id === 'validation' && validationSettings.unsaved && (
-                      <span className="tab-dirty-badge" aria-label="저장 필요">저장 필요</span>
-                    )}
-                  </span>
-                </button>
-              ))}
-              {route.section === 'reports' && REPORT_TABS.map((tab, index) => (
-                <button
-                  key={tab.id}
-                  onClick={() => moveToReportTab(tab.id)}
-                  className={`tab-button ${route.reportTab === tab.id ? 'active' : ''}`}
-                  aria-current={route.reportTab === tab.id ? 'page' : undefined}
-                >
-                  <span className="tab-step">{String(index + 1).padStart(2, '0')}</span>
-                  <span className="tab-label">{tab.label}</span>
-                </button>
-              ))}
+        {route.section !== 'home' && (
+          <div className="tab-shell tab-shell-secondary">
+            <div className="tab-shell-row">
+              <div className="tab-strip">
+                {route.section === 'console' && CONSOLE_TABS.map((tab, index) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => moveToConsoleTab(tab.id)}
+                    className={`tab-button ${route.consoleTab === tab.id ? 'active' : ''}`}
+                    aria-current={route.consoleTab === tab.id ? 'page' : undefined}
+                  >
+                    <span className="tab-step">{String(index + 1).padStart(2, '0')}</span>
+                    <span className="tab-label">
+                      {tab.label}
+                      {tab.id === 'validation' && validationSettings.unsaved && (
+                        <span className="tab-dirty-badge" aria-label="저장 필요">저장 필요</span>
+                      )}
+                    </span>
+                  </button>
+                ))}
+                {route.section === 'reports' && REPORT_TABS.map((tab, index) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => moveToReportTab(tab.id)}
+                    className={`tab-button ${route.reportTab === tab.id ? 'active' : ''}`}
+                    aria-current={route.reportTab === tab.id ? 'page' : undefined}
+                  >
+                    <span className="tab-step">{String(index + 1).padStart(2, '0')}</span>
+                    <span className="tab-label">{tab.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
+      {route.section === 'home' && (
+        <WealthPulseHomePage
+          {...sharedProps}
+          onGoConsole={() => moveToSection('console')}
+          onGoReports={() => moveToSection('reports')}
+        />
+      )}
       {route.section === 'console' && route.consoleTab === 'overview' && <OverviewPage {...sharedProps} />}
       {route.section === 'console' && route.consoleTab === 'signals' && <SignalsPage {...sharedProps} />}
       {route.section === 'console' && route.consoleTab === 'paper' && <PaperPortfolioPage {...sharedProps} />}

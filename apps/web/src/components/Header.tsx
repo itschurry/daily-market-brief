@@ -8,8 +8,8 @@ export function Header({ reportDate, generatedAt, headline }: Props) {
   return (
     <div className="hero-banner">
       <div className="hero-topline">
-        <span className="hero-brand">Daily Market Brief</span>
-        <span className="hero-topline-copy">Auto-Invest Operations Console</span>
+        <span className="hero-brand">WealthPulse</span>
+        <span className="hero-topline-copy">Investor Workspace</span>
       </div>
       <div className="hero-grid">
         <div className="hero-copy-stack">

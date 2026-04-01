@@ -1,4 +1,4 @@
-export type TopSection = 'console' | 'reports';
+export type TopSection = 'home' | 'console' | 'reports';
 
 export type ConsoleTab = 'overview' | 'signals' | 'paper' | 'validation';
 
