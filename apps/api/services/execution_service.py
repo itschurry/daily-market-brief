@@ -731,6 +731,7 @@ def _default_auto_trader_config() -> dict:
         "theme_min_news": 1,
         "theme_priority_bonus": 2.0,
         "theme_focus": list(_DEFAULT_THEME_FOCUS),
+        "runtime_candidate_source_mode": "quant_only",
         "daily_buy_limit": 100,
         "daily_sell_limit": 100,
         "max_orders_per_symbol_per_day": 3,

@@ -66,6 +66,7 @@ def _default_signal_cfg() -> dict[str, Any]:
         "theme_min_news": 1,
         "theme_priority_bonus": 2.0,
         "theme_focus": ["automotive", "robotics", "physical_ai"],
+        "runtime_candidate_source_mode": "quant_only",
         "risk_per_trade_pct": 0.35,
         "daily_loss_limit_pct": 2.0,
         "max_consecutive_loss": 3,

@@ -51,7 +51,10 @@ class RuntimeCandidateFallbackGuardTests(unittest.TestCase):
              ):
             candidates = svc.collect_pick_candidates(
                 "NASDAQ",
-                cfg={"allow_recommendation_fallback": True},
+                cfg={
+                    "runtime_candidate_source_mode": "research_only",
+                    "allow_recommendation_fallback": True,
+                },
             )
 
         self.assertEqual(1, len(candidates))

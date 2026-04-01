@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from services import signal_service as svc
+
+
+class RuntimeCandidatePolicyTests(unittest.TestCase):
+    def test_runtime_collection_defaults_to_quant_only(self):
+        with patch.object(svc, "load_execution_optimized_params", return_value=None), \
+             patch.object(svc, "_get_today_picks", return_value={
+                 "auto_candidates": [
+                     {"code": "005930", "market": "KOSPI", "signal": "추천", "score": 80}
+                 ]
+             }), \
+             patch.object(svc, "_get_recommendations", return_value={
+                 "recommendations": [
+                     {"ticker": "AAPL", "market": "NASDAQ", "signal": "buy", "score": 77}
+                 ]
+             }):
+            candidates = svc.collect_runtime_candidates("NASDAQ", cfg={})
+
+        self.assertEqual([], candidates)
+
+    def test_runtime_collection_can_use_research_only_mode(self):
+        with patch.object(svc, "load_execution_optimized_params", return_value=None), \
+             patch.object(svc, "_get_today_picks", return_value={"auto_candidates": []}), \
+             patch.object(svc, "_get_recommendations", return_value={
+                 "recommendations": [
+                     {"ticker": "AAPL", "market": "NASDAQ", "signal": "buy", "score": 77}
+                 ]
+             }):
+            candidates = svc.collect_runtime_candidates(
+                "NASDAQ",
+                cfg={
+                    "runtime_candidate_source_mode": "research_only",
+                    "allow_recommendation_fallback": True,
+                },
+            )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("AAPL", candidates[0]["code"])
+        self.assertEqual("recommendations", candidates[0]["source"])
+
+    def test_runtime_collection_can_use_quant_only_runtime_overlay(self):
+        runtime_payload = {
+            "per_symbol": {
+                "AAPL": {
+                    "market": "NASDAQ",
+                    "is_reliable": True,
+                    "strategy_reliability": "high",
+                    "reliability_reason": "validated_candidate",
+                    "trade_count": 18,
+                    "validation_trades": 18,
+                    "validation_sharpe": 0.93,
+                    "composite_score": 64.0,
+                }
+            }
+        }
+        with patch.object(svc, "load_execution_optimized_params", return_value=runtime_payload):
+            candidates = svc.collect_runtime_candidates("NASDAQ", cfg={})
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("AAPL", candidates[0]["code"])
+        self.assertEqual("quant_runtime", candidates[0]["source"])
+        self.assertEqual("quant_runtime", candidates[0]["validation_snapshot"]["validation_source"])
+
+    def test_runtime_collection_hybrid_merges_only_in_policy_layer(self):
+        runtime_payload = {
+            "per_symbol": {
+                "AAPL": {
+                    "market": "NASDAQ",
+                    "is_reliable": True,
+                    "strategy_reliability": "high",
+                    "reliability_reason": "validated_candidate",
+                    "trade_count": 18,
+                    "validation_trades": 18,
+                    "validation_sharpe": 0.93,
+                    "composite_score": 64.0,
+                }
+            }
+        }
+        with patch.object(svc, "load_execution_optimized_params", return_value=runtime_payload), \
+             patch.object(svc, "_get_today_picks", return_value={
+                 "auto_candidates": [
+                     {
+                         "code": "AAPL",
+                         "market": "NASDAQ",
+                         "signal": "추천",
+                         "score": 70,
+                         "technical_snapshot": {"current_price": 200.0},
+                     }
+                 ]
+             }), \
+             patch.object(svc, "_get_recommendations", return_value={"recommendations": []}):
+            candidates = svc.collect_runtime_candidates(
+                "NASDAQ",
+                cfg={"runtime_candidate_source_mode": "hybrid"},
+            )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("hybrid", candidates[0]["source"])
+        self.assertEqual("today_picks", candidates[0]["research_source"])
+        self.assertEqual(200.0, candidates[0]["technical_snapshot"]["current_price"])
+
+
+if __name__ == "__main__":
+    unittest.main()

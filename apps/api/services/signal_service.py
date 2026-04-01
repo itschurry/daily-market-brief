@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any, Literal
+
 from analyzer.candidate_selector import (
     normalize_candidate_selection_config,
     select_market_candidates,
 )
+from market_utils import lookup_company_listing, normalize_market, resolve_market
 from routes.reports import _get_recommendations, _get_today_picks
+from services.optimized_params_store import load_execution_optimized_params
 
 DEFAULT_THEME_FOCUS = ["automotive", "robotics", "physical_ai"]
 _ALLOWED_THEME_FOCUS = set(DEFAULT_THEME_FOCUS)
+_RUNTIME_CANDIDATE_SOURCE_MODES = {"quant_only", "research_only", "hybrid"}
+RuntimeCandidateSourceMode = Literal["quant_only", "research_only", "hybrid"]
 
 
 def normalize_theme_focus(raw) -> list[str]:
@@ -46,18 +52,184 @@ def parse_theme_gate_config(raw: dict | None = None) -> dict:
     }
 
 
-def collect_pick_candidates(market: str, cfg: dict) -> list[dict]:
-    candidate_cfg = normalize_candidate_selection_config(
-        {
-            "min_score": cfg.get("min_score", 50.0),
-            "include_neutral": cfg.get("include_neutral", True),
-            "allow_recommendation_fallback": bool(cfg.get("allow_recommendation_fallback", False)),
-            **parse_theme_gate_config(cfg),
-        }
-    )
+def normalize_runtime_candidate_source_mode(raw: Any) -> RuntimeCandidateSourceMode:
+    mode = str(raw or "quant_only").strip().lower()
+    if mode not in _RUNTIME_CANDIDATE_SOURCE_MODES:
+        return "quant_only"
+    return mode  # type: ignore[return-value]
+
+
+def _research_candidate_config(cfg: dict | None) -> dict[str, Any]:
+    payload = cfg or {}
+    return {
+        "min_score": payload.get("min_score", 50.0),
+        "include_neutral": payload.get("include_neutral", True),
+        "allow_recommendation_fallback": bool(payload.get("allow_recommendation_fallback", False)),
+        **parse_theme_gate_config(payload),
+    }
+
+
+def collect_research_candidates(market: str, cfg: dict | None = None) -> list[dict]:
+    candidate_cfg = normalize_candidate_selection_config(_research_candidate_config(cfg))
     return select_market_candidates(
         market=market,
         cfg=candidate_cfg,
         today_picks=_get_today_picks(),
         recommendations=_get_recommendations(),
     )
+
+
+def _quant_candidate_score(payload: dict[str, Any]) -> float:
+    composite = payload.get("composite_score")
+    if isinstance(composite, (int, float)):
+        return max(0.0, min(100.0, float(composite)))
+    sharpe = payload.get("validation_sharpe")
+    if isinstance(sharpe, (int, float)):
+        return max(0.0, min(100.0, 50.0 + (float(sharpe) * 20.0)))
+    trades = payload.get("validation_trades") or payload.get("trade_count")
+    if isinstance(trades, (int, float)):
+        return max(0.0, min(100.0, 40.0 + min(40.0, float(trades))))
+    return 50.0
+
+
+def _quant_candidate_confidence(payload: dict[str, Any]) -> float:
+    if bool(payload.get("is_reliable")):
+        return 80.0
+    reliability = str(payload.get("strategy_reliability") or "").lower()
+    if reliability == "high":
+        return 80.0
+    if reliability == "medium":
+        return 65.0
+    if reliability == "low":
+        return 45.0
+    return 50.0
+
+
+def collect_quant_runtime_candidates(market: str, cfg: dict | None = None) -> list[dict]:
+    payload = load_execution_optimized_params() or {}
+    per_symbol = payload.get("per_symbol") if isinstance(payload.get("per_symbol"), dict) else {}
+    normalized_market = normalize_market(market)
+    if not per_symbol or not normalized_market:
+        return []
+
+    min_score = 0.0
+    raw_cfg = cfg or {}
+    try:
+        min_score = float(raw_cfg.get("min_score", 0.0))
+    except (TypeError, ValueError):
+        min_score = 0.0
+
+    candidates: list[dict[str, Any]] = []
+    for raw_code, raw_item in per_symbol.items():
+        code = str(raw_code or "").strip().upper()
+        item = raw_item if isinstance(raw_item, dict) else {}
+        if not code:
+            continue
+        item_market = resolve_market(code=code, market=str(item.get("market") or ""), scope="core")
+        if normalize_market(item_market) != normalized_market:
+            continue
+        listing = lookup_company_listing(code=code, market=item_market, scope="core") or {}
+        score = _quant_candidate_score(item)
+        if score < min_score:
+            continue
+        sharpe = item.get("validation_sharpe")
+        trade_count = item.get("validation_trades") or item.get("trade_count") or 0
+        reliability = str(item.get("strategy_reliability") or ("high" if item.get("is_reliable") else "insufficient"))
+        reasons = [
+            f"quant_runtime:{reliability}",
+            f"validation_trades:{trade_count}",
+        ]
+        if sharpe not in (None, ""):
+            reasons.append(f"validation_sharpe:{sharpe}")
+        candidates.append(
+            {
+                "code": code,
+                "name": listing.get("name") or code,
+                "market": normalize_market(item_market),
+                "sector": listing.get("sector") or item.get("sector") or "미분류",
+                "score": round(score, 2),
+                "priority_score": round(score, 2),
+                "signal": "BUY",
+                "confidence": _quant_candidate_confidence(item),
+                "gate_status": "passed",
+                "gate_reasons": [],
+                "theme_score": 0.0,
+                "matched_themes": [],
+                "keyword_gate_passed": False,
+                "related_news": [],
+                "theme_news_count": 0,
+                "reasons": reasons,
+                "risks": [],
+                "ai_thesis": "runtime quant validated candidate",
+                "technical_snapshot": item.get("technical_snapshot") if isinstance(item.get("technical_snapshot"), dict) else {},
+                "validation_snapshot": {
+                    "validation_source": "quant_runtime",
+                    "trade_count": int(item.get("trade_count") or item.get("validation_trades") or 0),
+                    "validation_trades": int(item.get("validation_trades") or item.get("trade_count") or 0),
+                    "validation_sharpe": float(item.get("validation_sharpe") or 0.0),
+                    "max_drawdown_pct": item.get("max_drawdown_pct"),
+                    "strategy_reliability": reliability,
+                    "reliability_reason": str(item.get("reliability_reason") or "runtime_overlay"),
+                    "passes_minimum_gate": bool(item.get("validation_trades") or item.get("trade_count")),
+                    "is_reliable": bool(item.get("is_reliable", reliability in {"high", "medium"})),
+                    "composite_score": item.get("composite_score"),
+                },
+                "source": "quant_runtime",
+                "source_label": "quant_runtime",
+            }
+        )
+
+    return sorted(
+        candidates,
+        key=lambda item: (float(item.get("priority_score") or 0.0), float(item.get("score") or 0.0), str(item.get("code") or "")),
+        reverse=True,
+    )
+
+
+def collect_runtime_candidates(market: str, cfg: dict | None = None) -> list[dict]:
+    payload = cfg or {}
+    mode = normalize_runtime_candidate_source_mode(payload.get("runtime_candidate_source_mode"))
+    if mode == "quant_only":
+        return collect_quant_runtime_candidates(market, payload)
+    if mode == "research_only":
+        return collect_research_candidates(market, payload)
+
+    quant_candidates = collect_quant_runtime_candidates(market, payload)
+    research_candidates = collect_research_candidates(market, payload)
+    merged: dict[str, dict[str, Any]] = {}
+    for item in quant_candidates:
+        code = str(item.get("code") or "").upper()
+        if code:
+            merged[code] = dict(item)
+    for item in research_candidates:
+        code = str(item.get("code") or "").upper()
+        if not code:
+            continue
+        if code in merged:
+            combined = dict(merged[code])
+            combined["source"] = "hybrid"
+            combined["source_label"] = "hybrid"
+            combined["research_source"] = item.get("source")
+            combined["research_candidate"] = dict(item)
+            combined["priority_score"] = round(max(float(combined.get("priority_score") or 0.0), float(item.get("priority_score") or 0.0)), 2)
+            if not combined.get("technical_snapshot") and item.get("technical_snapshot"):
+                combined["technical_snapshot"] = item.get("technical_snapshot")
+            if not combined.get("ai_thesis") and item.get("ai_thesis"):
+                combined["ai_thesis"] = item.get("ai_thesis")
+            merged[code] = combined
+            continue
+        merged[code] = {
+            **dict(item),
+            "source": "hybrid",
+            "source_label": "hybrid",
+            "research_source": item.get("source"),
+        }
+    return sorted(
+        merged.values(),
+        key=lambda item: (float(item.get("priority_score") or 0.0), float(item.get("score") or 0.0), str(item.get("code") or "")),
+        reverse=True,
+    )
+
+
+def collect_pick_candidates(market: str, cfg: dict) -> list[dict]:
+    return collect_runtime_candidates(market=market, cfg=cfg)
