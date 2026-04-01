@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from services.optimized_params_store import load_search_optimized_params
+from services.optimized_params_store import SEARCH_OPTIMIZED_PARAMS_PATH, load_search_optimized_params
 from services.quant_ops_service import (
     finalize_optimizer_search_handoff,
     register_optimizer_search_handoff,
@@ -19,6 +19,7 @@ _optimization_lock = threading.Lock()
 _optimization_running = False
 _OPT_RUNNING_FLAG = Path("/tmp/optimization_running")
 _LOG_PATH = Path("/tmp/optimization.log")
+_OPTIMIZER_MAX_RUNTIME_SECONDS = 3900
 
 
 def _optimizer_script_path() -> Path:
@@ -42,16 +43,32 @@ def _pid_exists(pid: int) -> bool:
         return False
 
 
-def _pid_looks_like_optimizer(pid: int) -> bool:
+def _pid_looks_like_optimizer(pid: int) -> bool | None:
     cmdline_path = Path(f"/proc/{pid}/cmdline")
     try:
         cmdline = cmdline_path.read_bytes().decode("utf-8", errors="ignore").replace("\x00", " ").strip()
     except Exception:
-        # 명령행을 읽을 수 없는 환경이면 보수적으로 살아있는 프로세스로 간주한다.
-        return True
+        return None
 
     script_name = _optimizer_script_path().name
     return script_name in cmdline
+
+
+def _marker_age_seconds() -> float | None:
+    try:
+        import time
+        return max(0.0, time.time() - _OPT_RUNNING_FLAG.stat().st_mtime)
+    except Exception:
+        return None
+
+
+def _search_artifact_is_newer_than_marker() -> bool:
+    try:
+        if not SEARCH_OPTIMIZED_PARAMS_PATH.exists() or not _OPT_RUNNING_FLAG.exists():
+            return False
+        return SEARCH_OPTIMIZED_PARAMS_PATH.stat().st_mtime >= _OPT_RUNNING_FLAG.stat().st_mtime
+    except Exception:
+        return False
 
 
 def _reconcile_running_state() -> bool:
@@ -60,15 +77,19 @@ def _reconcile_running_state() -> bool:
 
     had_marker = _optimization_running or _OPT_RUNNING_FLAG.exists()
     pid = _read_pid_from_flag() if _OPT_RUNNING_FLAG.exists() else None
-    has_live_optimizer = bool(
-        isinstance(pid, int)
-        and _pid_exists(pid)
-        and _pid_looks_like_optimizer(pid)
-    )
+    looks_like_optimizer: bool | None = False
+    if isinstance(pid, int) and _pid_exists(pid):
+        looks_like_optimizer = _pid_looks_like_optimizer(pid)
 
-    if has_live_optimizer:
+    if looks_like_optimizer is True:
         _optimization_running = True
         return True
+
+    if looks_like_optimizer is None:
+        marker_age = _marker_age_seconds()
+        if not _search_artifact_is_newer_than_marker() and not (marker_age is not None and marker_age > _OPTIMIZER_MAX_RUNTIME_SECONDS):
+            _optimization_running = True
+            return True
 
     _optimization_running = False
     if had_marker:

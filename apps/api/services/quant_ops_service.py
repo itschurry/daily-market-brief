@@ -44,6 +44,7 @@ _OPTIMIZABLE_KEYS = {
     "stoch_k_max",
 }
 _OPTIMIZED_PARAMS_MAX_AGE_DAYS = 30
+_OPTIMIZER_MAX_RUNTIME_SECONDS = 3900
 _SYMBOL_APPROVAL_STATUSES = {"approved", "rejected", "hold"}
 
 
@@ -178,6 +179,30 @@ def _parse_iso_timestamp(timestamp: str) -> dt.datetime | None:
         return None
 
 
+def _path_age_seconds(path: Path) -> float | None:
+    try:
+        return max(0.0, dt.datetime.now().timestamp() - path.stat().st_mtime)
+    except Exception:
+        return None
+
+
+def _path_is_newer(candidate: Path, reference: Path) -> bool:
+    try:
+        if not candidate.exists() or not reference.exists():
+            return False
+        return candidate.stat().st_mtime >= reference.stat().st_mtime
+    except Exception:
+        return False
+
+
+def _recover_search_payload(payload: dict[str, Any] | None) -> tuple[dict[str, Any], bool]:
+    if isinstance(payload, dict):
+        return payload, True
+    if not SEARCH_OPTIMIZED_PARAMS_PATH.exists():
+        return {}, False
+    return _read_json(SEARCH_OPTIMIZED_PARAMS_PATH, {}), True
+
+
 def _optimizer_job_active() -> bool:
     if not _OPT_RUNNING_FLAG.exists():
         return False
@@ -200,7 +225,14 @@ def _optimizer_job_active() -> bool:
     try:
         cmdline = cmdline_path.read_bytes().decode("utf-8", errors="ignore").replace("\x00", " ")
     except Exception:
-        # 프로세스 명령행을 확인할 수 없는 환경에서는 보수적으로 활성 상태로 취급한다.
+        if _path_is_newer(SEARCH_OPTIMIZED_PARAMS_PATH, _OPT_RUNNING_FLAG):
+            _OPT_RUNNING_FLAG.unlink(missing_ok=True)
+            return False
+        marker_age = _path_age_seconds(_OPT_RUNNING_FLAG)
+        if marker_age is not None and marker_age > _OPTIMIZER_MAX_RUNTIME_SECONDS:
+            _OPT_RUNNING_FLAG.unlink(missing_ok=True)
+            return False
+        # 프로세스 명령행을 확인할 수 없는 환경에서는 새 결과 파일이 없을 때만 활성 상태로 취급한다.
         return True
     if _OPTIMIZER_SCRIPT_NAME not in cmdline:
         _OPT_RUNNING_FLAG.unlink(missing_ok=True)
@@ -209,19 +241,19 @@ def _optimizer_job_active() -> bool:
 
 
 def _search_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
-    raw_payload = payload
-    payload = payload if isinstance(payload, dict) else {}
+    payload, artifact_present = _recover_search_payload(payload)
     meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
     global_params = payload.get("global_params") if isinstance(payload.get("global_params"), dict) else {}
     per_symbol = payload.get("per_symbol") if isinstance(payload.get("per_symbol"), dict) else {}
     optimized_at = str(payload.get("optimized_at") or "")
     search_context = meta.get("search_context") if isinstance(meta.get("search_context"), dict) else {}
-    artifact_present = isinstance(raw_payload, dict)
     has_materialized_payload = bool(payload) or bool(global_params) or bool(per_symbol) or bool(meta) or bool(optimized_at)
+    version = str(payload.get("version") or optimized_at or "")
     return {
         "available": bool(artifact_present),
         "has_materialized_payload": bool(has_materialized_payload),
-        "version": str(payload.get("version") or optimized_at or "not_optimized"),
+        "version": version,
+        "version_known": bool(version),
         "optimized_at": optimized_at,
         "is_stale": _is_stale(optimized_at),
         "global_params": global_params,
@@ -353,7 +385,7 @@ def _candidate_activity_state(
         reasons.append("validation_settings_changed")
     if not search.get("available"):
         reasons.append("optimizer_search_missing")
-    elif str(candidate.get("search_version") or "") != str(search.get("version") or ""):
+    elif str(search.get("version") or "") and str(candidate.get("search_version") or "") != str(search.get("version") or ""):
         reasons.append("optimizer_search_version_changed")
 
     return {
@@ -409,7 +441,7 @@ def _canonicalize_search_handoff(
     search_available = bool(search.get("available"))
     current_search_version = str(search.get("version") or "")
     handoff_search_version = str(normalized.get("search_version") or "")
-    if search_available and handoff_search_version and handoff_search_version != current_search_version:
+    if search_available and current_search_version and handoff_search_version and handoff_search_version != current_search_version:
         reasons.append("optimizer_search_version_changed")
 
     status = str(normalized.get("status") or "unknown")
@@ -600,7 +632,7 @@ def _refresh_candidate(candidate: dict[str, Any] | None, search: dict[str, Any])
     metrics = refreshed.get("metrics") if isinstance(refreshed.get("metrics"), dict) else {}
     settings = refreshed.get("settings") if isinstance(refreshed.get("settings"), dict) else {}
     min_trades = _to_int(settings.get("minTrades"), 8)
-    search_version_changed = bool(search.get("available")) and str(refreshed.get("search_version") or "") != str(search.get("version") or "")
+    search_version_changed = bool(search.get("available")) and bool(search.get("version")) and str(refreshed.get("search_version") or "") != str(search.get("version") or "")
     decision, guardrails = _candidate_decision(
         metrics,
         min_trades=min_trades,

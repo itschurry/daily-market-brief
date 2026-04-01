@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import sys
 import tempfile
 import types
@@ -309,6 +310,49 @@ class QuantOpsWorkflowTests(unittest.TestCase):
         self.assertFalse(workflow["search_result"]["has_materialized_payload"])
         self.assertEqual({}, workflow["search_result"]["global_params"])
         self.assertEqual("missing", workflow["stage_status"]["revalidation"])
+
+    def test_workflow_recovers_search_artifact_from_disk_when_loader_returns_none(self):
+        search_path = Path(self.tmpdir.name) / "optimized_params.json"
+        search_path.write_text(json.dumps(self.search_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "SEARCH_OPTIMIZED_PARAMS_PATH", search_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=None), \
+             patch.object(svc, "load_runtime_optimized_params", return_value=None), \
+             patch.object(svc, "run_validation_diagnostics", return_value=_adopt_diagnostics()):
+            result = svc.revalidate_optimizer_candidate({
+                "query": {"market_scope": "kospi", "lookback_days": 365},
+                "settings": {
+                    "strategy": "디스크 복구 전략",
+                    "trainingDays": 180,
+                    "validationDays": 60,
+                    "walkForward": True,
+                    "minTrades": 8,
+                },
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["workflow"]["search_available"])
+        self.assertEqual(self.search_payload["version"], result["workflow"]["search_result"]["version"])
+        self.assertNotIn("optimizer_search_missing", result["workflow"]["latest_candidate_state"]["reasons"])
+
+    def test_optimizer_job_active_clears_stale_flag_when_search_artifact_is_newer(self):
+        search_path = Path(self.tmpdir.name) / "optimized_params.json"
+        search_path.write_text(json.dumps(self.search_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        flag_path = Path(self.tmpdir.name) / "optimization_running"
+        flag_path.write_text("34567", encoding="utf-8")
+
+        flag_ts = dt.datetime.now().timestamp() - 30
+        search_ts = flag_ts + 10
+        os.utime(flag_path, (flag_ts, flag_ts))
+        os.utime(search_path, (search_ts, search_ts))
+
+        with patch.object(svc, "_OPT_RUNNING_FLAG", flag_path), \
+             patch.object(svc, "SEARCH_OPTIMIZED_PARAMS_PATH", search_path), \
+             patch.object(svc.os, "kill", return_value=None):
+            self.assertFalse(svc._optimizer_job_active())
+
+        self.assertFalse(flag_path.exists())
 
     def test_workflow_self_heals_missing_state_file_when_search_artifact_exists(self):
         self.assertFalse(self.state_path.exists())

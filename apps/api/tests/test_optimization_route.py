@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -109,6 +111,46 @@ class OptimizationRouteTests(unittest.TestCase):
         self.assertEqual("started", response["status"])
         self.assertEqual(1, len(commands))
         self.assertFalse(route._optimization_running)
+        mock_register.assert_called_once()
+
+    def test_run_optimization_clears_unconfirmed_stale_flag_when_search_artifact_is_newer(self):
+        commands: list[list[str]] = []
+
+        class _FakePopen:
+            def __init__(self, command, stdout=None, stderr=None):
+                commands.append(list(command))
+                self.pid = 56789
+                self.returncode = 0
+
+            def wait(self, timeout=None):
+                self.returncode = 0
+                return 0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            flag_path = Path(tmpdir) / "optimization_running"
+            flag_path.write_text("34567", encoding="utf-8")
+            log_path = Path(tmpdir) / "optimization.log"
+            search_path = Path(tmpdir) / "optimized_params.json"
+            search_path.write_text('{"version": "search-ready"}', encoding="utf-8")
+            flag_ts = time.time() - 30
+            search_ts = flag_ts + 10
+            os.utime(flag_path, (flag_ts, flag_ts))
+            os.utime(search_path, (search_ts, search_ts))
+
+            with patch.object(route, "_OPT_RUNNING_FLAG", flag_path), \
+                 patch.object(route, "_LOG_PATH", log_path), \
+                 patch.object(route, "SEARCH_OPTIMIZED_PARAMS_PATH", search_path), \
+                 patch.object(route, "_pid_exists", return_value=True), \
+                 patch.object(route, "_pid_looks_like_optimizer", return_value=None), \
+                 patch.object(route, "register_optimizer_search_handoff") as mock_register, \
+                 patch.object(route, "finalize_optimizer_search_handoff", return_value={"ok": True}), \
+                 patch.object(route.threading, "Thread", _ImmediateThread), \
+                 patch.object(route.subprocess, "Popen", _FakePopen):
+                status, response = route.handle_run_optimization({"query": {}, "settings": {}})
+
+        self.assertEqual(200, status)
+        self.assertEqual("started", response["status"])
+        self.assertEqual(1, len(commands))
         mock_register.assert_called_once()
 
     def test_run_optimization_returns_already_running_only_for_live_optimizer_process(self):
