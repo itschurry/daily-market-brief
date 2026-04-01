@@ -55,7 +55,7 @@ class OptimizationRouteTests(unittest.TestCase):
                 return 0
 
         payload = {
-            "query": {"market_scope": "nasdaq"},
+            "query": {"market_scope": "nasdaq", "lookback_days": 1095},
             "settings": {"trainingDays": 180, "validationDays": 60},
         }
 
@@ -77,8 +77,12 @@ class OptimizationRouteTests(unittest.TestCase):
         self.assertEqual(str(route._optimizer_script_path()), commands[0][1])
         self.assertIn("--market", commands[0])
         self.assertIn("NASDAQ", commands[0])
-        self.assertIn("180", commands[0])
+        self.assertIn("1095", commands[0])
         self.assertIn("60", commands[0])
+        lookback_index = commands[0].index("--lookback-days")
+        validation_index = commands[0].index("--validation-days")
+        self.assertEqual("1095", commands[0][lookback_index + 1])
+        self.assertEqual("60", commands[0][validation_index + 1])
         mock_register.assert_called_once_with(payload)
         mock_finalize.assert_called_once_with(success=True)
 

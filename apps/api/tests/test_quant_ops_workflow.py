@@ -628,6 +628,58 @@ class QuantOpsWorkflowTests(unittest.TestCase):
         self.assertEqual("save_guardrail_blocked", result["error"])
         self.assertEqual("reject", result["candidate"]["decision"]["status"])
         self.assertFalse(result["candidate"]["guardrails"]["can_save"])
+        self.assertTrue(result["candidate"]["guardrails"]["reasons"])
+
+    def test_candidate_guardrails_synthesize_reason_when_hold_blocks_without_hard_failures(self):
+        decision, guardrails = svc._candidate_decision(
+            {
+                "trade_count": 12,
+                "reliability": "high",
+                "profit_factor": 1.02,
+                "oos_return_pct": 0.5,
+                "max_drawdown_pct": -12.0,
+                "positive_window_ratio": 0.4,
+                "expected_shortfall_5_pct": -10.0,
+            },
+            min_trades=8,
+            search_is_stale=False,
+            search_version_changed=False,
+        )
+
+        self.assertEqual("hold", decision["status"])
+        self.assertFalse(guardrails["can_save"])
+        self.assertEqual(["decision_hold"], guardrails["reasons"])
+
+    def test_hold_candidate_cannot_become_runtime_effective_via_search_fallback(self):
+        hold_diag = _adopt_diagnostics()
+        hold_diag["validation"]["segments"]["oos"].update({
+            "total_return_pct": 0.5,
+            "profit_factor": 1.02,
+            "max_drawdown_pct": -12.0,
+        })
+        hold_diag["validation"]["summary"].update({
+            "positive_window_ratio": 0.4,
+        })
+        hold_diag["validation"]["scorecard"]["tail_risk"].update({
+            "expected_shortfall_5_pct": -10.0,
+        })
+
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \
+             patch.object(svc, "load_runtime_optimized_params", return_value=None), \
+             patch.object(svc, "run_validation_diagnostics", return_value=hold_diag):
+            revalidate_result = svc.revalidate_optimizer_candidate({
+                "query": {"market_scope": "kospi", "lookback_days": 365},
+                "settings": {"strategy": "운영 전략", "minTrades": 8},
+            })
+            workflow = svc.get_quant_ops_workflow()
+
+        self.assertTrue(revalidate_result["ok"])
+        self.assertEqual("hold", revalidate_result["candidate"]["decision"]["status"])
+        self.assertFalse(revalidate_result["candidate"]["guardrails"]["can_apply"])
+        self.assertEqual("missing", workflow["stage_status"]["runtime_apply"])
+        self.assertEqual("search", workflow["runtime_apply"]["effective_source"])
+        self.assertFalse(workflow["runtime_apply"]["available"])
 
     def test_apply_runtime_writes_runtime_overlay_and_updates_state(self):
         execution_stub = types.ModuleType("services.execution_service")

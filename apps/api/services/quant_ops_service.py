@@ -571,6 +571,26 @@ def _read_validation_metrics(validation_payload: dict[str, Any]) -> dict[str, An
     }
 
 
+def _blocked_guardrail_reasons(
+    *,
+    decision_status: str,
+    can_save: bool,
+    can_apply: bool,
+    reasons: list[str] | None,
+    fallback: str,
+) -> list[str]:
+    normalized = [str(item).strip() for item in (reasons or []) if str(item).strip()]
+    if normalized:
+        return normalized
+    if can_save and can_apply:
+        return []
+    if decision_status == "hold":
+        return ["decision_hold"]
+    if decision_status == "reject":
+        return ["decision_reject"]
+    return [fallback]
+
+
 def _candidate_decision(metrics: dict[str, Any], *, min_trades: int, search_is_stale: bool, search_version_changed: bool) -> tuple[dict[str, Any], dict[str, Any]]:
     oos_return = _to_float(metrics.get("oos_return_pct"), 0.0)
     profit_factor = _to_float(metrics.get("profit_factor"), 0.0)
@@ -641,7 +661,13 @@ def _candidate_decision(metrics: dict[str, Any], *, min_trades: int, search_is_s
     }, {
         "can_save": can_save,
         "can_apply": can_apply,
-        "reasons": guardrail_reasons,
+        "reasons": _blocked_guardrail_reasons(
+            decision_status=decision_status,
+            can_save=can_save,
+            can_apply=can_apply,
+            reasons=guardrail_reasons,
+            fallback="save_guardrail_blocked",
+        ),
     }
 
 
@@ -810,7 +836,13 @@ def _symbol_save_guardrails(
     return {
         "can_save": can_save,
         "can_apply": can_apply,
-        "reasons": reasons,
+        "reasons": _blocked_guardrail_reasons(
+            decision_status=str((candidate or {}).get("decision", {}).get("status") or "hold"),
+            can_save=can_save,
+            can_apply=can_apply,
+            reasons=reasons,
+            fallback="symbol_save_guardrail_blocked",
+        ),
     }
 
 

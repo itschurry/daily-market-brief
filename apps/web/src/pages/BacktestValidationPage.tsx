@@ -348,6 +348,58 @@ function formatMoneyInput(value: number) {
   return new Intl.NumberFormat('en-US').format(normalized);
 }
 
+function IntegerDraftInput({
+  value,
+  min,
+  step,
+  onCommit,
+  placeholder,
+}: {
+  value: number;
+  min?: number;
+  step?: number;
+  onCommit: (next: number) => void;
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState(() => String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) {
+      setDraft(String(value));
+    }
+  }, [focused, value]);
+
+  return (
+    <input
+      className="backtest-input-wrap"
+      style={{ padding: '0 12px' }}
+      type="number"
+      min={min}
+      step={step}
+      value={draft}
+      placeholder={placeholder}
+      onFocus={(event) => {
+        setFocused(true);
+        requestAnimationFrame(() => event.currentTarget.select());
+      }}
+      onChange={(event) => {
+        setDraft(event.target.value);
+      }}
+      onBlur={() => {
+        const parsed = Number(draft);
+        let normalized = Number.isFinite(parsed) ? Math.floor(parsed) : value;
+        if (typeof min === 'number') {
+          normalized = Math.max(min, normalized);
+        }
+        onCommit(normalized);
+        setDraft(String(normalized));
+        setFocused(false);
+      }}
+    />
+  );
+}
+
 function MoneyValueInput({
   value,
   min = 1,
@@ -1417,32 +1469,29 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
         </FieldBlock>
 
         <FieldBlock label="백테스트 기간(일)" help="최소 180일, 30일 단위 권장">
-          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={180} step={30} value={validationStore.draftQuery.lookback_days} onChange={updateDraftQueryNumber('lookback_days', 180, 180)} onFocus={selectAllOnFocus} />
+          <IntegerDraftInput
+            value={validationStore.draftQuery.lookback_days}
+            min={180}
+            step={30}
+            onCommit={(next) => validationStore.setDraftQuery((prev) => ({ ...prev, lookback_days: next }))}
+          />
         </FieldBlock>
 
         <FieldBlock label="학습 기간(일)" help="최소 30일, 10일 단위">
-          <input
-            className="backtest-input-wrap"
-            style={{ padding: '0 12px' }}
-            type="number"
+          <IntegerDraftInput
+            value={validationStore.draftSettings.trainingDays}
             min={30}
             step={10}
-            value={validationStore.draftSettings.trainingDays}
-            onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, trainingDays: Math.max(30, Number(event.target.value) || 30) }))}
-            onFocus={selectAllOnFocus}
+            onCommit={(next) => validationStore.setDraftSettings((prev) => ({ ...prev, trainingDays: next }))}
           />
         </FieldBlock>
 
         <FieldBlock label="검증 기간(일)" help="최소 20일, 10일 단위">
-          <input
-            className="backtest-input-wrap"
-            style={{ padding: '0 12px' }}
-            type="number"
+          <IntegerDraftInput
+            value={validationStore.draftSettings.validationDays}
             min={20}
             step={10}
-            value={validationStore.draftSettings.validationDays}
-            onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, validationDays: Math.max(20, Number(event.target.value) || 20) }))}
-            onFocus={selectAllOnFocus}
+            onCommit={(next) => validationStore.setDraftSettings((prev) => ({ ...prev, validationDays: next }))}
           />
         </FieldBlock>
 
@@ -1459,15 +1508,11 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
         </FieldBlock>
 
         <FieldBlock label="최소 거래 수(건)" help="검증 통과 최소 거래 수">
-          <input
-            className="backtest-input-wrap"
-            style={{ padding: '0 12px' }}
-            type="number"
+          <IntegerDraftInput
+            value={validationStore.draftSettings.minTrades}
             min={1}
             step={1}
-            value={validationStore.draftSettings.minTrades}
-            onChange={(event) => validationStore.setDraftSettings((prev) => ({ ...prev, minTrades: Math.max(1, Number(event.target.value) || 1) }))}
-            onFocus={selectAllOnFocus}
+            onCommit={(next) => validationStore.setDraftSettings((prev) => ({ ...prev, minTrades: next }))}
           />
         </FieldBlock>
 
@@ -1494,10 +1539,20 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
           />
         </FieldBlock>
         <FieldBlock label="최대 보유 종목 수" help="동시 보유 가능한 포지션 수입니다.">
-          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={1} step={1} value={validationStore.draftQuery.max_positions} onChange={updateDraftQueryNumber('max_positions', validationStore.draftQuery.max_positions, 1)} onFocus={selectAllOnFocus} />
+          <IntegerDraftInput
+            value={validationStore.draftQuery.max_positions}
+            min={1}
+            step={1}
+            onCommit={(next) => validationStore.setDraftQuery((prev) => ({ ...prev, max_positions: next }))}
+          />
         </FieldBlock>
         <FieldBlock label="최대 보유 일수" help="포지션 강제 정리 기준입니다.">
-          <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" min={1} step={1} value={validationStore.draftQuery.max_holding_days} onChange={updateDraftQueryNumber('max_holding_days', validationStore.draftQuery.max_holding_days, 1)} onFocus={selectAllOnFocus} />
+          <IntegerDraftInput
+            value={validationStore.draftQuery.max_holding_days}
+            min={1}
+            step={1}
+            onCommit={(next) => validationStore.setDraftQuery((prev) => ({ ...prev, max_holding_days: next }))}
+          />
         </FieldBlock>
         <FieldBlock label="RSI 최소" help="진입 허용 하한선입니다.">
           <input className="backtest-input-wrap" style={{ padding: '0 12px' }} type="number" step={1} value={validationStore.draftQuery.rsi_min} onChange={updateDraftQueryNumber('rsi_min', validationStore.draftQuery.rsi_min)} onFocus={selectAllOnFocus} />

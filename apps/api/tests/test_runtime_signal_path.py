@@ -10,7 +10,43 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from services import execution_service as execution_svc
+from services import optimized_params_store as optimized_store
 from services import strategy_engine as strategy_svc
+
+
+class OptimizedParamsExecutionApprovalTests(unittest.TestCase):
+    def test_execution_loader_ignores_unapproved_search_payload(self):
+        search_payload = {
+            "optimized_at": "2026-04-01T21:00:00+09:00",
+            "global_params": {"stop_loss_pct": 2.0, "take_profit_pct": 40.0},
+            "meta": {"global_overlay_source": "all_results_fallback"},
+        }
+
+        with patch.object(optimized_store, "load_runtime_optimized_params", return_value=None), \
+             patch.object(optimized_store, "load_search_optimized_params", return_value=search_payload):
+            self.assertIsNone(optimized_store.load_execution_optimized_params())
+
+    def test_execution_loader_prefers_runtime_validated_payload(self):
+        runtime_payload = {
+            "optimized_at": "2026-04-01T22:00:00+09:00",
+            "global_params": {"stop_loss_pct": 6.0, "take_profit_pct": 18.0},
+            "meta": {
+                "global_overlay_source": "validated_candidate",
+                "applied_candidate_id": "cand-001",
+                "applied_from": "quant_ops_saved_candidate",
+            },
+        }
+        search_payload = {
+            "optimized_at": "2026-04-01T21:00:00+09:00",
+            "global_params": {"stop_loss_pct": 2.0, "take_profit_pct": 40.0},
+            "meta": {"global_overlay_source": "all_results_fallback"},
+        }
+
+        with patch.object(optimized_store, "load_runtime_optimized_params", return_value=runtime_payload), \
+             patch.object(optimized_store, "load_search_optimized_params", return_value=search_payload):
+            loaded = optimized_store.load_execution_optimized_params()
+
+        self.assertEqual(runtime_payload, loaded)
 
 
 class RuntimeValidationGateTests(unittest.TestCase):

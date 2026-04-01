@@ -33,6 +33,7 @@ from services.optimized_params_store import (
     RUNTIME_OPTIMIZED_PARAMS_PATH as STORE_RUNTIME_OPTIMIZED_PARAMS_PATH,
     SEARCH_OPTIMIZED_PARAMS_PATH as STORE_SEARCH_OPTIMIZED_PARAMS_PATH,
     load_effective_optimized_params,
+    load_execution_optimized_params,
     load_runtime_optimized_params,
     load_search_optimized_params,
 )
@@ -511,9 +512,9 @@ def _notification_order_hook(event: dict[str, Any], _account: dict[str, Any]) ->
 
 
 def _load_optimized_params() -> dict | None:
-    """탐색 결과(search) 또는 적용된 runtime overlay 중 현재 유효한 payload를 반환한다."""
+    """실행 경로에서는 quant-ops/runtime로 승인된 payload만 사용한다."""
     try:
-        data = load_effective_optimized_params()
+        data = load_execution_optimized_params()
         if not data:
             return None
         optimized_at = datetime.datetime.fromisoformat(

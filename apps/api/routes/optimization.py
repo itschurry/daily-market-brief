@@ -114,6 +114,9 @@ def _build_optimizer_command(payload: dict[str, Any] | None) -> list[str]:
     payload = payload if isinstance(payload, dict) else {}
     query = payload.get("query") if isinstance(payload.get("query"), dict) else {}
     settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+    lookback_days = _to_int(query.get("lookback_days"), 1095, minimum=180)
+    training_days = _to_int(settings.get("trainingDays"), 180, minimum=30)
+    validation_days = _to_int(settings.get("validationDays"), 60, minimum=20)
     command = [
         sys.executable,
         str(_optimizer_script_path()),
@@ -122,10 +125,14 @@ def _build_optimizer_command(payload: dict[str, Any] | None) -> list[str]:
         "--top-n",
         "10",
         "--lookback-days",
-        str(_to_int(settings.get("trainingDays"), 120, minimum=30)),
+        str(lookback_days),
         "--validation-days",
-        str(_to_int(settings.get("validationDays"), 40, minimum=20)),
+        str(validation_days),
     ]
+    # Optimizer script currently exposes lookback/validation only.
+    # Keep training_days normalized here so future script support can pass it without
+    # silently coupling lookback to trainingDays again.
+    _ = training_days
 
     market_scope = str(query.get("market_scope") or "").strip().lower()
     if market_scope == "kospi":
