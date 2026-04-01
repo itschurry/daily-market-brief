@@ -30,13 +30,13 @@ const REPORT_TABS: Array<{ id: ReportTab; label: string; path: string }> = [
 ];
 
 const SECTION_COPY: Record<TopSection, string> = {
-  console: '퀀트 백테스트/최적화와 모의투자 운영을 다루는 화면입니다. AI·테마·뉴스 추천 브리핑은 리포트 섹션에서 따로 봅니다.',
-  reports: 'AI·테마·뉴스 추천 브리핑과 최종 운영 판단 화면입니다. 하류 후보는 quant와 추천의 합집합으로 읽고, 둘 다 동시에 필요하진 않습니다.',
+  console: '검증된 전략과 paper/live 실행 준비 상태를 운영하는 화면입니다. 리서치 브리프는 투자 리서치 섹션에서 봅니다.',
+  reports: '시장 브리프가 아니라 투자 리서치와 실행 시나리오를 읽는 화면입니다. quant와 AI 후보는 합집합 후보 흐름으로 해석합니다.',
 };
 
 const SECTION_BADGE: Record<TopSection, string> = {
-  console: 'Quant + Ops Console',
-  reports: 'AI Reports + Union Decisions',
+  console: 'Validation + Execution + Observability',
+  reports: 'Research + Scenarios + Decisions',
 };
 
 function toRouteState(pathname: string): RouteState {
@@ -163,7 +163,7 @@ export default function App() {
       <div className="app-chrome-shell">
         <div className="app-chrome-header">
           <div>
-            <div className="app-chrome-kicker">Daily Market Brief</div>
+            <div className="app-chrome-kicker">Daily Market Brief · Investing OS</div>
             <div className="app-chrome-title">{activeLabel}</div>
             <div className="app-chrome-copy">{SECTION_COPY[route.section]}</div>
           </div>

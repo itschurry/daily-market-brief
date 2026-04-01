@@ -1404,8 +1404,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       <div className="page-frame">
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <ConsoleActionBar
-            title="퀀트 검증 콘솔"
-            subtitle="이 화면은 quant 전략만 다룹니다. AI·테마·뉴스 추천 브리핑은 리포트/모의투자 흐름에서 별도로 봅니다."
+            title="전략 검증 랩"
+            subtitle="리서치에서 올라온 아이디어를 실행 가능한 전략으로 압축하는 화면입니다. quant 전략만 다루며 paper/live handoff 전 검증 게이트를 관리합니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage}
@@ -1421,13 +1421,13 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
           <div className="validation-report-grid">
             <div className="page-section" style={{ padding: 16 }}>
               <div className="section-kicker">Mode 01</div>
-              <div className="section-title">퀀트 트레이딩 검증</div>
-              <div className="section-copy">백테스트, walk-forward, 최적화로 전략을 채택/보류하는 전용 영역입니다. AI·테마·뉴스 추천 점수는 여기 통과 조건이 아닙니다.</div>
+              <div className="section-title">퀀트 전략 검증</div>
+              <div className="section-copy">백테스트, walk-forward, 최적화로 전략을 채택/보류하는 전용 영역입니다. paper/live 실행 전에 통과해야 하는 게이트를 여기서 관리합니다.</div>
             </div>
             <div className="page-section" style={{ padding: 16 }}>
               <div className="section-kicker">Mode 02</div>
-              <div className="section-title">AI/테마/뉴스 추천</div>
-              <div className="section-copy">오늘 리포트, 관망/관심목표, 모의투자 후보 선택에서 따로 읽습니다. 둘을 교집합으로 묶지 않고 downstream에서는 합집합 후보 흐름으로 봅니다.</div>
+              <div className="section-title">AI/테마/뉴스 리서치</div>
+              <div className="section-copy">투자 브리프, 관심 시나리오, paper 실행 후보 선택에서 따로 읽습니다. 둘을 교집합으로 묶지 않고 downstream에서는 합집합 후보 흐름으로 봅니다.</div>
             </div>
           </div>
 
@@ -1436,8 +1436,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
               <div className="page-section" style={{ padding: 16 }}>
                 <div className="section-head-row">
                   <div>
-                    <div className="section-title">Quant Ops Workflow</div>
-                    <div className="section-copy">optimizer search → re-validation → save → runtime apply 순서로 끊어서 보여줍니다. search는 후보 풀이고, latest candidate는 그 search 버전을 baseline 기준으로 다시 검증한 운영 후보입니다.</div>
+                    <div className="section-title">Validation → Runtime Handoff</div>
+                    <div className="section-copy">optimizer search → re-validation → save → runtime apply 순서로 끊어서 보여줍니다. search는 후보 풀이고, latest candidate는 그 search 버전을 baseline 기준으로 다시 검증한 실행 후보입니다.</div>
                   </div>
                   <div className={`inline-badge ${quantWorkflow.busyAction ? 'is-warning' : latestCandidateMatchesSearch ? 'is-success' : 'is-warning'}`}>
                     {quantWorkflow.busyAction ? `작업 중 · ${quantWorkflow.busyAction}` : latestCandidateMatchesSearch ? '최신 handoff 완료' : '단계 확인 필요'}

@@ -526,8 +526,8 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
       <div className="page-frame">
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <ConsoleActionBar
-            title="모의투자 운용"
-            subtitle="계좌/포지션/엔진 상태를 확인하고 엔진 시작·중지·초기화를 직접 수행합니다. 하류 실행 후보는 quant와 AI·테마·뉴스 추천을 교집합이 아닌 합집합 기준으로 읽습니다."
+            title="Paper 실행 운용"
+            subtitle="paper 계좌, 포지션, 실행 엔진 상태를 확인하고 시작·중지·초기화를 직접 수행합니다. 리서치 결과를 실행 가능한 후보로 넘기는 관제 화면입니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage || lastError}
@@ -599,7 +599,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
               <span className={`report-decision-chip ${entryAllowed ? 'is-good' : 'is-bad'}`}>신규 진입 {entryAllowed ? '가능' : '차단'}</span>
             </div>
             <div className="report-decision-title">운용 우선순위: {riskyPositions.length > 0 || todayFailCount > 0 ? '리스크 정리 먼저' : '정상 운영 지속'}</div>
-            <div className="report-hero-copy">보유 포지션보다 먼저 위험 포지션, 오늘 체결/실패, 엔진 신뢰도, 신규 진입 허용 여부를 확인하는 화면으로 재정렬했습니다. 실행 후보는 today picks 우선·recommendations fallback 합집합 흐름이며, quant validation gate는 별도로 얹힙니다.</div>
+            <div className="report-hero-copy">리서치가 끝난 후보를 paper 계좌에 태우기 전에 위험 포지션, 오늘 체결/실패, 엔진 신뢰도, 신규 진입 허용 여부를 먼저 확인하는 실행 관제 화면입니다. 실행 후보는 today picks 우선·recommendations fallback 합집합 흐름이며, quant validation gate는 별도로 얹힙니다.</div>
             <div className="validation-decision-grid">
               <div className={`summary-metric-card ${riskyPositions.length > 0 ? 'is-bad' : 'is-good'}`}>
                 <div className="summary-metric-label">위험 포지션</div>
@@ -621,10 +621,10 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
 
           <div className="validation-report-grid">
             <div className="page-section" style={{ padding: 16 }}>
-              <div className="section-title">후보 입력 분리</div>
+              <div className="section-title">리서치 입력 분리</div>
               <div className="detail-list">
-                <div>퀀트: 백테스트/최적화로 관리한 validation gate와 sizing 정책</div>
-                <div>AI/테마/뉴스: today picks / recommendations 브리핑 후보</div>
+                <div>퀀트: 백테스트/최적화로 관리한 validation gate, sizing, runtime overlay</div>
+                <div>AI/테마/뉴스: today picks / recommendations 기반 리서치 후보</div>
                 <div>실행 해석: 둘 다 동시에 있어야 하는 교집합이 아니라, 둘 중 하나만 있어도 downstream 후보가 될 수 있는 합집합 흐름</div>
               </div>
             </div>
@@ -647,7 +647,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
               </div>
             </div>
             <div className="page-section" style={{ padding: 16 }}>
-              <div className="section-title">오늘 집행 결과</div>
+              <div className="section-title">오늘 실행 결과</div>
               <div className="detail-list">
                 <div>오늘 체결: {formatNumber(todayOrders.length, 0)}건</div>
                 <div>매수 체결: {formatCount(todayBuyCount, '건')}</div>

@@ -79,8 +79,8 @@ export function OverviewPage({ snapshot, loading, errorMessage, onRefresh }: Ove
             </div>
           )}
           <ConsoleActionBar
-            title="엔진 개요"
-            subtitle="모의투자 런타임, quant validation gate, downstream 실행 상태를 즉시 확인합니다. AI·테마·뉴스 추천 브리핑은 리포트 섹션에서 읽습니다."
+            title="투자 운용 개요"
+            subtitle="paper/live 실행 준비 상태, quant validation gate, downstream 실행 후보 흐름을 즉시 확인합니다. 리서치 브리프는 투자 리서치 섹션에서 읽습니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage}

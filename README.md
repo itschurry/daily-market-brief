@@ -1,6 +1,19 @@
 # daily-market-brief
 
-일일 시장 브리프, 추천 종목, 설명 리포트, 모의투자 엔진을 함께 운영하는 투자 리서치/운영 앱입니다.
+단순 일일 시장 브리프 앱이 아니라, **리서치 → 검증 → paper/live 실행 → observability** 를 한 루프에 묶는 investing app입니다.
+
+핵심 제품 프레임은 아래 4단계입니다.
+
+1. **Research**
+   - 매크로/시장/뉴스/테마 데이터를 모아서 당일 투자 가설과 후보를 정리함
+2. **Validation**
+   - 퀀트 백테스트 / walk-forward / 최적화 / 재검증으로 실행 가능한 전략만 남김
+3. **Execution**
+   - paper engine에서 후보를 실제 실행 흐름으로 태우고, 이후 live 전환 준비 상태를 확인함
+4. **Observability**
+   - 엔진 상태, 주문/사이클/계좌 로그, risk guard, validation gate를 운영 관점에서 추적함
+
+즉, 이 프로젝트는 **브리프 생성기 + 추천 뷰어**가 아니라, 투자 의사결정과 실행 준비를 연결하는 운영용 제품에 가깝습니다.
 
 핵심은 전략 모드가 **둘**이라는 점입니다.
 
@@ -14,13 +27,13 @@
 
 ## 주요 기능
 
-- 매크로/시장 컨텍스트 기반 일일 브리프 생성
-- AI·테마·뉴스 추천 종목 / 오늘의 픽 조회
-- 퀀트 백테스트 / walk-forward / 최적화 결과 조회
-- 전일 대비 리포트 비교
-- 설명 가능한 리포트 API 제공
-- KOSPI / NASDAQ 대상 모의투자 엔진 운용
-- 웹 콘솔 기반 운영 상태 확인
+- 매크로/시장 컨텍스트 기반 투자 브리프 생성
+- AI·테마·뉴스 리서치 후보 / 오늘의 픽 조회
+- 퀀트 백테스트 / walk-forward / 최적화 / 재검증 워크플로우 운영
+- paper execution 엔진 운용 및 live 전환 전 실행 준비 상태 점검
+- 주문/사이클/계좌/리스크 가드/validation gate 관측
+- 전일 대비 리포트 비교 및 설명 가능한 리포트 API 제공
+- 웹 콘솔 기반 투자 운영 상태 확인
 - 텔레그램 알림 연동
 
 ## Quant Ops 워크플로우
@@ -51,12 +64,12 @@
 ```text
 .
 ├── apps/
-│   ├── api/        # FastAPI backend, report pipeline, scheduler, paper trading
-│   └── web/        # React/Vite console UI
-├── docs/           # 운영 문서, 사용 매뉴얼
+│   ├── api/        # FastAPI backend, research pipeline, validation, execution engine
+│   └── web/        # React/Vite investing console UI
+├── docs/           # 제품/운영 문서, 사용 매뉴얼
 ├── storage/
-│   ├── reports/    # 리포트 결과물, SQLite 캐시
-│   └── logs/       # 엔진 상태/주문/계좌/사이클 로그
+│   ├── reports/    # 투자 브리프 결과물, SQLite 캐시
+│   └── logs/       # 엔진 상태/주문/계좌/사이클/observability 로그
 ├── docker-compose.yml
 └── requirements.txt
 ```
@@ -132,7 +145,7 @@ curl -X POST http://127.0.0.1:8001/api/paper/engine/start \
 - 상세 사용 매뉴얼: [`docs/usage.md`](docs/usage.md)
 - API 문서: [`docs/api.md`](docs/api.md)
 - 웹 UI 사용 매뉴얼: [`docs/ui-manual.md`](docs/ui-manual.md)
-- 사용 매뉴얼 내 포함: 기능 소개 / 실제 스크린샷 / 아키텍처 다이어그램
+- 사용 매뉴얼 내 포함: 기능 소개 / 실제 스크린샷 / 아키텍처 다이어그램 / 리서치→검증→실행 흐름
 - 최근 신뢰도 기준선 문서: [`docs/quant-reliability-baseline-2026-03-31.md`](docs/quant-reliability-baseline-2026-03-31.md)
 
 ## 환경 변수 핵심

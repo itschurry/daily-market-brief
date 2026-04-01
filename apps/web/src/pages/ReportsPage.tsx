@@ -66,15 +66,15 @@ function riskScore(value: string): number {
 }
 
 function tabHeadline(tab: ReportTab): string {
-  if (tab === 'alerts') return '운영알림';
-  if (tab === 'watch-decision') return '관망/관심목표 판단';
-  return '오늘 리포트';
+  if (tab === 'alerts') return '리스크 알림';
+  if (tab === 'watch-decision') return '관심 시나리오';
+  return '투자 브리프';
 }
 
 function tabDescription(tab: ReportTab): string {
-  if (tab === 'alerts') return '지금 조치가 필요한 운영 이슈와 경고를 먼저 모아보는 화면입니다.';
-  if (tab === 'watch-decision') return '신규 진입 태도와 집중 포인트만 짧게 정리한 판단 카드입니다.';
-  return '오늘 시장 판단과 운영 포인트를 빠르게 읽는 브리핑 화면입니다.';
+  if (tab === 'alerts') return '실행 전·실행 중 조치가 필요한 운영 리스크를 먼저 모아보는 화면입니다.';
+  if (tab === 'watch-decision') return '오늘 신규 진입 태도와 추가 리서치할 관심 시나리오만 짧게 정리한 카드입니다.';
+  return '리서치 요약, 검증 결과, 실행 우선순위를 한 번에 읽는 투자 브리프입니다.';
 }
 
 interface ScorecardSignalCandidate {
@@ -155,10 +155,10 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
       <div className="page-section report-hero-card report-decision-hero">
         <div className="report-hero-topline">
           <span className="report-hero-tag">Decision First</span>
-          <span className="report-hero-meta">리포트 생성 {formatDateTime(view.generatedAt)}</span>
+          <span className="report-hero-meta">브리프 생성 {formatDateTime(view.generatedAt)}</span>
         </div>
         <div className="report-decision-title">오늘 결론: {modeLabel}</div>
-        <div className="report-hero-copy">근거보다 실행 순서를 먼저 고정합니다. 지금은 {guardAllowed ? '허용된 진입만 선별 실행' : '신규 진입 중단과 보유 리스크 관리'}이 우선입니다. 이 브리핑은 quant 검증 결과와 AI·테마·뉴스 추천을 함께 읽되, 둘을 교집합으로 묶진 않습니다.</div>
+        <div className="report-hero-copy">시장 요약보다 먼저 연구 → 검증 → 실행 순서를 고정합니다. 지금은 {guardAllowed ? '허용된 진입만 선별 실행' : '신규 진입 중단과 보유 리스크 관리'}이 우선입니다. 이 투자 브리프는 quant 검증 결과와 AI·테마·뉴스 리서치를 함께 읽되, 둘을 교집합으로 묶진 않습니다.</div>
         <div className="report-decision-strip">
           <div className={`report-decision-chip ${guardAllowed ? 'is-good' : 'is-bad'}`}>
             진입 {guardAllowed ? '가능' : '제한'}
@@ -171,11 +171,11 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
       <div className="report-grid-2">
         <div className="page-section report-visual-card">
           <div className="section-title">Mode 01 · 퀀트 검증</div>
-          <div className="section-copy">백테스트/최적화에서 채택 여부를 판단한 전략 점수와 tail risk를 읽는 영역입니다.</div>
+          <div className="section-copy">백테스트/최적화에서 채택 여부를 판단한 전략 점수와 tail risk를 읽는 영역입니다. 실행 전 검증 레이어라고 보면 됩니다.</div>
         </div>
         <div className="page-section report-visual-card">
-          <div className="section-title">Mode 02 · AI/테마/뉴스 추천</div>
-          <div className="section-copy">today picks / recommendations 브리핑을 읽는 영역입니다. downstream 후보는 둘 다 동시에 필요하지 않은 합집합 흐름으로 해석합니다.</div>
+          <div className="section-title">Mode 02 · AI/테마/뉴스 리서치</div>
+          <div className="section-copy">today picks / recommendations 기반 리서치를 읽는 영역입니다. downstream 후보는 둘 다 동시에 필요하지 않은 합집합 흐름으로 해석합니다.</div>
         </div>
       </div>
 
@@ -183,7 +183,7 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
         <>
           <div className="report-grid-3">
             <div className={`page-section report-visual-card ${topScorecard?.decision.tone === 'good' ? 'is-good' : topScorecard?.decision.tone === 'bad' ? 'is-bad' : ''}`}>
-              <div className="report-card-title">허용 quant 후보 평균 점수</div>
+              <div className="report-card-title">실행 가능 quant 후보 평균 점수</div>
               <div className="report-card-value">{averageCompositeScore === null ? '-' : `${formatNumber(averageCompositeScore, 1)}점`}</div>
               <div className="report-card-copy">점수카드가 있는 허용 후보 {formatCount(approvedScorecards.length, '건')} 기준</div>
             </div>
@@ -472,10 +472,10 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
       <div className="page-section report-hero-card report-decision-hero">
         <div className="report-hero-topline">
           <span className="report-hero-tag">Alert First</span>
-          <span className="report-hero-meta">운영 경고 우선 확인</span>
+          <span className="report-hero-meta">실행 리스크 우선 확인</span>
         </div>
         <div className="report-decision-title">지금 조치 필요: {alerts.filter((item) => item.severity >= 2).length}건</div>
-        <div className="report-hero-copy">액션보드 대신 실제 운영에 영향을 주는 경고만 앞으로 모았습니다. 엔진 상태, 진입 차단, stale optimization, 실패 주문, 알림 이상부터 먼저 확인하면 됩니다. 여기서 보는 경고는 quant gate와 AI 추천 downstream 흐름 전체에 걸친 운영 경고입니다.</div>
+        <div className="report-hero-copy">단순 알림판이 아니라 paper/live 실행 전에 이상 징후를 잡는 리스크 보드입니다. 엔진 상태, 진입 차단, stale optimization, 실패 주문, 알림 이상부터 먼저 확인하면 됩니다. 여기서 보는 경고는 quant gate와 AI 추천 downstream 흐름 전체에 걸친 운영 경고입니다.</div>
         <div className="report-decision-strip">
           <div className={`report-decision-chip ${isRunning ? 'is-good' : 'is-bad'}`}>엔진 {isRunning ? '실행 중' : '정지'}</div>
           <div className={`report-decision-chip ${guardBlocked ? 'is-bad' : 'is-good'}`}>진입 {guardBlocked ? '차단' : '허용'}</div>
@@ -576,12 +576,12 @@ function renderWatchDecision(snapshot: ConsoleSnapshot) {
       <div className="page-section report-hero-card">
         <div className="report-hero-topline">
           <span className="report-hero-tag">Watch Decision</span>
-          <span className="report-hero-meta">진입 태도 요약</span>
+          <span className="report-hero-meta">관심 시나리오 요약</span>
         </div>
         <div className="report-hero-title-row">
           <div>
-            <div className="report-hero-title">관망/관심목표 판단</div>
-            <div className="report-hero-copy">오늘 신규 진입 태도와 집중 포인트만 남겨 둔 짧은 판단 화면입니다. quant 검증과 AI·테마·뉴스 추천을 함께 읽지만, 둘을 동시에 만족해야만 후보가 되는 구조는 아닙니다.</div>
+            <div className="report-hero-title">관심 시나리오</div>
+            <div className="report-hero-copy">오늘 신규 진입 태도와 추가 리서치할 집중 포인트만 남겨 둔 짧은 판단 화면입니다. quant 검증과 AI·테마·뉴스 리서치를 함께 읽지만, 둘을 동시에 만족해야만 후보가 되는 구조는 아닙니다.</div>
           </div>
           <div className={`report-mode-chip is-${view.mode === '공격' ? 'good' : view.mode === '관망' ? 'bad' : 'neutral'}`}>
             {view.mode}
@@ -634,7 +634,7 @@ export function ReportsPage({ snapshot, loading, errorMessage, reportTab, onRefr
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <div className="page-section reports-toolbar">
             <div>
-              <div className="section-kicker">Decision Report</div>
+              <div className="section-kicker">Investment Research</div>
               <div className="section-title">{tabHeadline(reportTab)}</div>
               <div className="section-copy">{tabDescription(reportTab)}</div>
             </div>
