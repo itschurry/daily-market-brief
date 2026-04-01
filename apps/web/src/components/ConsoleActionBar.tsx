@@ -74,11 +74,18 @@ export function ConsoleConfirmDialog({
   onCancel,
 }: ConsoleConfirmDialogProps) {
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [dangerChecked, setDangerChecked] = useState(false);
 
   useEffect(() => {
     if (!open || busy) return;
     cancelButtonRef.current?.focus();
   }, [busy, open]);
+
+  useEffect(() => {
+    if (!open) {
+      setDangerChecked(false);
+    }
+  }, [open]);
 
   if (!open) return null;
 
@@ -102,11 +109,20 @@ export function ConsoleConfirmDialog({
               ))}
             </ul>
           )}
+          {tone === 'danger' && (
+            <div className="console-confirm-danger-box">
+              <div className="console-confirm-danger-title">위험 작업 확인</div>
+              <label className="console-confirm-check">
+                <input type="checkbox" checked={dangerChecked} onChange={(event) => setDangerChecked(event.target.checked)} disabled={busy} />
+                <span>영향 범위를 확인했고 되돌리기 어렵다는 점을 이해했습니다.</span>
+              </label>
+            </div>
+          )}
           <div className="console-confirm-actions">
             <button ref={cancelButtonRef} className="ghost-button" onClick={onCancel} disabled={busy}>
               {UI_TEXT.confirm.cancelAction}
             </button>
-            <button className={actionClass(tone)} onClick={onConfirm} disabled={busy}>
+            <button className={actionClass(tone)} onClick={onConfirm} disabled={busy || (tone === 'danger' && !dangerChecked)}>
               {busy ? (
                 <span className="button-content">
                   <span className="button-spinner" aria-hidden="true" />
@@ -184,6 +200,9 @@ export function ConsoleActionBar({
     ['all', ...new Set(logs.map((log) => log.source).filter((source): source is string => Boolean(source)))]
   ), [logs]);
 
+  const safeActions = actions.filter((action) => action.tone !== 'danger');
+  const dangerActions = actions.filter((action) => action.tone === 'danger');
+
   const filteredLogs = useMemo(() => {
     const keyword = searchText.trim().toLowerCase();
     return logs
@@ -248,7 +267,7 @@ export function ConsoleActionBar({
                 {settingsDirty && <span className="inline-badge is-warning">저장 필요</span>}
               </span>
             </button>
-            {actions.map((action) => (
+            {safeActions.map((action) => (
               <button
                 key={action.label}
                 className={actionClass(action.tone)}
@@ -266,6 +285,24 @@ export function ConsoleActionBar({
             ))}
           </div>
         </div>
+
+        {dangerActions.length > 0 && (
+          <div className="console-actionbar-danger-row">
+            <div className="console-actionbar-danger-copy">위험 작업은 실행계·계좌 상태를 직접 바꾸니 아래 빨간 버튼에서만 처리하세요.</div>
+            <div className="console-actionbar-danger-buttons">
+              {dangerActions.map((action) => (
+                <button
+                  key={action.label}
+                  className={actionClass(action.tone)}
+                  onClick={() => openActionConfirm(action)}
+                  disabled={Boolean(action.disabled) || Boolean(action.busy)}
+                >
+                  {renderButtonLabel(action.label, action.busy, action.busyLabel)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="console-status-grid">
           {statusItems.map((item) => (

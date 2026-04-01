@@ -415,6 +415,23 @@ function quantWorkflowCardTitle(status: string | undefined, fallback: string): s
   return label === '대기' ? fallback : `${fallback} · ${label}`;
 }
 
+function quantCandidateStateReasonLabel(reason: string): string {
+  if (reason === 'candidate_missing') return '후보가 아직 없습니다.';
+  if (reason === 'validation_settings_changed') return '현재 baseline 설정이 바뀌어 기존 후보를 그대로 쓰면 안 됩니다.';
+  if (reason === 'optimizer_search_missing') return 'optimizer search 결과가 없습니다.';
+  if (reason === 'optimizer_search_version_changed') return 'latest/search 버전이 달라 다시 재검증해야 합니다.';
+  if (reason === 'saved_candidate_missing') return '저장된 후보가 없어 runtime 적용본과 비교할 기준이 없습니다.';
+  if (reason === 'runtime_candidate_mismatch') return '현재 runtime 적용본이 최신 저장 후보와 다릅니다.';
+  return reason || '-';
+}
+
+function quantRuntimeSourceLabel(source: string | undefined): string {
+  if (source === 'runtime') return 'runtime applied file';
+  if (source === 'search') return 'search result file';
+  if (source === 'missing') return '미적용';
+  return source || '-';
+}
+
 export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefresh }: BacktestValidationPageProps) {
   const { pushToast } = useToast();
   const { entries, push, clear } = useConsoleLogs();
@@ -576,7 +593,9 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   const searchResult = workflowPayload?.search_result || null;
   const searchHandoff = workflowPayload?.search_handoff || null;
   const latestValidatedCandidate = workflowPayload?.latest_candidate || null;
+  const latestCandidateState = workflowPayload?.latest_candidate_state || null;
   const savedValidatedCandidate = workflowPayload?.saved_candidate || null;
+  const savedCandidateState = workflowPayload?.saved_candidate_state || null;
   const symbolCandidates = workflowPayload?.symbol_candidates || [];
   const runtimeApplyState = workflowPayload?.runtime_apply || null;
   const latestCandidateMatchesSearch = Boolean(
@@ -595,6 +614,15 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     ].filter(Boolean);
     return parts.join(' · ');
   }, [searchResult?.context]);
+  const latestCandidateStateReasons = (latestCandidateState?.reasons || []).map((reason) => quantCandidateStateReasonLabel(reason));
+  const savedCandidateStateReasons = (savedCandidateState?.reasons || []).map((reason) => quantCandidateStateReasonLabel(reason));
+  const runtimeApplyReasons = (runtimeApplyState?.reasons || []).map((reason) => quantCandidateStateReasonLabel(reason));
+  const handoffWarnings = [
+    !latestCandidateMatchesSearch && searchResult?.available ? '최신 search 결과와 현재 latest candidate가 아직 연결되지 않았습니다. 재검증 또는 handoff 상태를 먼저 확인하세요.' : '',
+    ...latestCandidateStateReasons,
+    ...savedCandidateStateReasons,
+    ...runtimeApplyReasons,
+  ].filter(Boolean);
   const [selectedSymbol, setSelectedSymbol] = useState('');
   const selectedSymbolWorkflow = useMemo(
     () => symbolCandidates.find((item) => String(item.symbol || '') === selectedSymbol) || symbolCandidates[0] || null,
@@ -774,6 +802,39 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     viewModel.reliability,
     viewModel.tradeCount,
   ]);
+
+  const adoptionDecisionPanel = (
+    <div className={`page-section validation-report-card decision-state-card is-${adoptionDecision.tone}`}>
+      <div className="section-kicker">Adoption Decision</div>
+      <div className="section-head-row">
+        <div>
+          <div className="section-title">퀀트 전략 채택 상태: {adoptionDecision.label}</div>
+          <div className="section-copy">{adoptionDecision.action}</div>
+        </div>
+        <div className={`inline-badge ${adoptionDecision.tone === 'good' ? 'is-success' : adoptionDecision.tone === 'bad' ? 'is-danger' : 'is-warning'}`}>
+          {adoptionDecision.label}
+        </div>
+      </div>
+      <div className="summary-metric-grid">
+        <SummaryMetricCard
+          label="OOS 수익률"
+          value={formatPercent(viewModel.oosReturnPct, 2)}
+          detail={`신뢰도 ${viewModel.reliability || '-'} · 윈도우 ${formatCount(validationResult.summary?.windows, '개')}`}
+          tone={(viewModel.oosReturnPct || 0) >= 0 ? 'good' : 'bad'}
+        />
+        <SummaryMetricCard
+          label="낙폭 / PF"
+          value={`${formatPercent(viewModel.maxDrawdownPct, 2)} / ${formatNumber(viewModel.profitFactor, 2)}`}
+          detail={`거래 ${formatCount(viewModel.tradeCount, '건')} · 승률 ${formatPercent(viewModel.winRatePct, 2)}`}
+        />
+        <SummaryMetricCard
+          label="정책 Gate"
+          value={validationPolicy?.validation_gate_enabled ? '활성' : '비활성'}
+          detail={`min trades ${formatNumber(validationPolicy?.validation_min_trades, 0)} · optimized ${String(optimizedState?.version || '-')}`}
+        />
+      </div>
+    </div>
+  );
 
   const updateRunHistory = useCallback((next: RunHistoryItem[]) => {
     setRunHistory(next);
@@ -1418,6 +1479,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
             settingsSavedAt={validationStore.lastSavedAt}
           />
 
+          {adoptionDecisionPanel}
+
           <div className="validation-report-grid">
             <div className="page-section" style={{ padding: 16 }}>
               <div className="section-kicker">Mode 01</div>
@@ -1453,6 +1516,31 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                     </div>
                   ))}
                 </div>
+
+                <div className="operator-note-grid" style={{ marginTop: 12 }}>
+                  <div className={`operator-note-card ${searchResult?.available ? 'is-good' : ''}`}>
+                    <div className="operator-note-label">현재 Search 결과</div>
+                    <div className="operator-note-copy">버전 {String(searchResult?.version || '-')} · {searchContextLabel || 'optimizer search 결과 대기'}<br />source {String(searchResult?.source || searchResult?.global_overlay_source || '-')}</div>
+                  </div>
+                  <div className={`operator-note-card ${latestCandidateMatchesSearch ? 'is-good' : latestValidatedCandidate ? 'is-bad' : ''}`}>
+                    <div className="operator-note-label">현재 latest candidate</div>
+                    <div className="operator-note-copy">{latestValidatedCandidate?.decision?.label || '재검증 전'} · search {String(latestValidatedCandidate?.search_version || '-')}<br />{latestCandidateMatchesSearch ? '현재 search 버전과 일치합니다.' : latestCandidateStateReasons[0] || '최신 search와 아직 연결되지 않았습니다.'}</div>
+                  </div>
+                  <div className={`operator-note-card ${savedValidatedCandidate?.saved_at ? (savedCandidateStateReasons.length === 0 ? 'is-good' : 'is-bad') : ''}`}>
+                    <div className="operator-note-label">저장 후보 스냅샷</div>
+                    <div className="operator-note-copy">{savedValidatedCandidate?.saved_at ? formatDateTime(savedValidatedCandidate.saved_at) : '아직 없음'}<br />{savedCandidateStateReasons[0] || (savedValidatedCandidate?.saved_at ? 'runtime 반영 전 기준 스냅샷입니다.' : 'Save 단계 전입니다.')}</div>
+                  </div>
+                  <div className={`operator-note-card ${runtimeApplyState?.status === 'applied' && runtimeApplyReasons.length === 0 ? 'is-good' : runtimeApplyReasons.length > 0 ? 'is-bad' : ''}`}>
+                    <div className="operator-note-label">실제 runtime 적용본</div>
+                    <div className="operator-note-copy">{quantRuntimeSourceLabel(runtimeApplyState?.effective_source)} · candidate {String(runtimeApplyState?.candidate_id || '-')}<br />{runtimeApplyReasons[0] || (runtimeApplyState?.applied_at ? `${formatDateTime(runtimeApplyState.applied_at)} 반영` : '아직 runtime apply 전')}</div>
+                  </div>
+                </div>
+
+                {handoffWarnings.length > 0 && (
+                  <div className="inline-warning-card" style={{ marginTop: 12 }}>
+                    {handoffWarnings.slice(0, 3).map((line) => <div key={line}>{line}</div>)}
+                  </div>
+                )}
 
                 <div className="detail-list" style={{ marginTop: 12 }}>
                   <div><strong>실행 순서</strong> 1) Search 2) Revalidate 3) Save 4) Apply</div>
@@ -1549,8 +1637,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   <div className="summary-metric-grid" style={{ marginTop: 12 }}>
                     <SummaryMetricCard label="검색 버전" value={String(searchResult?.version || '-')} detail={searchContextLabel || (searchResult?.optimized_at ? formatDateTime(searchResult.optimized_at) : '아직 탐색 결과가 없습니다.')} tone={searchResult?.available ? 'good' : 'neutral'} />
                     <SummaryMetricCard label="신뢰 후보" value={formatCount(searchResult?.n_reliable, '건')} detail={`medium ${formatCount(searchResult?.n_medium, '건')} · total ${formatCount(searchResult?.n_symbols_optimized, '건')}`} tone={searchResult?.available ? 'good' : 'neutral'} />
-                    <SummaryMetricCard label="global overlay" value={String(searchResult?.global_overlay_source || '-')} detail={searchResult?.is_stale ? '결과가 오래돼서 재탐색 권장' : `파라미터 ${formatCount(searchResult?.param_count, '개')}`} tone={searchResult?.is_stale ? 'bad' : 'neutral'} />
-                    <SummaryMetricCard label="search → candidate" value={searchHandoff?.decision_label || (latestCandidateMatchesSearch ? latestValidatedCandidate?.decision?.label || '완료' : '대기')} detail={searchHandoff?.error ? `handoff 실패: ${searchHandoff.error}` : latestCandidateMatchesSearch ? `같은 search 버전 ${String(latestValidatedCandidate?.search_version || '-')}` : 'latest candidate가 아직 최신 search를 따라오지 않았습니다.'} tone={latestCandidateMatchesSearch ? quantDecisionTone(latestValidatedCandidate?.decision?.status) : searchHandoff?.error ? 'bad' : 'neutral'} />
+                    <SummaryMetricCard label="Optimizer source" value={String(searchResult?.global_overlay_source || '-')} detail={searchResult?.is_stale ? '결과가 오래돼서 재탐색 권장' : `파라미터 ${formatCount(searchResult?.param_count, '개')}`} tone={searchResult?.is_stale ? 'bad' : 'neutral'} />
+                    <SummaryMetricCard label="Latest candidate 연결" value={searchHandoff?.decision_label || (latestCandidateMatchesSearch ? latestValidatedCandidate?.decision?.label || '완료' : '대기')} detail={searchHandoff?.error ? `handoff 실패: ${searchHandoff.error}` : latestCandidateMatchesSearch ? `같은 search 버전 ${String(latestValidatedCandidate?.search_version || '-')}` : 'latest candidate가 아직 최신 search를 따라오지 않았습니다.'} tone={latestCandidateMatchesSearch ? quantDecisionTone(latestValidatedCandidate?.decision?.status) : searchHandoff?.error ? 'bad' : 'neutral'} />
                   </div>
                   <div className="detail-list" style={{ marginTop: 12 }}>
                     {Object.entries((searchResult?.global_params || {}) as Record<string, unknown>).slice(0, 8).map(([key, value]) => (
@@ -1742,9 +1830,9 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                       </div>
                     </div>
                     <div className="summary-metric-grid" style={{ marginTop: 12 }}>
-                      <SummaryMetricCard label="저장 후보" value={savedValidatedCandidate?.saved_at ? formatDateTime(savedValidatedCandidate.saved_at) : '-'} detail={savedValidatedCandidate?.decision?.summary || '저장된 후보가 아직 없습니다.'} tone={savedValidatedCandidate?.saved_at ? 'good' : 'neutral'} />
-                      <SummaryMetricCard label="Runtime source" value={String(runtimeApplyState?.effective_source || '-')} detail={runtimeApplyState?.applied_at ? `반영 ${formatDateTime(runtimeApplyState.applied_at)}` : '아직 runtime apply 전'} tone={runtimeApplyState?.status === 'applied' ? 'good' : 'neutral'} />
-                      <SummaryMetricCard label="Paper Engine" value={String(runtimeApplyState?.engine_state || snapshot.engine.execution?.state?.engine_state || '-')} detail={runtimeApplyState?.next_run_at ? `다음 실행 ${formatDateTime(runtimeApplyState.next_run_at)}` : '다음 cycle부터 현재 config 사용'} tone={runtimeApplyState?.status === 'applied' ? 'good' : 'neutral'} />
+                      <SummaryMetricCard label="저장 후보 스냅샷" value={savedValidatedCandidate?.saved_at ? formatDateTime(savedValidatedCandidate.saved_at) : '-'} detail={savedCandidateStateReasons[0] || savedValidatedCandidate?.decision?.summary || '저장된 후보가 아직 없습니다.'} tone={savedValidatedCandidate?.saved_at ? 'good' : 'neutral'} />
+                      <SummaryMetricCard label="현재 runtime source" value={quantRuntimeSourceLabel(runtimeApplyState?.effective_source)} detail={runtimeApplyReasons[0] || (runtimeApplyState?.applied_at ? `반영 ${formatDateTime(runtimeApplyState.applied_at)}` : '아직 runtime apply 전')} tone={runtimeApplyState?.status === 'applied' && runtimeApplyReasons.length === 0 ? 'good' : runtimeApplyReasons.length > 0 ? 'bad' : 'neutral'} />
+                      <SummaryMetricCard label="적용 candidate" value={String(runtimeApplyState?.candidate_id || '-')} detail={runtimeApplyState?.next_run_at ? `다음 실행 ${formatDateTime(runtimeApplyState.next_run_at)}` : '다음 cycle부터 현재 config 사용'} tone={runtimeApplyState?.status === 'applied' ? 'good' : 'neutral'} />
                     </div>
                     <div className="detail-list" style={{ marginTop: 12 }}>
                       {(savedValidatedCandidate?.patch_lines || []).slice(0, 6).map((line) => <div key={`saved-${line}`}>{line}</div>)}
@@ -1753,37 +1841,6 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   </div>
                 </div>
               )}
-
-              <div className={`page-section validation-report-card decision-state-card is-${adoptionDecision.tone}`}>
-                <div className="section-kicker">Adoption Decision</div>
-                <div className="section-head-row">
-                  <div>
-                    <div className="section-title">퀀트 전략 채택 상태: {adoptionDecision.label}</div>
-                    <div className="section-copy">{adoptionDecision.action}</div>
-                  </div>
-                  <div className={`inline-badge ${adoptionDecision.tone === 'good' ? 'is-success' : adoptionDecision.tone === 'bad' ? 'is-danger' : 'is-warning'}`}>
-                    {adoptionDecision.label}
-                  </div>
-                </div>
-                <div className="summary-metric-grid">
-                  <SummaryMetricCard
-                    label="OOS 수익률"
-                    value={formatPercent(viewModel.oosReturnPct, 2)}
-                    detail={`신뢰도 ${viewModel.reliability || '-'} · 윈도우 ${formatCount(validationResult.summary?.windows, '개')}`}
-                    tone={(viewModel.oosReturnPct || 0) >= 0 ? 'good' : 'bad'}
-                  />
-                  <SummaryMetricCard
-                    label="낙폭 / PF"
-                    value={`${formatPercent(viewModel.maxDrawdownPct, 2)} / ${formatNumber(viewModel.profitFactor, 2)}`}
-                    detail={`거래 ${formatCount(viewModel.tradeCount, '건')} · 승률 ${formatPercent(viewModel.winRatePct, 2)}`}
-                  />
-                  <SummaryMetricCard
-                    label="정책 Gate"
-                    value={validationPolicy?.validation_gate_enabled ? '활성' : '비활성'}
-                    detail={`min trades ${formatNumber(validationPolicy?.validation_min_trades, 0)} · optimized ${String(optimizedState?.version || '-')}`}
-                  />
-                </div>
-              </div>
 
               <div className="page-section" style={{ padding: 16 }}>
                 <div className="section-head-row">

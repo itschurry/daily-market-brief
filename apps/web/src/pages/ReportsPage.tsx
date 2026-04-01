@@ -393,6 +393,8 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
   const allowedSignals = Number(allocator.entry_allowed_count || 0);
   const blockedSignals = Number(allocator.blocked_count || 0);
   const failedOrders = Number(engineState.today_order_counts?.failed || 0);
+  const orderFailureSummary = engineState.order_failure_summary || {};
+  const repeatedCashRetries = orderFailureSummary.repeated_insufficient_cash || [];
   const skippedCount = Number((engineState.last_summary as { skipped_count?: number } | undefined)?.skipped_count || 0);
   const isRunning = Boolean(engineState.running);
   const isPaused = engineState.engine_state === 'paused';
@@ -425,16 +427,18 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
       label: '최적화 파라미터',
       value: staleOptimized ? 'stale' : '정상',
       detail: staleOptimized
-        ? `버전 ${String(engineState.optimized_params?.version || '-')} · 최신 최적화 재실행 권장`
-        : `버전 ${String(engineState.optimized_params?.version || '-')} · ${formatDateTime(engineState.optimized_params?.optimized_at || '')}`,
+        ? `버전 ${String(engineState.optimized_params?.version || '-')} · source ${String(engineState.optimized_params?.effective_source || engineState.optimized_params?.source || '-')} · 최신 최적화 재실행 권장`
+        : `버전 ${String(engineState.optimized_params?.version || '-')} · source ${String(engineState.optimized_params?.effective_source || engineState.optimized_params?.source || '-')} · ${formatDateTime(engineState.optimized_params?.optimized_at || '')}`,
       severity: staleOptimized ? 2 : -1,
     },
     {
       key: 'orders',
       label: '실패/스킵',
       value: `${formatCount(failedOrders, '건')} / ${formatCount(skippedCount, '건')}`,
-      detail: `실패 주문 ${formatCount(failedOrders, '건')} · 최근 스킵 ${formatCount(skippedCount, '건')}`,
-      severity: failedOrders > 0 || skippedCount >= 3 ? 2 : 0,
+      detail: repeatedCashRetries.length > 0
+        ? `실패 주문 ${formatCount(failedOrders, '건')} · 현금 부족 반복 ${formatCount(repeatedCashRetries.length, '종목')}`
+        : `실패 주문 ${formatCount(failedOrders, '건')} · 최근 스킵 ${formatCount(skippedCount, '건')}`,
+      severity: failedOrders > 0 || skippedCount >= 3 || repeatedCashRetries.length > 0 ? 2 : 0,
     },
     {
       key: 'validation',
@@ -460,6 +464,7 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
     !isRunning ? '엔진이 멈춰 있으면 모의투자 화면에서 상태를 확인하고 시작 여부를 결정하세요.' : '',
     guardBlocked ? '리스크 가드 차단 사유를 먼저 해소하거나 오늘은 신규 진입 없이 운영하세요.' : '',
     staleOptimized ? '최적화 파라미터가 stale 상태면 검증 화면에서 최적화를 다시 돌리는 편이 안전합니다.' : '',
+    repeatedCashRetries.length > 0 ? '같은 종목에서 현금 부족 실패가 반복되면 자동 재시도보다 수량/예산 조정이 먼저입니다.' : '',
     failedOrders > 0 ? '실패 주문이 있으면 최근 체결 내역과 엔진 이벤트 로그를 먼저 확인하세요.' : '',
     notifications.enabled && !notificationConfigured ? '텔레그램 알림이 미완료 상태라면 운영 전에 채널 설정부터 맞추는 게 좋습니다.' : '',
   ].filter(Boolean);

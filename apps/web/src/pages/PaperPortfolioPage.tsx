@@ -5,7 +5,7 @@ import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import { usePaperTrading } from '../hooks/usePaperTrading';
 import { useToast } from '../hooks/useToast';
 import type { ActionBarStatusItem, ConsoleSnapshot, PaperViewModel } from '../types/consoleView';
-import { formatCount, formatDateTime, formatKRW, formatNumber, formatPercent, formatSymbol, formatUSD } from '../utils/format';
+import { explainOrderFailureReason, formatCount, formatDateTime, formatKRW, formatNumber, formatPercent, formatSymbol, formatUSD } from '../utils/format';
 
 interface PaperPortfolioPageProps {
   snapshot: ConsoleSnapshot;
@@ -109,6 +109,15 @@ function engineStateLabel(raw: string | undefined, running: boolean): string {
   if (state === 'paused') return UI_TEXT.status.paused;
   if (state === 'error') return UI_TEXT.status.error;
   return UI_TEXT.status.stopped;
+}
+
+function paperSkipReasonLabel(reason: string): string {
+  if (reason === 'account_unavailable') return '계좌 스냅샷 없음 · sizing 계산 불가';
+  if (reason === 'size_zero') return '권장 수량 0주';
+  if (reason === 'exposure_or_cash_limit') return '현금/노출 한도로 권장 수량 0주';
+  if (reason === 'daily_buy_limit_reached') return '일일 매수 한도 도달';
+  if (reason === 'symbol_daily_limit_reached') return '종목별 주문 한도 도달';
+  return explainOrderFailureReason(reason);
 }
 
 export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh }: PaperPortfolioPageProps) {
@@ -486,8 +495,11 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
   const stopLossPctDefault = toNumber(engineState.config?.stop_loss_pct, NaN);
   const takeProfitPctDefault = toNumber(engineState.config?.take_profit_pct, NaN);
   const skipReasonCounts = engineState.last_summary?.skip_reason_counts || {};
+  const orderFailureSummary = engineState.order_failure_summary || {};
+  const repeatedCashRetries = orderFailureSummary.repeated_insufficient_cash || [];
   const entryAllowed = Boolean(snapshot.portfolio.risk_guard_state?.entry_allowed);
   const todayFailCount = Number(engineState.today_order_counts?.failed || 0);
+  const todayInsufficientCashFailCount = Number(orderFailureSummary.insufficient_cash_failed || 0);
   const trustScore = useMemo(() => {
     let score = 100;
     if (!engineState.running) score -= 25;
@@ -600,6 +612,17 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
             </div>
             <div className="report-decision-title">운용 우선순위: {riskyPositions.length > 0 || todayFailCount > 0 ? '리스크 정리 먼저' : '정상 운영 지속'}</div>
             <div className="report-hero-copy">리서치가 끝난 후보를 paper 계좌에 태우기 전에 위험 포지션, 오늘 체결/실패, 엔진 신뢰도, 신규 진입 허용 여부를 먼저 확인하는 실행 관제 화면입니다. 실행 후보는 today picks 우선·recommendations fallback 합집합 흐름이며, quant validation gate는 별도로 얹힙니다.</div>
+            {repeatedCashRetries.length > 0 && (
+              <div className="inline-warning-card" style={{ marginTop: 12 }}>
+                <div><strong>반복 현금 부족 실패 감지</strong></div>
+                <div>오늘 현금 부족 실패 {formatCount(todayInsufficientCashFailCount, '건')} · 같은 종목 재시도 {formatCount(repeatedCashRetries.length, '건')}</div>
+                {repeatedCashRetries.slice(0, 3).map((item) => (
+                  <div key={`${item.market || '-'}:${item.code || '-'}`}>
+                    {formatSymbol(String(item.code || ''), '')} {String(item.market || '-')} · {formatCount(item.count, '회')} · 마지막 {formatDateTime(String(item.last_at || ''))}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="validation-decision-grid">
               <div className={`summary-metric-card ${riskyPositions.length > 0 ? 'is-bad' : 'is-good'}`}>
                 <div className="summary-metric-label">위험 포지션</div>
@@ -607,9 +630,9 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                 <div className="summary-metric-detail">손실 심화 또는 장기 보유 포지션 수</div>
               </div>
               <div className={`summary-metric-card ${todayFailCount > 0 ? 'is-bad' : 'is-good'}`}>
-                <div className="summary-metric-label">오늘 주문</div>
+                <div className="summary-metric-label">오늘 체결 / 실패</div>
                 <div className="summary-metric-value">{todayBuyCount} / {todaySellCount} / {todayFailCount}</div>
-                <div className="summary-metric-detail">매수 / 매도 / 실패</div>
+                <div className="summary-metric-detail">매수 체결 / 매도 체결 / 실패 주문</div>
               </div>
               <div className={`summary-metric-card ${trustTone === 'good' ? 'is-good' : trustTone === 'bad' ? 'is-bad' : ''}`}>
                 <div className="summary-metric-label">엔진 신뢰도</div>
@@ -649,9 +672,10 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
             <div className="page-section" style={{ padding: 16 }}>
               <div className="section-title">오늘 실행 결과</div>
               <div className="detail-list">
-                <div>오늘 체결: {formatNumber(todayOrders.length, 0)}건</div>
+                <div>오늘 체결 합계: {formatNumber(todayOrders.length, 0)}건</div>
                 <div>매수 체결: {formatCount(todayBuyCount, '건')}</div>
                 <div>매도 체결: {formatCount(todaySellCount, '건')}</div>
+                <div>실패 주문: {formatCount(todayFailCount, '건')}</div>
                 <div>순증가 포지션: {formatCount(todayBuyCount - todaySellCount, '건')}</div>
               </div>
             </div>
@@ -751,7 +775,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                 <div>
                   최근 실행 요약: 매수 {formatNumber(engineState.last_summary?.executed_buy_count, 0)}건 / 매도 {formatNumber(engineState.last_summary?.executed_sell_count, 0)}건
                 </div>
-                <div>today 주문(B/S/F): {formatNumber(engineState.today_order_counts?.buy, 0)} / {formatNumber(engineState.today_order_counts?.sell, 0)} / {formatNumber(engineState.today_order_counts?.failed, 0)}</div>
+                <div>today 체결(B/S) / 실패: {formatNumber(engineState.today_order_counts?.buy, 0)} / {formatNumber(engineState.today_order_counts?.sell, 0)} / {formatNumber(engineState.today_order_counts?.failed, 0)}</div>
                 <div>today 실현손익: {formatKRW(engineState.today_realized_pnl, true)}</div>
                 <div>validation gate: {engineState.validation_policy?.validation_gate_enabled ? '활성' : '비활성'}</div>
               </div>
@@ -760,9 +784,10 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
             <div className="page-section" style={{ padding: 16 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>오늘 포지션 변화 요약</div>
               <div style={{ marginTop: 10, display: 'grid', gap: 6, fontSize: 12, color: 'var(--text-3)' }}>
-                <div>오늘 체결: {formatNumber(todayOrders.length, 0)}건</div>
+                <div>오늘 체결 합계: {formatNumber(todayOrders.length, 0)}건</div>
                 <div>매수 체결: {formatCount(todayBuyCount, '건')}</div>
                 <div>매도 체결: {formatCount(todaySellCount, '건')}</div>
+                <div>실패 주문: {formatCount(todayFailCount, '건')}</div>
                 <div>순증가 포지션: {formatCount(todayBuyCount - todaySellCount, '건')}</div>
               </div>
             </div>
@@ -798,7 +823,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                       수량 {formatCount(item.quantity, '주')} · 체결가 {formatNumber(item.filled_price_local, 2)} · {formatDateTime(item.timestamp || item.ts)}
                     </div>
                     {!isSuccess && (
-                      <div style={{ marginTop: 4, color: 'var(--down)' }}>실패 사유: {item.failure_reason || '-'}</div>
+                      <div style={{ marginTop: 4, color: 'var(--down)' }}>실패 사유: {explainOrderFailureReason(item.failure_reason)}</div>
                     )}
                   </div>
                 );})}
@@ -811,7 +836,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
               <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
                 {Object.entries(skipReasonCounts).slice(0, 6).map(([reason, count]) => (
                   <div key={reason} style={{ fontSize: 12, color: 'var(--text-3)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 10px' }}>
-                    {reason}: {formatCount(count, '건')}
+                    {paperSkipReasonLabel(reason)}: {formatCount(count, '건')}
                   </div>
                 ))}
                 {cycles.slice(0, 4).map((cycle, idx) => {

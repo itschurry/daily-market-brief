@@ -607,6 +607,22 @@ export interface PaperEngineState {
     sell?: number;
     failed?: number;
   };
+  order_failure_summary?: {
+    today_failed?: number;
+    insufficient_cash_failed?: number;
+    repeated_insufficient_cash?: Array<{
+      market?: string;
+      code?: string;
+      count?: number;
+      last_at?: string;
+      reason?: string;
+    }>;
+    top_reason?: string;
+    top_reason_count?: number;
+    latest_failure_reason?: string;
+    latest_failure_at?: string;
+    cooldown_recommended?: boolean;
+  };
   today_realized_pnl?: number;
   current_equity?: number;
   validation_policy?: {
@@ -621,6 +637,7 @@ export interface PaperEngineState {
     optimized_at?: string;
     is_stale?: boolean;
     source?: string;
+    effective_source?: string;
   };
   last_summary?: {
     cycle_id?: string;

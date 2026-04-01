@@ -65,6 +65,11 @@ export interface SizeRecommendation {
   quantity?: number;
   reason?: string;
   risk_budget_krw?: number;
+  qty_by_risk?: number;
+  qty_by_cash?: number;
+  qty_by_caps?: number;
+  unit_price_krw?: number;
+  stop_distance_krw?: number;
 }
 
 export interface DomainSignal {
@@ -138,6 +143,22 @@ export interface EngineStatusResponse {
         sell?: number;
         failed?: number;
       };
+      order_failure_summary?: {
+        today_failed?: number;
+        insufficient_cash_failed?: number;
+        repeated_insufficient_cash?: Array<{
+          market?: string;
+          code?: string;
+          count?: number;
+          last_at?: string;
+          reason?: string;
+        }>;
+        top_reason?: string;
+        top_reason_count?: number;
+        latest_failure_reason?: string;
+        latest_failure_at?: string;
+        cooldown_recommended?: boolean;
+      };
       today_realized_pnl?: number;
       current_equity?: number;
       validation_policy?: {
@@ -151,6 +172,8 @@ export interface EngineStatusResponse {
         version?: string;
         optimized_at?: string;
         is_stale?: boolean;
+        source?: string;
+        effective_source?: string;
       };
       last_summary?: Record<string, unknown>;
     };
@@ -468,9 +491,20 @@ export interface QuantOpsCandidatePayload {
   save_note?: string;
 }
 
+export interface QuantOpsCandidateStatePayload {
+  status?: string;
+  active?: boolean;
+  reasons?: string[];
+  candidate_id?: string;
+  search_version?: string;
+  baseline_matches?: boolean;
+}
+
 export interface QuantOpsRuntimeApplyPayload {
   available?: boolean;
   status?: string;
+  active?: boolean;
+  reasons?: string[];
   candidate_id?: string;
   applied_at?: string;
   applied_symbol_count?: number;
@@ -531,7 +565,9 @@ export interface QuantOpsWorkflowResponse {
     settings?: Record<string, unknown>;
   };
   latest_candidate?: QuantOpsCandidatePayload;
+  latest_candidate_state?: QuantOpsCandidateStatePayload;
   saved_candidate?: QuantOpsCandidatePayload;
+  saved_candidate_state?: QuantOpsCandidateStatePayload;
   symbol_candidates?: QuantOpsSymbolWorkflowItemPayload[];
   symbol_summary?: {
     search_count?: number;

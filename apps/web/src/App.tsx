@@ -103,6 +103,9 @@ export default function App() {
   const validationSettings = useValidationSettingsStore();
   const activeConsoleTab = CONSOLE_TABS.find((tab) => tab.id === route.consoleTab);
   const activeReportTab = REPORT_TABS.find((tab) => tab.id === route.reportTab);
+  const notifications = snapshot.notifications || {};
+  const alertingDisabled = !notifications.enabled;
+  const alertingUnconfigured = Boolean(notifications.enabled) && !(notifications.configured && notifications.chat_id_configured);
   const activeLabel = route.section === 'console'
     ? activeConsoleTab?.label || UI_TEXT.consoleTabs.overview
     : activeReportTab?.label || UI_TEXT.reportTabs.todayReport;
@@ -173,8 +176,22 @@ export default function App() {
             {route.section === 'console' && validationSettings.unsaved && (
               <span className="app-chrome-pill is-warning">Validation draft</span>
             )}
+            {(alertingDisabled || alertingUnconfigured) && (
+              <span className="app-chrome-pill is-warning">Alerting check</span>
+            )}
           </div>
         </div>
+
+        {(alertingDisabled || alertingUnconfigured) && (
+          <div className="app-alert-banner" role="alert">
+            <strong>{alertingDisabled ? '알림 발송이 꺼져 있음' : '알림 채널 설정 미완료'}</strong>
+            <span>
+              {alertingDisabled
+                ? '텔레그램/운영 알림이 비활성이라 실패 주문·엔진 이상을 놓칠 수 있습니다. Reports → 리스크 알림에서 바로 확인하세요.'
+                : '채널은 켜져 있지만 chat_id 또는 연결 설정이 끝나지 않았습니다. Reports → 리스크 알림에서 연결 상태를 마무리하세요.'}
+            </span>
+          </div>
+        )}
 
         <div className="tab-shell">
           <div className="tab-shell-row">
@@ -230,10 +247,6 @@ export default function App() {
                 </button>
               ))}
             </div>
-          </div>
-          <div className="tab-shell-caption">
-            <span className="tab-shell-caption-title">{SECTION_BADGE[route.section]}</span>
-            <span className="tab-shell-caption-copy">{SECTION_COPY[route.section]}</span>
           </div>
         </div>
       </div>

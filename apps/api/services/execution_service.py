@@ -133,6 +133,69 @@ def _today_order_counts(account: dict) -> dict[str, int]:
     return counts
 
 
+def _order_failure_summary() -> dict[str, Any]:
+    today = _today_kst_str()
+    failures = [
+        item for item in read_order_events(limit=300)
+        if str(item.get("timestamp") or "").startswith(today) and not bool(item.get("success"))
+    ]
+    if not failures:
+        return {
+            "today_failed": 0,
+            "insufficient_cash_failed": 0,
+            "repeated_insufficient_cash": [],
+            "top_reason": "",
+            "top_reason_count": 0,
+            "latest_failure_reason": "",
+            "latest_failure_at": "",
+            "cooldown_recommended": False,
+        }
+
+    reason_counts: dict[str, int] = {}
+    insufficient_symbol_counts: dict[str, dict[str, Any]] = {}
+    insufficient_cash_failed = 0
+
+    for item in failures:
+        reason = str(item.get("failure_reason") or "order_failed").strip() or "order_failed"
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        if "현금이 부족" not in reason:
+            continue
+        insufficient_cash_failed += 1
+        market = str(item.get("market") or "").upper()
+        code = str(item.get("code") or "").upper()
+        key = f"{market}:{code}"
+        bucket = insufficient_symbol_counts.get(key) or {
+            "market": market,
+            "code": code,
+            "count": 0,
+            "last_at": "",
+            "reason": reason,
+        }
+        bucket["count"] = int(bucket.get("count") or 0) + 1
+        bucket["last_at"] = str(item.get("timestamp") or bucket.get("last_at") or "")
+        bucket["reason"] = reason
+        insufficient_symbol_counts[key] = bucket
+
+    latest_failure = failures[0]
+    top_reason, top_reason_count = max(reason_counts.items(), key=lambda entry: entry[1])
+    repeated_insufficient_cash = sorted(
+        [item for item in insufficient_symbol_counts.values() if int(item.get("count") or 0) >= 2],
+        key=lambda item: int(item.get("count") or 0),
+        reverse=True,
+    )[:5]
+
+    return {
+        "today_failed": len(failures),
+        "insufficient_cash_failed": insufficient_cash_failed,
+        "repeated_insufficient_cash": repeated_insufficient_cash,
+        "top_reason": top_reason,
+        "top_reason_count": top_reason_count,
+        "latest_failure_reason": str(latest_failure.get("failure_reason") or ""),
+        "latest_failure_at": str(latest_failure.get("timestamp") or ""),
+        "cooldown_recommended": len(repeated_insufficient_cash) > 0,
+    }
+
+
 def _today_realized_pnl(account: dict) -> float:
     today = _today_kst_str()
     realized = 0.0
@@ -249,6 +312,7 @@ def _build_status_payload(state: dict[str, Any], account: dict[str, Any]) -> dic
     payload_state["running"] = running
     payload_state["config"] = dict(state.get("current_config") or {})
     payload_state["today_order_counts"] = today_counts
+    payload_state["order_failure_summary"] = _order_failure_summary()
     payload_state["today_realized_pnl"] = _today_realized_pnl(account)
     payload_state["current_equity"] = round(_to_float(account.get("equity_krw"), 0.0), 2)
     return {

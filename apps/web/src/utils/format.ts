@@ -1,5 +1,6 @@
 import { UI_TEXT } from '../constants/uiText';
 import { COMPANY_CATALOG } from '../data/companyCatalog';
+import type { SizeRecommendation } from '../types/domain';
 
 const KRW_DECIMAL_FMT = new Intl.NumberFormat('ko-KR', {
   minimumFractionDigits: 0,
@@ -91,4 +92,40 @@ export function formatSymbol(code?: string, name?: string): string {
   if (normalizedCode) return normalizedCode;
   if (resolvedName) return resolvedName;
   return '-';
+}
+
+export function explainOrderFailureReason(reason: string | null | undefined): string {
+  const normalized = String(reason || '').trim();
+  if (!normalized) return '-';
+  if (normalized === 'quote_stale') return '시세가 오래돼 주문을 막았습니다.';
+  if (normalized === 'liquidity_guard_blocked') return '유동성 가드가 주문을 차단했습니다.';
+  if (normalized === 'buy_failed') return '매수 주문 처리에 실패했습니다.';
+  if (normalized === 'sell_failed') return '매도 주문 처리에 실패했습니다.';
+  if (normalized.includes('현금이 부족')) return `${normalized} · 동일 조건 반복 시 자동 재시도보다 수량/예산 조정이 먼저입니다.`;
+  return normalized;
+}
+
+export function explainSizeRecommendation(sizeRecommendation: SizeRecommendation | null | undefined): string {
+  if (!sizeRecommendation) return '-';
+  const quantity = Number(sizeRecommendation.quantity || 0);
+  if (quantity > 0) {
+    const parts = [formatCount(quantity, '주')];
+    if (Number.isFinite(Number(sizeRecommendation.risk_budget_krw))) {
+      parts.push(`리스크 예산 ${formatKRW(Number(sizeRecommendation.risk_budget_krw), true)}`);
+    }
+    return parts.join(' · ');
+  }
+
+  const reason = String(sizeRecommendation.reason || '').trim();
+  if (reason === 'account_unavailable') return '계좌 스냅샷이 없어 수량 계산을 못했습니다.';
+  if (reason === 'invalid_unit_price') return '현재가가 유효하지 않아 수량 계산을 중단했습니다.';
+  if (reason === 'exposure_or_cash_limit') {
+    const blockers: string[] = [];
+    if (Number(sizeRecommendation.qty_by_cash ?? -1) === 0) blockers.push('현금 기준 0주');
+    if (Number(sizeRecommendation.qty_by_caps ?? -1) === 0) blockers.push('노출 한도 기준 0주');
+    if (Number(sizeRecommendation.qty_by_risk ?? -1) === 0) blockers.push('리스크 예산 기준 0주');
+    return blockers.length > 0 ? blockers.join(' · ') : '현금 또는 노출 한도 때문에 0주입니다.';
+  }
+  if (reason === 'size_zero') return '권장 수량이 0주로 계산됐습니다.';
+  return reason || '권장 수량을 계산하지 못했습니다.';
 }

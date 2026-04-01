@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { strategyTypeToKorean, UI_TEXT } from '../constants/uiText';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
-import { formatCount, formatNumber, formatPercent, formatSymbol } from '../utils/format';
+import { explainSizeRecommendation, formatNumber, formatPercent, formatSymbol } from '../utils/format';
 import type { ConsoleSnapshot } from '../types/consoleView';
 import { reasonCodeToKorean, reliabilityToKorean } from '../constants/uiText';
 
@@ -92,7 +92,7 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
                   const ev = signal.ev_metrics?.expected_value;
                   const winProbability = signal.ev_metrics?.win_probability;
                   const size = signal.size_recommendation?.quantity ?? 0;
-                  const sizeReason = signal.size_recommendation?.reason || '-';
+                  const sizeSummary = explainSizeRecommendation(signal.size_recommendation);
                   const reliability = reliabilityToKorean(String(signal.ev_metrics?.reliability || ''));
                   const liquidity = signal.execution_realism?.liquidity_gate_status || '-';
                   const slippage = signal.execution_realism?.slippage_bps;
@@ -112,7 +112,7 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
                         {blocked ? UI_TEXT.status.blocked : UI_TEXT.status.allowed}
                       </td>
                       <td style={{ padding: 12, fontSize: 12 }}>
-                        {size > 0 ? formatCount(size, '주') : `0주 (${sizeReason})`}
+                        {size > 0 ? sizeSummary : `0주 (${sizeSummary})`}
                       </td>
                       <td style={{ padding: 12, fontSize: 12 }}>{reliability || '-'}</td>
                       <td style={{ padding: 12, fontSize: 12 }}>
