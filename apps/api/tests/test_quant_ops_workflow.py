@@ -41,6 +41,7 @@ def _adopt_diagnostics() -> dict:
                     "profit_factor": 1.26,
                     "max_drawdown_pct": -12.4,
                     "trade_count": 18,
+                    "sharpe": 0.93,
                     "win_rate_pct": 56.0,
                     "strategy_scorecard": {
                         "composite_score": 32.0,
@@ -55,7 +56,19 @@ def _adopt_diagnostics() -> dict:
                 "windows": 6,
                 "positive_window_ratio": 0.67,
                 "oos_reliability": "high",
-                "reliability_diagnostic": {"target_reached": True},
+                "reliability_diagnostic": {
+                    "target_reached": True,
+                    "current": {
+                        "label": "high",
+                        "reason": "validated_candidate",
+                        "trade_count": 18,
+                        "validation_signals": 18,
+                        "validation_sharpe": 0.93,
+                        "max_drawdown_pct": -12.4,
+                        "passes_minimum_gate": True,
+                        "is_reliable": True,
+                    },
+                },
             },
             "scorecard": {
                 "composite_score": 32.0,
@@ -431,6 +444,9 @@ class QuantOpsWorkflowTests(unittest.TestCase):
         self.assertTrue(self.runtime_store["payload"])
         self.assertEqual("validated_candidate", self.runtime_store["payload"]["meta"]["global_overlay_source"])
         self.assertEqual(save_result["candidate"]["id"], self.runtime_store["payload"]["meta"]["applied_candidate_id"])
+        self.assertEqual("validated_candidate", self.runtime_store["payload"]["meta"]["validation_baseline_source"])
+        self.assertEqual(18, self.runtime_store["payload"]["validation_baseline"]["validation_trades"])
+        self.assertAlmostEqual(0.93, self.runtime_store["payload"]["validation_baseline"]["validation_sharpe"])
 
     def test_symbol_candidate_requires_approval_then_saved_and_applied(self):
         execution_stub = types.ModuleType("services.execution_service")

@@ -30,6 +30,19 @@ def _load_optimized_params() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _resolve_validation_payload(optimized_params: dict[str, Any], code: str) -> tuple[dict[str, Any], str]:
+    if not isinstance(optimized_params, dict):
+        return {}, "none"
+    per_symbol = optimized_params.get("per_symbol", {}) if isinstance(optimized_params.get("per_symbol"), dict) else {}
+    symbol_payload = per_symbol.get(code, {}) if isinstance(per_symbol.get(code), dict) else {}
+    if symbol_payload:
+        return symbol_payload, "symbol"
+    global_baseline = optimized_params.get("validation_baseline")
+    if isinstance(global_baseline, dict):
+        return global_baseline, "global"
+    return {}, "none"
+
+
 def _context_snapshot() -> tuple[str, str]:
     payload = _get_market_context()
     context = payload.get("context") if isinstance(payload, dict) else {}
@@ -120,7 +133,6 @@ def build_signal_book(
 
     regime, risk_level = _context_snapshot()
     optimized_params = _load_optimized_params()
-    per_symbol = optimized_params.get("per_symbol", {}) if isinstance(optimized_params, dict) else {}
 
     risk_guard_state = build_risk_guard_state(
         account=account or {"positions": [], "orders": [], "equity_krw": 0.0},
@@ -151,10 +163,10 @@ def build_signal_book(
                 sector=sector,
             )
 
-            validation_payload = per_symbol.get(code, {}) if isinstance(per_symbol, dict) else {}
-            validation_trades = int(validation_payload.get("validation_trades") or 0)
+            validation_payload, validation_source = _resolve_validation_payload(optimized_params, code)
+            trade_count = int(validation_payload.get("trade_count") or validation_payload.get("validation_trades") or 0)
+            validation_trades = int(validation_payload.get("validation_trades") or trade_count or 0)
             validation_sharpe = _to_float(validation_payload.get("validation_sharpe"), 0.0)
-            trade_count = int(validation_payload.get("trade_count") or 0)
             max_drawdown_pct = validation_payload.get("max_drawdown_pct")
 
             ev = compute_ev_metrics(
@@ -263,7 +275,11 @@ def build_signal_book(
                     "validation_trades": validation_trades,
                     "validation_sharpe": validation_sharpe,
                     "max_drawdown_pct": _to_float(max_drawdown_pct, 0.0) if max_drawdown_pct is not None else None,
-                    "strategy_reliability": ev.get("reliability"),
+                    "strategy_reliability": validation_payload.get("strategy_reliability") or ev.get("reliability"),
+                    "reliability_reason": validation_payload.get("reliability_reason"),
+                    "passes_minimum_gate": validation_payload.get("passes_minimum_gate"),
+                    "is_reliable": validation_payload.get("is_reliable"),
+                    "validation_source": validation_source,
                     "reliability_detail": ev.get("reliability_detail", {}),
                     "composite_score": validation_payload.get("composite_score"),
                     "score_components": validation_payload.get("score_components") if isinstance(validation_payload.get("score_components"), dict) else {},

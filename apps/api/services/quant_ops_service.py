@@ -1279,6 +1279,53 @@ def save_symbol_candidate(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _global_runtime_validation_baseline(candidate: dict[str, Any]) -> dict[str, Any]:
+    validation = candidate.get("validation") if isinstance(candidate.get("validation"), dict) else {}
+    segments = validation.get("segments") if isinstance(validation.get("segments"), dict) else {}
+    summary = validation.get("summary") if isinstance(validation.get("summary"), dict) else {}
+    oos = segments.get("oos") if isinstance(segments.get("oos"), dict) else {}
+    reliability_diagnostic = summary.get("reliability_diagnostic") if isinstance(summary.get("reliability_diagnostic"), dict) else {}
+    current = reliability_diagnostic.get("current") if isinstance(reliability_diagnostic.get("current"), dict) else {}
+    metrics = candidate.get("metrics") if isinstance(candidate.get("metrics"), dict) else {}
+    scorecard = validation.get("scorecard") if isinstance(validation.get("scorecard"), dict) else {}
+
+    passes_minimum_gate = current.get("passes_minimum_gate")
+    if passes_minimum_gate is None:
+        passes_minimum_gate = reliability_diagnostic.get("target_reached")
+    if passes_minimum_gate is None:
+        passes_minimum_gate = metrics.get("reliability_target_reached")
+
+    is_reliable = current.get("is_reliable")
+    if is_reliable is None:
+        is_reliable = str(metrics.get("reliability") or summary.get("oos_reliability") or "") == "high"
+
+    trade_count = _to_int(current.get("trade_count"), _to_int(metrics.get("trade_count"), _to_int(oos.get("trade_count"), 0)))
+    validation_trades = _to_int(current.get("validation_signals"), trade_count)
+    validation_sharpe = _to_float(current.get("validation_sharpe"), _to_float(oos.get("sharpe"), 0.0))
+    max_drawdown_pct = current.get("max_drawdown_pct")
+    if max_drawdown_pct is None:
+        max_drawdown_pct = metrics.get("max_drawdown_pct")
+    if max_drawdown_pct is None:
+        max_drawdown_pct = oos.get("max_drawdown_pct")
+
+    return {
+        "source": "validated_candidate",
+        "candidate_id": candidate.get("id"),
+        "trade_count": trade_count,
+        "validation_trades": validation_trades,
+        "validation_sharpe": round(validation_sharpe, 4),
+        "max_drawdown_pct": round(_to_float(max_drawdown_pct, 0.0), 4) if max_drawdown_pct is not None else None,
+        "strategy_reliability": str(current.get("label") or metrics.get("reliability") or summary.get("oos_reliability") or "insufficient"),
+        "reliability_reason": str(current.get("reason") or ""),
+        "passes_minimum_gate": bool(passes_minimum_gate),
+        "is_reliable": bool(is_reliable),
+        "composite_score": metrics.get("composite_score") if metrics.get("composite_score") is not None else scorecard.get("composite_score"),
+        "approved_candidate_id": candidate.get("id"),
+        "approved_saved_at": candidate.get("saved_at"),
+        "approved_by_quant_ops": True,
+    }
+
+
 def _build_runtime_payload(
     candidate: dict[str, Any],
     search_payload: dict[str, Any] | None,
@@ -1298,6 +1345,7 @@ def _build_runtime_payload(
         "applied_at": applied_at,
         "version": f"runtime-{candidate.get('id')}",
         "global_params": dict(candidate.get("patch") or {}),
+        "validation_baseline": _global_runtime_validation_baseline(candidate),
         "per_symbol": per_symbol_overlay,
         "meta": {
             **meta,
@@ -1307,6 +1355,7 @@ def _build_runtime_payload(
             "search_version": candidate.get("search_version"),
             "search_optimized_at": candidate.get("search_optimized_at"),
             "global_overlay_source": "validated_candidate",
+            "validation_baseline_source": "validated_candidate",
             "approved_symbol_count": len(per_symbol_overlay),
             "approved_symbols": sorted(per_symbol_overlay.keys()),
         },

@@ -301,11 +301,31 @@ def _resolve_validation_snapshot(signal: dict[str, Any]) -> dict[str, Any]:
         "trades": trades,
         "sharpe": round(sharpe, 4),
         "max_drawdown_pct": None if max_drawdown_pct is None else round(_to_float(max_drawdown_pct, 0.0), 4),
-        "reliability": str(reliability_detail.get("label") or assessment.label),
-        "reliability_reason": str(reliability_detail.get("reason") or assessment.reason),
-        "passes_minimum_gate": bool(reliability_detail.get("passes_minimum_gate", assessment.passes_minimum_gate)),
-        "optimized_reliable": bool(reliability_detail.get("is_reliable", assessment.is_reliable)),
+        "reliability": str(
+            validation_snapshot.get("strategy_reliability")
+            or reliability_detail.get("label")
+            or assessment.label
+        ),
+        "reliability_reason": str(
+            validation_snapshot.get("reliability_reason")
+            or reliability_detail.get("reason")
+            or assessment.reason
+        ),
+        "passes_minimum_gate": bool(
+            validation_snapshot.get("passes_minimum_gate", reliability_detail.get("passes_minimum_gate", assessment.passes_minimum_gate))
+        ),
+        "optimized_reliable": bool(
+            validation_snapshot.get("is_reliable", reliability_detail.get("is_reliable", assessment.is_reliable))
+        ),
+        "source": str(validation_snapshot.get("validation_source") or "signal"),
     }
+
+
+def _optimized_validation_baseline(optimized: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(optimized, dict):
+        return {}
+    baseline = optimized.get("validation_baseline")
+    return baseline if isinstance(baseline, dict) else {}
 
 
 def _apply_validation_gate(signal: dict[str, Any], cfg: dict[str, Any]) -> tuple[bool, list[str], dict[str, Any]]:
@@ -320,12 +340,30 @@ def _apply_validation_gate(signal: dict[str, Any], cfg: dict[str, Any]) -> tuple
     optimized = _load_optimized_params() or {}
     per_symbol = optimized.get("per_symbol", {}) if isinstance(optimized, dict) else {}
     symbol_payload = per_symbol.get(code, {}) if isinstance(per_symbol, dict) else {}
+    global_baseline = _optimized_validation_baseline(optimized)
+    optimized_validation_payload = symbol_payload if symbol_payload else global_baseline
+    validation_source = "signal"
 
-    if symbol_payload:
-        trade_count = int(symbol_payload.get("trade_count") or snapshot.get("trade_count") or 0)
-        trades = int(symbol_payload.get("validation_trades") or snapshot.get("trades") or 0)
-        sharpe = _to_float(symbol_payload.get("validation_sharpe"), snapshot.get("sharpe", 0.0))
-        max_drawdown_pct = symbol_payload.get("max_drawdown_pct", snapshot.get("max_drawdown_pct"))
+    if optimized_validation_payload:
+        trade_count = int(
+            optimized_validation_payload.get("trade_count")
+            or snapshot.get("trade_count")
+            or optimized_validation_payload.get("validation_trades")
+            or 0
+        )
+        trades = int(
+            optimized_validation_payload.get("validation_trades")
+            or snapshot.get("trades")
+            or trade_count
+            or 0
+        )
+        sharpe = _to_float(
+            optimized_validation_payload.get("validation_sharpe"),
+            snapshot.get("sharpe", 0.0),
+        )
+        max_drawdown_pct = optimized_validation_payload.get(
+            "max_drawdown_pct", snapshot.get("max_drawdown_pct")
+        )
         assessment = assess_validation_reliability(
             trade_count=trade_count if trade_count > 0 else trades,
             validation_signals=trades,
@@ -337,11 +375,23 @@ def _apply_validation_gate(signal: dict[str, Any], cfg: dict[str, Any]) -> tuple
             "trades": trades,
             "sharpe": round(sharpe, 4),
             "max_drawdown_pct": None if max_drawdown_pct is None else round(_to_float(max_drawdown_pct, 0.0), 4),
-            "reliability": assessment.label,
-            "reliability_reason": assessment.reason,
-            "passes_minimum_gate": assessment.passes_minimum_gate,
-            "optimized_reliable": bool(symbol_payload.get("is_reliable", assessment.is_reliable)),
+            "reliability": str(
+                optimized_validation_payload.get("strategy_reliability")
+                or optimized_validation_payload.get("reliability")
+                or assessment.label
+            ),
+            "reliability_reason": str(
+                optimized_validation_payload.get("reliability_reason")
+                or assessment.reason
+            ),
+            "passes_minimum_gate": bool(
+                optimized_validation_payload.get("passes_minimum_gate", assessment.passes_minimum_gate)
+            ),
+            "optimized_reliable": bool(
+                optimized_validation_payload.get("is_reliable", assessment.is_reliable)
+            ),
         }
+        validation_source = "symbol" if symbol_payload else "global"
 
     reasons: list[str] = []
     if int(snapshot.get("trades") or 0) < int(cfg.get("validation_min_trades", 8)):
@@ -350,11 +400,12 @@ def _apply_validation_gate(signal: dict[str, Any], cfg: dict[str, Any]) -> tuple
         reasons.append("validation_sharpe_low")
     if bool(cfg.get("validation_block_on_low_reliability", True)) and str(snapshot.get("reliability") or "insufficient") in {"low", "insufficient"}:
         reasons.append("validation_reliability_low")
-    if bool(cfg.get("validation_require_optimized_reliability", True)) and symbol_payload and not bool(snapshot.get("passes_minimum_gate")):
+    if bool(cfg.get("validation_require_optimized_reliability", True)) and optimized_validation_payload and not bool(snapshot.get("passes_minimum_gate")):
         reasons.append("optimized_validation_failed")
 
     return len(reasons) == 0, reasons, {
         "enabled": True,
+        "source": validation_source,
         **snapshot,
     }
 
