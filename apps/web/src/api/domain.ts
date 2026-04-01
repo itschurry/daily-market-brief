@@ -74,12 +74,14 @@ export function fetchValidationSettings() {
   return getJSON<PersistedValidationSettingsResponse>('/api/validation/settings', { noStore: true });
 }
 
-export function saveValidationSettings(query: BacktestQuery, settings: ValidationSettings) {
-  return postJSON<PersistedValidationSettingsResponse>('/api/validation/settings/save', { query, settings });
+export async function saveValidationSettings(query: BacktestQuery, settings: ValidationSettings): Promise<PersistedValidationSettingsResponse> {
+  const response = await postJSON<PersistedValidationSettingsResponse>('/api/validation/settings/save', { query, settings });
+  return response.data;
 }
 
-export function resetValidationSettings() {
-  return postJSON<PersistedValidationSettingsResponse>('/api/validation/settings/reset', {});
+export async function resetValidationSettings(): Promise<PersistedValidationSettingsResponse> {
+  const response = await postJSON<PersistedValidationSettingsResponse>('/api/validation/settings/reset', {});
+  return response.data;
 }
 
 export function fetchQuantOpsWorkflow() {
