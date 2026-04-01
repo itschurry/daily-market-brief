@@ -489,6 +489,57 @@ class QuantOpsWorkflowTests(unittest.TestCase):
         self.assertEqual("missing", workflow["stage_status"]["revalidation"])
         self.assertEqual("missing", workflow["stage_status"]["save"])
 
+    def test_revalidate_uses_current_saved_validation_baseline_for_sparse_payload(self):
+        baseline_query = {
+            "market_scope": "nasdaq",
+            "lookback_days": 540,
+            "initial_cash": 250000,
+            "max_positions": 7,
+            "max_holding_days": 27,
+            "rsi_min": 41,
+            "rsi_max": 69,
+            "volume_ratio_min": 1.4,
+            "stop_loss_pct": 4.5,
+            "take_profit_pct": 16.0,
+            "adx_min": 12.0,
+            "mfi_min": 24.0,
+            "mfi_max": 74.0,
+            "bb_pct_min": 0.08,
+            "bb_pct_max": 0.88,
+            "stoch_k_min": 16.0,
+            "stoch_k_max": 84.0,
+        }
+        baseline_settings = {
+            "strategy": "현재 저장 전략",
+            "trainingDays": 240,
+            "validationDays": 80,
+            "walkForward": False,
+            "minTrades": 11,
+            "objective": "안정성 우선",
+        }
+        baseline_payload = {
+            "query": baseline_query,
+            "settings": baseline_settings,
+            "saved_at": _NOW,
+        }
+
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \
+             patch.object(svc, "load_runtime_optimized_params", return_value=None), \
+             patch.object(svc, "load_persisted_validation_settings", return_value=baseline_payload), \
+             patch.object(svc, "run_validation_diagnostics", return_value=_adopt_diagnostics()):
+            result = svc.revalidate_optimizer_candidate({
+                "query": {"market_scope": "nasdaq", "stop_loss_pct": 4.5},
+                "settings": {"strategy": "현재 저장 전략", "minTrades": 11},
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(svc._normalize_saved_query(baseline_query), result["candidate"]["base_query"])
+        self.assertEqual(svc._normalize_saved_settings(baseline_settings), result["candidate"]["settings"])
+        self.assertEqual("active", result["workflow"]["latest_candidate_state"]["status"])
+        self.assertTrue(result["workflow"]["latest_candidate_state"]["active"])
+        self.assertNotIn("validation_settings_changed", result["workflow"]["latest_candidate_state"]["reasons"])
+
     def test_workflow_marks_expired_pending_handoff_as_optimizer_failed(self):
         stale_requested_at = (
             dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)

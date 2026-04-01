@@ -347,6 +347,26 @@ def _load_current_validation_baseline() -> dict[str, Any]:
     }
 
 
+def _resolve_validation_context(
+    query: dict[str, Any] | None,
+    settings: dict[str, Any] | None,
+    baseline: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    baseline = baseline if isinstance(baseline, dict) else _load_current_validation_baseline()
+    baseline_query = dict(baseline.get("query") or {}) if baseline.get("available") else {}
+    baseline_settings = dict(baseline.get("settings") or {}) if baseline.get("available") else {}
+
+    normalized_query = _normalize_saved_query({
+        **baseline_query,
+        **(query if isinstance(query, dict) else {}),
+    })
+    normalized_settings = _normalize_saved_settings({
+        **baseline_settings,
+        **(settings if isinstance(settings, dict) else {}),
+    })
+    return baseline, normalized_query, normalized_settings
+
+
 def _matches_validation_baseline(
     query: dict[str, Any] | None,
     settings: dict[str, Any] | None,
@@ -1041,10 +1061,12 @@ def get_quant_ops_workflow() -> dict[str, Any]:
 def _sanitize_search_handoff_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
-    query = payload.get("query") if isinstance(payload.get("query"), dict) else {}
-    settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
-    if not query or not settings:
+    raw_query = payload.get("query") if isinstance(payload.get("query"), dict) else {}
+    raw_settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+    baseline = _load_current_validation_baseline()
+    if not raw_query and not raw_settings and not baseline.get("available"):
         return None
+    _, query, settings = _resolve_validation_context(raw_query, raw_settings, baseline)
     return {
         "query": copy.deepcopy(query),
         "settings": copy.deepcopy(settings),
@@ -1100,8 +1122,9 @@ def _revalidate_optimizer_candidate_impl(query: dict[str, Any], settings: dict[s
     if not search.get("global_params"):
         return {"ok": False, "error": "optimizer_global_params_missing"}
 
-    mutated_query = _merge_query_patch(query, search.get("global_params") or {})
-    diagnostics = run_validation_diagnostics(_build_service_query(mutated_query, settings))
+    _, resolved_query, resolved_settings = _resolve_validation_context(query, settings)
+    mutated_query = _merge_query_patch(resolved_query, search.get("global_params") or {})
+    diagnostics = run_validation_diagnostics(_build_service_query(mutated_query, resolved_settings))
     if not isinstance(diagnostics, dict) or diagnostics.get("error") or not diagnostics.get("ok"):
         return {
             "ok": False,
@@ -1111,9 +1134,9 @@ def _revalidate_optimizer_candidate_impl(query: dict[str, Any], settings: dict[s
 
     candidate = _build_candidate(
         search=search,
-        base_query=query,
+        base_query=resolved_query,
         mutated_query=mutated_query,
-        settings=settings,
+        settings=resolved_settings,
         diagnostics=diagnostics,
     )
     state = _load_state()
@@ -1314,6 +1337,7 @@ def revalidate_symbol_candidate(payload: dict[str, Any]) -> dict[str, Any]:
     symbol = _symbol_code(payload.get("symbol"))
     query = payload.get("query") if isinstance(payload.get("query"), dict) else {}
     settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+    _, resolved_query, resolved_settings = _resolve_validation_context(query, settings)
     search_payload = load_search_optimized_params()
     search = _search_summary(search_payload)
     search_items = _symbol_search_candidates(search_payload, search)
@@ -1336,8 +1360,8 @@ def revalidate_symbol_candidate(payload: dict[str, Any]) -> dict[str, Any]:
             "workflow": get_quant_ops_workflow(),
         }
 
-    mutated_query = _merge_query_patch(query, patch)
-    diagnostics = run_validation_diagnostics(_build_service_query(mutated_query, settings))
+    mutated_query = _merge_query_patch(resolved_query, patch)
+    diagnostics = run_validation_diagnostics(_build_service_query(mutated_query, resolved_settings))
     if not isinstance(diagnostics, dict) or diagnostics.get("error") or not diagnostics.get("ok"):
         return {
             "ok": False,
@@ -1350,9 +1374,9 @@ def revalidate_symbol_candidate(payload: dict[str, Any]) -> dict[str, Any]:
         symbol=symbol,
         search=search,
         search_item=search_item,
-        base_query=query,
+        base_query=resolved_query,
         mutated_query=mutated_query,
-        settings=settings,
+        settings=resolved_settings,
         diagnostics=diagnostics,
     )
     state = _load_state()
