@@ -185,10 +185,6 @@ class PaperExecutionEngine:
             executed_local = float(limit_price)
         executed_krw = executed_local * fx_rate
         fee_rate = self.config.buy_fee_rate if normalized_side == "buy" else self.config.sell_fee_rate
-        notional_local = executed_local * quantity
-        notional_krw = executed_krw * quantity
-        fee_local = max(0.0, notional_local * fee_rate)
-        fee_krw = max(0.0, notional_krw * fee_rate)
         now = _now_iso()
 
         with self._lock:
@@ -197,6 +193,26 @@ class PaperExecutionEngine:
             order_id = f"paper-{uuid.uuid4().hex[:12]}"
             position_key = f"{normalized_market}:{normalized_code}"
             position = state["positions"].get(position_key)
+
+            if normalized_side == "buy":
+                if normalized_market == "KOSPI":
+                    per_share_cash = executed_krw * (1.0 + fee_rate)
+                    affordable_qty = int(float(state["cash_krw"]) //
+                                         per_share_cash) if per_share_cash > 0 else 0
+                else:
+                    per_share_cash = executed_local * (1.0 + fee_rate)
+                    affordable_qty = int(float(state["cash_usd"]) //
+                                         per_share_cash) if per_share_cash > 0 else 0
+                quantity = min(quantity, affordable_qty)
+                if quantity <= 0:
+                    if normalized_market == "KOSPI":
+                        return {"ok": False, "error": "원화 주문 가능 현금이 부족합니다."}
+                    return {"ok": False, "error": "달러 주문 가능 현금이 부족합니다."}
+
+            notional_local = executed_local * quantity
+            notional_krw = executed_krw * quantity
+            fee_local = max(0.0, notional_local * fee_rate)
+            fee_krw = max(0.0, notional_krw * fee_rate)
 
             if normalized_side == "buy":
                 if normalized_market == "KOSPI":
