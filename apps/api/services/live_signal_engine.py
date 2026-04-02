@@ -250,7 +250,7 @@ def scan_strategy(
             "candidate_source_tier": "tier_1",
             "candidate_source_priority": 100,
             "candidate_runtime_source_mode": "quant_only",
-            "candidate_research_source": "hanna_external_scorer",
+            "candidate_research_source": "openclaw_snapshot_store",
             "report_reasoning": {
                 "summary": ", ".join(reasons[:3]),
                 "gate_status": signal_state,

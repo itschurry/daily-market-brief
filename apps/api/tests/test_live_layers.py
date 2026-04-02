@@ -23,7 +23,8 @@ settings_stub.REPORT_OUTPUT_DIR = settings_stub.LOGS_DIR
 
 with patch.dict(sys.modules, {"config.settings": settings_stub}):
     from services.live_layers import build_layer_d_snapshot, build_layer_e_snapshot
-    from services.research_scoring import NullResearchScorer, ResearchScoreRequest
+    import services.research_scoring as research_scoring
+    from services.research_scoring import NullResearchScorer, ResearchScoreRequest, StoredResearchScorer
 
 
 class LiveLayerTests(unittest.TestCase):
@@ -37,6 +38,43 @@ class LiveLayerTests(unittest.TestCase):
         self.assertNotIn("buy", result.summary.lower())
         self.assertNotIn("sell", result.summary.lower())
         self.assertNotIn("order", result.summary.lower())
+
+    def test_stored_research_scorer_reads_fresh_snapshot(self):
+        scorer = StoredResearchScorer(provider="openclaw")
+        with patch.object(research_scoring, "load_latest_research_snapshot", return_value={
+            "research_score": 0.61,
+            "components": {"freshness_score": 0.8},
+            "warnings": ["already_extended_intraday"],
+            "tags": ["earnings"],
+            "summary": "snapshot ok",
+            "ttl_minutes": 120,
+            "generated_at": "2026-04-02T17:00:00+09:00",
+        }):
+            result = scorer.score(ResearchScoreRequest(symbol="AAA", market="KOSPI", timestamp="2026-04-02T17:30:00+09:00"))
+
+        self.assertTrue(result.available)
+        self.assertEqual("healthy", result.status)
+        self.assertEqual(0.61, result.research_score)
+        self.assertEqual(["already_extended_intraday"], result.warnings)
+        self.assertEqual("openclaw", result.source)
+
+    def test_stored_research_scorer_marks_stale_snapshot_unavailable(self):
+        scorer = StoredResearchScorer(provider="openclaw")
+        with patch.object(research_scoring, "load_latest_research_snapshot", return_value={
+            "research_score": 0.77,
+            "components": {"freshness_score": 0.8},
+            "warnings": ["already_extended_intraday"],
+            "tags": ["earnings"],
+            "summary": "snapshot stale",
+            "ttl_minutes": 5,
+            "generated_at": "2026-04-02T09:00:00+09:00",
+        }):
+            result = scorer.score(ResearchScoreRequest(symbol="AAA", market="KOSPI", timestamp="2026-04-02T17:30:00+09:00"))
+
+        self.assertFalse(result.available)
+        self.assertEqual("stale_ingest", result.status)
+        self.assertIsNone(result.research_score)
+        self.assertEqual(["research_unavailable"], result.warnings)
 
     def test_final_action_uses_required_semantics(self):
         risk = build_layer_d_snapshot(

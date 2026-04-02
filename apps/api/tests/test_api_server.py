@@ -43,6 +43,11 @@ def _install_server_route_stubs() -> list[str]:
             "handle_quant_ops_save_symbol_candidate": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_save_candidate": lambda payload: (200, {"payload": payload}),
         },
+        "routes.research": {
+            "handle_research_ingest_bulk": lambda payload: (200, {"payload": payload}),
+            "handle_research_latest_snapshot": lambda query: (200, {"query": query}),
+            "handle_research_status": lambda query: (200, {"query": query}),
+        },
         "routes.reports": {
             "handle_analysis": lambda date=None: (200, {"date": date}),
             "handle_compare": lambda base=None, prev=None: (200, {"base": base, "prev": prev}),
@@ -138,6 +143,20 @@ class ApiServerDispatchTests(unittest.TestCase):
         self.assertEqual((200, {"owner": "hanna"}), result)
         mock_handler.assert_called_once_with("2026-04-02")
 
+    def test_dispatch_get_routes_research_status(self):
+        with patch("server.handle_research_status", return_value=(200, {"status": "healthy"})) as mock_handler:
+            result = dispatch_get("/api/research/status", {"provider": ["openclaw"]})
+
+        self.assertEqual((200, {"status": "healthy"}), result)
+        mock_handler.assert_called_once_with({"provider": ["openclaw"]})
+
+    def test_dispatch_get_routes_research_latest_snapshot(self):
+        with patch("server.handle_research_latest_snapshot", return_value=(200, {"ok": True})) as mock_handler:
+            result = dispatch_get("/api/research/snapshots/latest", {"symbol": ["005930"], "market": ["KR"]})
+
+        self.assertEqual((200, {"ok": True}), result)
+        mock_handler.assert_called_once_with({"symbol": ["005930"], "market": ["KR"]})
+
     def test_dispatch_get_extracts_stock_code_and_market(self):
         with patch("server.handle_stock_price", return_value=(200, {"price": 1})) as mock_handler:
             result = dispatch_get("/api/stock/005930", {"market": ["KOSPI"]})
@@ -164,6 +183,14 @@ class ApiServerDispatchTests(unittest.TestCase):
             result = dispatch_post("/api/run-optimization", payload)
 
         self.assertEqual((200, {"status": "started"}), result)
+        mock_handler.assert_called_once_with(payload)
+
+    def test_dispatch_post_routes_research_ingest_bulk(self):
+        with patch("server.handle_research_ingest_bulk", return_value=(200, {"accepted": 1})) as mock_handler:
+            payload = {"provider": "openclaw", "items": []}
+            result = dispatch_post("/api/research/ingest/bulk", payload)
+
+        self.assertEqual((200, {"accepted": 1}), result)
         mock_handler.assert_called_once_with(payload)
 
     def test_dispatch_get_routes_system_mode(self):

@@ -26,6 +26,7 @@ from routes.quant_ops import (
     handle_quant_ops_save_policy,
     handle_quant_ops_set_symbol_approval,
 )
+from routes.research import handle_research_ingest_bulk, handle_research_latest_snapshot, handle_research_status
 from routes.reports import (
     handle_analysis,
     handle_compare,
@@ -113,6 +114,8 @@ GET_ROUTES: tuple[Route, ...] = (
     Route("/api/reports/explain", lambda _path, query: handle_reports_explain(_query_value(query, "date") or None)),
     Route("/api/reports/index", lambda _path, _query: handle_reports_index()),
     Route("/api/hanna/brief", lambda _path, query: handle_hanna_brief(_query_value(query, "date") or None)),
+    Route("/api/research/status", lambda _path, query: handle_research_status(query)),
+    Route("/api/research/snapshots/latest", lambda _path, query: handle_research_latest_snapshot(query)),
     Route("/api/strategies", lambda _path, query: handle_strategies_list(query)),
     Route("/api/strategies/", lambda path, _query: handle_strategy_detail(path), prefix=True),
     Route("/api/scanner/status", lambda _path, query: handle_scanner_status(query)),
@@ -167,6 +170,7 @@ POST_ROUTES: tuple[Route, ...] = (
     Route("/api/paper/engine/stop", lambda _path, _payload: handle_paper_engine_stop()),
     Route("/api/strategies/toggle", lambda _path, payload: handle_strategy_toggle(payload)),
     Route("/api/strategies/save", lambda _path, payload: handle_strategy_save(payload)),
+    Route("/api/research/ingest/bulk", lambda _path, payload: handle_research_ingest_bulk(payload)),
     Route("/api/run-optimization", lambda _path, _payload: handle_run_optimization(_payload)),
     Route("/api/validation/settings/save", lambda _path, payload: handle_validation_settings_save(payload)),
     Route("/api/validation/settings/reset", lambda _path, _payload: handle_validation_settings_reset()),

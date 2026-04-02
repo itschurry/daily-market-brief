@@ -1,25 +1,23 @@
 from __future__ import annotations
 
-import json
-import os
-import time
-import urllib.error
-import urllib.request
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
+from services.research_contract import normalize_components, normalize_tags, normalize_warning_codes
+from services.research_store import load_latest_research_snapshot
 
-_ALLOWED_WARNING_CODES = {
-    "headline_stronger_than_body",
-    "already_extended_intraday",
-    "low_evidence_density",
-    "theme_recycled",
-    "contrarian_flow_risk",
-    "policy_uncertainty",
-    "liquidity_mismatch",
-    "too_many_similar_news",
-    "research_unavailable",
-}
+
+def _parse_datetime(value: Any):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = __import__("datetime").datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=__import__("datetime").timezone.utc)
+    return parsed.astimezone(__import__("datetime").timezone.utc)
 
 
 @dataclass
@@ -72,123 +70,77 @@ class NullResearchScorer:
         )
 
 
-class HannaResearchScorer:
-    def __init__(self, *, endpoint: str, timeout_seconds: float = 1.5, retry_count: int = 1) -> None:
-        self.endpoint = endpoint
-        self.timeout_seconds = timeout_seconds
-        self.retry_count = max(0, retry_count)
-        self._cache: dict[str, tuple[float, ResearchScoreResult]] = {}
+class StoredResearchScorer:
+    def __init__(self, *, provider: str = "openclaw") -> None:
+        self.provider = str(provider or "openclaw").strip().lower() or "openclaw"
 
     def score(self, request: ResearchScoreRequest) -> ResearchScoreResult:
-        cache_key = self._cache_key(request)
-        cached = self._cache.get(cache_key)
-        now = time.time()
-        if cached and cached[0] > now:
-            return cached[1]
+        snapshot = load_latest_research_snapshot(request.symbol, request.market, provider=self.provider)
+        if not isinstance(snapshot, dict):
+            return ResearchScoreResult(
+                symbol=request.symbol,
+                market=request.market,
+                research_score=None,
+                components={},
+                warnings=["research_unavailable"],
+                tags=[],
+                summary="OpenClaw research snapshot이 없어 quant+risk 기준으로 계속 진행합니다.",
+                ttl_minutes=5,
+                generated_at=request.timestamp,
+                status="missing",
+                source=self.provider,
+                available=False,
+            )
 
-        payload = {
-            "symbol": request.symbol,
-            "market": request.market,
-            "timestamp": request.timestamp,
-            "context": request.context,
-        }
-        last_error = ""
-        for attempt in range(self.retry_count + 1):
-            try:
-                raw = self._post_json(payload)
-                result = self._validate_response(raw, request)
-                self._cache[cache_key] = (now + max(60, result.ttl_minutes * 60), result)
-                return result
-            except Exception as exc:  # noqa: BLE001
-                last_error = str(exc)
-                if attempt >= self.retry_count:
-                    break
+        ttl_minutes = max(1, min(1440, int(snapshot.get("ttl_minutes") or 120)))
+        generated_at = str(snapshot.get("generated_at") or request.timestamp)
+        generated_dt = _parse_datetime(generated_at)
+        reference_dt = _parse_datetime(request.timestamp)
+        if generated_dt is None or reference_dt is None or reference_dt > generated_dt + __import__("datetime").timedelta(minutes=ttl_minutes):
+            return ResearchScoreResult(
+                symbol=request.symbol,
+                market=request.market,
+                research_score=None,
+                components={},
+                warnings=["research_unavailable"],
+                tags=[],
+                summary="OpenClaw research snapshot이 오래되어 quant+risk 기준으로 계속 진행합니다.",
+                ttl_minutes=ttl_minutes,
+                generated_at=generated_at,
+                status="stale_ingest",
+                source=self.provider,
+                available=False,
+            )
+
         return ResearchScoreResult(
             symbol=request.symbol,
             market=request.market,
-            research_score=None,
-            components={},
-            warnings=["research_unavailable"],
-            tags=[],
-            summary="Hanna research 응답이 없어 quant+risk 기준으로 계속 진행합니다.",
-            ttl_minutes=5,
-            generated_at=request.timestamp,
-            status="timeout" if "timed out" in last_error.lower() else "degraded",
-            source="hanna",
-            available=False,
-        )
-
-    def _cache_key(self, request: ResearchScoreRequest) -> str:
-        bucket = str(request.timestamp)[:16]
-        return f"{request.market}:{request.symbol}:{bucket}"
-
-    def _post_json(self, payload: dict[str, Any]) -> dict[str, Any]:
-        req = urllib.request.Request(
-            self.endpoint,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=self.timeout_seconds) as response:
-            body = response.read().decode("utf-8")
-        parsed = json.loads(body)
-        if not isinstance(parsed, dict):
-            raise ValueError("invalid_hanna_payload")
-        return parsed
-
-    def _validate_response(self, payload: dict[str, Any], request: ResearchScoreRequest) -> ResearchScoreResult:
-        score = payload.get("research_score")
-        if score is not None:
-            score = max(0.0, min(1.0, float(score)))
-        components_raw = payload.get("components") if isinstance(payload.get("components"), dict) else {}
-        components = {
-            str(key): max(0.0, min(1.0, float(value)))
-            for key, value in components_raw.items()
-            if isinstance(value, (int, float))
-        }
-        warnings = [
-            str(item) for item in (payload.get("warnings") or [])
-            if str(item) in _ALLOWED_WARNING_CODES
-        ]
-        tags = [str(item) for item in (payload.get("tags") or []) if str(item).strip()]
-        ttl_minutes = max(1, min(240, int(payload.get("ttl_minutes") or 60)))
-        generated_at = str(payload.get("generated_at") or request.timestamp)
-        return ResearchScoreResult(
-            symbol=request.symbol,
-            market=request.market,
-            research_score=score,
-            components=components,
-            warnings=warnings,
-            tags=tags,
-            summary=str(payload.get("summary") or ""),
+            research_score=snapshot.get("research_score"),
+            components=normalize_components(snapshot.get("components")),
+            warnings=normalize_warning_codes(snapshot.get("warnings")),
+            tags=normalize_tags(snapshot.get("tags")),
+            summary=str(snapshot.get("summary") or ""),
             ttl_minutes=ttl_minutes,
             generated_at=generated_at,
             status="healthy",
-            source="hanna",
+            source=self.provider,
             available=True,
         )
 
 
-_SCORER_CACHE_KEY: tuple[str, float, int] | None = None
+_SCORER_CACHE_KEY: str | None = None
 _SCORER_INSTANCE: ResearchScorer | None = None
 
 
 def get_research_scorer() -> ResearchScorer:
     global _SCORER_CACHE_KEY, _SCORER_INSTANCE
 
-    endpoint = str(os.getenv("HANNA_RESEARCH_API_URL") or "").strip()
-    timeout_seconds = float(os.getenv("HANNA_RESEARCH_TIMEOUT_SECONDS") or 1.5)
-    retry_count = int(os.getenv("HANNA_RESEARCH_RETRY_COUNT") or 1)
-    cache_key = (endpoint, timeout_seconds, retry_count)
+    provider = "openclaw"
+    cache_key = provider
 
     if _SCORER_INSTANCE is not None and _SCORER_CACHE_KEY == cache_key:
         return _SCORER_INSTANCE
 
-    if not endpoint:
-        _SCORER_INSTANCE = NullResearchScorer()
-        _SCORER_CACHE_KEY = cache_key
-        return _SCORER_INSTANCE
-
-    _SCORER_INSTANCE = HannaResearchScorer(endpoint=endpoint, timeout_seconds=timeout_seconds, retry_count=retry_count)
+    _SCORER_INSTANCE = StoredResearchScorer(provider=provider)
     _SCORER_CACHE_KEY = cache_key
     return _SCORER_INSTANCE

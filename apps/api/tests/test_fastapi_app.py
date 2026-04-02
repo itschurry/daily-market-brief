@@ -27,17 +27,25 @@ def _install_server_route_stubs() -> list[str]:
         "routes.optimization": {
             "handle_get_optimization_status": lambda: (200, {"ok": True}),
             "handle_get_optimized_params": lambda: (200, {"ok": True}),
-            "handle_run_optimization": lambda: (200, {"ok": True}),
+            "handle_run_optimization": lambda payload=None: (200, {"ok": True}),
         },
         "routes.portfolio": {"handle_portfolio_state": lambda refresh=True: (200, {"refresh": refresh})},
         "routes.quant_ops": {
+            "handle_get_quant_ops_policy": lambda: (200, {"ok": True}),
             "handle_get_quant_ops_workflow": lambda: (200, {"ok": True}),
             "handle_quant_ops_apply_runtime": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_revalidate": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_revalidate_symbol": lambda payload: (200, {"payload": payload}),
+            "handle_quant_ops_reset_policy": lambda: (200, {"ok": True}),
+            "handle_quant_ops_save_policy": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_set_symbol_approval": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_save_symbol_candidate": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_save_candidate": lambda payload: (200, {"payload": payload}),
+        },
+        "routes.research": {
+            "handle_research_ingest_bulk": lambda payload: (200, {"payload": payload}),
+            "handle_research_latest_snapshot": lambda query: (200, {"query": query}),
+            "handle_research_status": lambda query: (200, {"query": query}),
         },
         "routes.reports": {
             "handle_analysis": lambda date=None: (200, {"date": date}),
@@ -53,10 +61,17 @@ def _install_server_route_stubs() -> list[str]:
             "handle_reports_explain": lambda date=None: (200, {"date": date}),
             "handle_reports_index": lambda: (200, {"ok": True}),
         },
+        "routes.scanner": {"handle_scanner_status": lambda query: (200, {"query": query})},
         "routes.signals": {
             "handle_signal_detail": lambda path: (200, {"path": path}),
             "handle_signal_snapshots": lambda query: (200, {"query": query}),
             "handle_signals_rank": lambda query: (200, {"query": query}),
+        },
+        "routes.strategies": {
+            "handle_strategies_list": lambda query: (200, {"query": query}),
+            "handle_strategy_detail": lambda path: (200, {"path": path}),
+            "handle_strategy_toggle": lambda payload: (200, {"payload": payload}),
+            "handle_strategy_save": lambda payload: (200, {"payload": payload}),
         },
         "routes.trading": {
             "handle_paper_account": lambda refresh=True: (200, {"refresh": refresh}),
@@ -75,6 +90,7 @@ def _install_server_route_stubs() -> list[str]:
         "routes.system": {
             "handle_system_mode": lambda: (200, {"ok": True}),
         },
+        "routes.universe": {"handle_universe_list": lambda query: (200, {"query": query})},
         "routes.validation": {
             "handle_validation_backtest": lambda query: (200, {"query": query}),
             "handle_validation_diagnostics": lambda query: (200, {"query": query}),
