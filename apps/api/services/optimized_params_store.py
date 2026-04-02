@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 import os
+import stat
+
 
 
 _API_DIR = Path(__file__).resolve().parent.parent
@@ -68,12 +70,51 @@ def load_execution_optimized_params() -> dict[str, Any] | None:
     return None
 
 
+def _safe_target_ids(path: Path) -> tuple[int, int] | None:
+    candidates = [path, path.parent]
+    for candidate in candidates:
+        try:
+            st = candidate.stat()
+            return st.st_uid, st.st_gid
+        except Exception:
+            continue
+    return None
+
+
+def _normalize_owner_and_mode(path: Path, *, mode: int = 0o664) -> None:
+    try:
+        os.chmod(path, mode)
+    except Exception:
+        pass
+
+    target_ids = _safe_target_ids(path)
+    if target_ids is None:
+        return
+
+    uid, gid = target_ids
+    try:
+        current = path.stat()
+        if current.st_uid != uid or current.st_gid != gid:
+            os.chown(path, uid, gid)
+            os.chmod(path, mode)
+    except PermissionError:
+        # 비-root 환경에서는 chown이 안 될 수 있으니 읽기/쓰기 권한만 최대한 맞춘다.
+        try:
+            current_mode = stat.S_IMODE(path.stat().st_mode)
+            os.chmod(path, current_mode | 0o664)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 def write_runtime_optimized_params(payload: dict[str, Any]) -> Path:
     RUNTIME_OPTIMIZED_PARAMS_PATH.parent.mkdir(parents=True, exist_ok=True)
     RUNTIME_OPTIMIZED_PARAMS_PATH.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    _normalize_owner_and_mode(RUNTIME_OPTIMIZED_PARAMS_PATH)
     return RUNTIME_OPTIMIZED_PARAMS_PATH
 
 

@@ -161,6 +161,13 @@ class BacktestService:
             parse_bool=_parse_bool,
         )
 
+        selected_symbols_raw = (query.get("symbols", [""])[0] or query.get("symbol", [""])[0] or "").strip()
+        selected_symbols = tuple(
+            symbol.strip().upper()
+            for symbol in selected_symbols_raw.split(",")
+            if symbol.strip()
+        )
+
         return BacktestConfig(
             initial_cash=_parse_float("initial_cash", initial_default, initial_minimum, initial_maximum),
             base_currency=base_currency,
@@ -168,6 +175,7 @@ class BacktestService:
             max_holding_days=primary_profile.max_holding_days,
             lookback_days=_parse_int("lookback_days", 1095, 180, 1825),
             markets=markets,
+            selected_symbols=selected_symbols,
             rsi_min=primary_profile.rsi_min,
             rsi_max=primary_profile.rsi_max,
             volume_ratio_min=primary_profile.volume_ratio_min,
@@ -231,6 +239,7 @@ class BacktestService:
                 "base_currency": config.base_currency,
                 "lookback_days": config.lookback_days,
                 "markets": list(config.markets),
+                "selected_symbols": list(config.selected_symbols),
                 "market_profiles": serialize_strategy_profiles(config.market_profiles),
                 "candidate_selection": candidate_selection_payload,
             },

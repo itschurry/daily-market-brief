@@ -853,6 +853,7 @@ def _symbol_search_candidates(search_payload: dict[str, Any] | None, search: dic
         patch = _extract_symbol_patch(payload)
         items[symbol] = {
             "symbol": symbol,
+            "market": str(payload.get("market") or "").strip().upper(),
             "search_version": str(search.get("version") or ""),
             "search_optimized_at": str(search.get("optimized_at") or ""),
             "search_is_stale": bool(search.get("is_stale")),
@@ -1487,7 +1488,12 @@ def revalidate_symbol_candidate(payload: dict[str, Any]) -> dict[str, Any]:
         }
 
     mutated_query = _merge_query_patch(resolved_query, patch)
-    diagnostics = run_validation_diagnostics(_build_service_query(mutated_query, resolved_settings))
+    symbol_query = dict(mutated_query)
+    symbol_query["symbols"] = symbol
+    search_market = str(search_item.get("market") or "").strip().lower()
+    if search_market in {"kospi", "nasdaq", "all"}:
+        symbol_query["market_scope"] = search_market
+    diagnostics = run_validation_diagnostics(_build_service_query(symbol_query, resolved_settings))
     if not isinstance(diagnostics, dict) or diagnostics.get("error") or not diagnostics.get("ok"):
         return {
             "ok": False,
@@ -1501,7 +1507,7 @@ def revalidate_symbol_candidate(payload: dict[str, Any]) -> dict[str, Any]:
         search=search,
         search_item=search_item,
         base_query=resolved_query,
-        mutated_query=mutated_query,
+        mutated_query=symbol_query,
         settings=resolved_settings,
         diagnostics=diagnostics,
     )

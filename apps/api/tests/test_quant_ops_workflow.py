@@ -910,6 +910,30 @@ class QuantOpsWorkflowTests(unittest.TestCase):
         self.assertEqual("runtime_apply_requires_symbol_candidates", apply_result["error"])
         self.assertFalse(self.runtime_store["payload"])
 
+    def test_revalidate_symbol_limits_validation_to_selected_symbol(self):
+        captured_query: dict[str, list[str]] = {}
+
+        def _capture_validation(query):
+            captured_query.clear()
+            captured_query.update(query)
+            return _adopt_diagnostics()
+
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \
+             patch.object(svc, "load_runtime_optimized_params", return_value=None), \
+             patch.object(svc, "run_validation_diagnostics", side_effect=_capture_validation):
+            result = svc.revalidate_symbol_candidate({
+                "symbol": "AAA",
+                "query": {"market_scope": "all", "lookback_days": 365},
+                "settings": {"strategy": "운영 전략", "minTrades": 8},
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(["AAA"], captured_query["symbols"])
+        self.assertEqual(["365"], captured_query["lookback_days"])
+        self.assertEqual(["8"], captured_query["validation_min_trades"])
+        self.assertEqual(["true"], captured_query["walk_forward"])
+
     def test_symbol_candidate_requires_approval_then_saved_and_applied(self):
         execution_stub = types.ModuleType("services.execution_service")
         execution_stub.apply_quant_candidate_runtime_config = lambda candidate: {

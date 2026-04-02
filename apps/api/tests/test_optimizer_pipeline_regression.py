@@ -125,6 +125,16 @@ class OptimizerPipelineRegressionTests(unittest.TestCase):
             self.assertEqual('{"version":"search-atomic"}', output_path.read_text(encoding="utf-8"))
             self.assertEqual([], sorted(Path(tmpdir).glob(".optimized_params.json.*.tmp")))
 
+    def test_write_text_atomic_normalizes_permissions_for_local_workflows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "optimized_params.json"
+            output_path.write_text("old", encoding="utf-8")
+            output_path.chmod(0o600)
+
+            _write_text_atomic(output_path, '{"version":"search-atomic"}')
+
+            self.assertEqual(0o664, output_path.stat().st_mode & 0o777)
+
     def test_stage1_param_grid_only_expands_exit_dimensions(self):
         grid = build_stage1_param_grid({
             "stop_loss_pct": 6.0,

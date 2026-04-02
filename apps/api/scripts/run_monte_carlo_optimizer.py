@@ -429,6 +429,16 @@ def _write_text_atomic(path: Path, content: str, encoding: str = "utf-8") -> Non
     """원자적 교체로 텍스트 파일을 저장한다."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path: Path | None = None
+
+    def _safe_target_ids() -> tuple[int, int] | None:
+        for candidate in (path, path.parent):
+            try:
+                st = candidate.stat()
+                return st.st_uid, st.st_gid
+            except Exception:
+                continue
+        return None
+
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -442,7 +452,26 @@ def _write_text_atomic(path: Path, content: str, encoding: str = "utf-8") -> Non
             tmp_file.flush()
             os.fsync(tmp_file.fileno())
             tmp_path = Path(tmp_file.name)
+
+        target_ids = _safe_target_ids()
+        if target_ids is not None:
+            uid, gid = target_ids
+            try:
+                os.chown(tmp_path, uid, gid)
+            except PermissionError:
+                pass
+            except Exception:
+                pass
+        try:
+            os.chmod(tmp_path, 0o664)
+        except Exception:
+            pass
+
         tmp_path.replace(path)
+        try:
+            os.chmod(path, 0o664)
+        except Exception:
+            pass
     except Exception:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)

@@ -37,6 +37,7 @@ class BacktestConfig:
     max_holding_days: int = 15
     lookback_days: int = 1095
     markets: tuple[str, ...] = ("KOSPI",)
+    selected_symbols: tuple[str, ...] = ()
     rsi_min: float = 45.0
     rsi_max: float = 62.0
     volume_ratio_min: float = 1.2
@@ -58,6 +59,11 @@ def run_kospi_backtest(config: BacktestConfig | None = None) -> dict[str, Any]:
     market_profiles = _resolve_backtest_profiles(cfg)
     candidate_cache: dict[str, dict[str, dict[str, Any]]] = {}
     universe = _get_backtest_universe(cfg.markets)
+    if cfg.selected_symbols:
+        selected = {str(code).strip().upper() for code in cfg.selected_symbols if str(code).strip()}
+        universe = [item for item in universe if str(item[0]).strip().upper() in selected]
+        if not universe:
+            raise RuntimeError(f"선택한 종목 히스토리를 찾을 수 없습니다: {', '.join(sorted(selected))}")
     histories = _load_histories(universe, cfg.lookback_days, base_currency)
 
     available_histories = {
