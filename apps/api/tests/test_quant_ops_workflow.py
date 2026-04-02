@@ -930,6 +930,135 @@ class QuantOpsWorkflowTests(unittest.TestCase):
         self.assertEqual("applied", workflow["stage_status"]["symbol_runtime_apply"])
         self.assertEqual(1, workflow["symbol_summary"]["runtime_applied_count"])
 
+    def test_policy_override_can_promote_candidate_to_full_adopt(self):
+        custom_policy = {
+            "policy": {
+                "version": 7,
+                "thresholds": {
+                    "reject": {
+                        "blocked_reliability_levels": ["insufficient", "low"],
+                        "min_profit_factor": 0.95,
+                        "min_oos_return_pct": -2.0,
+                        "max_drawdown_pct": 30.0,
+                        "min_expected_shortfall_5_pct": -20.0,
+                    },
+                    "adopt": {
+                        "required_reliability": "high",
+                        "min_oos_return_pct": 0.0,
+                        "min_profit_factor": 1.04,
+                        "max_drawdown_pct": 23.0,
+                        "min_positive_window_ratio": 0.55,
+                        "min_expected_shortfall_5_pct": -13.0,
+                    },
+                    "limited_adopt": {
+                        "allowed_reliability_levels": ["high", "medium"],
+                        "min_oos_return_pct": 0.0,
+                        "min_profit_factor": 1.0,
+                        "max_drawdown_pct": 25.0,
+                        "min_positive_window_ratio": 0.45,
+                        "min_expected_shortfall_5_pct": -16.0,
+                        "min_near_miss_count": 1,
+                        "max_near_miss_count": 2,
+                    },
+                    "limited_adopt_runtime": {
+                        "risk_per_trade_pct_multiplier": 0.5,
+                        "risk_per_trade_pct_cap": 0.2,
+                        "max_positions_per_market_cap": 2,
+                        "max_symbol_weight_pct_cap": 10.0,
+                        "max_market_exposure_pct_cap": 35.0,
+                    },
+                },
+            },
+            "saved_at": _NOW,
+            "source": str(Path(self.tmpdir.name) / "quant_guardrail_policy.json"),
+        }
+
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \
+             patch.object(svc, "load_runtime_optimized_params", return_value=None), \
+             patch.object(svc, "load_quant_guardrail_policy", return_value=custom_policy), \
+             patch.object(svc, "run_validation_diagnostics", return_value=_limited_adopt_diagnostics()):
+            result = svc.revalidate_optimizer_candidate({
+                "query": {"market_scope": "kospi", "lookback_days": 365},
+                "settings": {"strategy": "정책 완화 전략", "minTrades": 8},
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("adopt", result["candidate"]["decision"]["status"])
+        self.assertEqual(7, result["candidate"]["guardrail_policy"]["version"])
+        self.assertEqual(7, result["workflow"]["guardrail_policy"]["version"])
+
+    def test_apply_runtime_includes_guardrail_policy_snapshot(self):
+        execution_stub = types.ModuleType("services.execution_service")
+        execution_stub.apply_quant_candidate_runtime_config = lambda candidate: {
+            "ok": True,
+            "state": {
+                "engine_state": "stopped",
+                "next_run_at": "",
+                "config": {},
+            },
+        }
+        custom_policy = {
+            "policy": {
+                "version": 9,
+                "thresholds": {
+                    "reject": {
+                        "blocked_reliability_levels": ["insufficient", "low"],
+                        "min_profit_factor": 0.95,
+                        "min_oos_return_pct": -2.0,
+                        "max_drawdown_pct": 30.0,
+                        "min_expected_shortfall_5_pct": -20.0,
+                    },
+                    "adopt": {
+                        "required_reliability": "high",
+                        "min_oos_return_pct": 0.0,
+                        "min_profit_factor": 1.08,
+                        "max_drawdown_pct": 22.0,
+                        "min_positive_window_ratio": 0.5,
+                        "min_expected_shortfall_5_pct": -15.0,
+                    },
+                    "limited_adopt": {
+                        "allowed_reliability_levels": ["high", "medium"],
+                        "min_oos_return_pct": 0.0,
+                        "min_profit_factor": 1.0,
+                        "max_drawdown_pct": 25.0,
+                        "min_positive_window_ratio": 0.45,
+                        "min_expected_shortfall_5_pct": -16.0,
+                        "min_near_miss_count": 1,
+                        "max_near_miss_count": 2,
+                    },
+                    "limited_adopt_runtime": {
+                        "risk_per_trade_pct_multiplier": 0.4,
+                        "risk_per_trade_pct_cap": 0.15,
+                        "max_positions_per_market_cap": 1,
+                        "max_symbol_weight_pct_cap": 8.0,
+                        "max_market_exposure_pct_cap": 25.0,
+                    },
+                },
+            },
+            "saved_at": _NOW,
+            "source": str(Path(self.tmpdir.name) / "quant_guardrail_policy.json"),
+        }
+
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \
+             patch.object(svc, "load_runtime_optimized_params", side_effect=lambda: self.runtime_store.get("payload") or None), \
+             patch.object(svc, "write_runtime_optimized_params", side_effect=self._runtime_writer), \
+             patch.object(svc, "load_quant_guardrail_policy", return_value=custom_policy), \
+             patch.object(svc, "run_validation_diagnostics", return_value=_limited_adopt_diagnostics()), \
+             patch.dict(sys.modules, {"services.execution_service": execution_stub}):
+            svc.revalidate_optimizer_candidate({
+                "query": {"market_scope": "kospi", "lookback_days": 365},
+                "settings": {"strategy": "제한 운영 전략", "minTrades": 8},
+            })
+            svc.save_validated_candidate({"note": "policy snapshot save"})
+            apply_result = svc.apply_saved_candidate_to_runtime({})
+
+        self.assertTrue(apply_result["ok"])
+        self.assertEqual(9, self.runtime_store["payload"]["guardrail_policy"]["version"])
+        self.assertEqual(9, self.runtime_store["payload"]["meta"]["guardrail_policy_version"])
+        self.assertEqual(0.15, self.runtime_store["payload"]["runtime_restrictions"]["risk_per_trade_pct_cap"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ import type {
   PortfolioStateResponse,
   QuantOpsActionResponse,
   PersistedValidationSettingsResponse,
+  QuantOpsGuardrailPolicyResponse,
   QuantOpsWorkflowResponse,
   ReportsExplainResponse,
   SignalsRankResponse,
@@ -90,6 +91,18 @@ export async function saveValidationSettings(query: BacktestQuery, settings: Val
 export async function resetValidationSettings(): Promise<PersistedValidationSettingsResponse> {
   const response = await postJSON<PersistedValidationSettingsResponse>('/api/validation/settings/reset', {});
   return response.data;
+}
+
+export function fetchQuantOpsPolicy() {
+  return getJSON<QuantOpsGuardrailPolicyResponse>('/api/quant-ops/policy', { noStore: true });
+}
+
+export function saveQuantOpsPolicy(policy: Record<string, unknown>) {
+  return postJSON<QuantOpsGuardrailPolicyResponse>('/api/quant-ops/policy/save', { policy });
+}
+
+export function resetQuantOpsPolicy() {
+  return postJSON<QuantOpsGuardrailPolicyResponse>('/api/quant-ops/policy/reset', {});
 }
 
 export function fetchQuantOpsWorkflow() {

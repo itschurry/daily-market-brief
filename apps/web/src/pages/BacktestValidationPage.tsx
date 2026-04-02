@@ -750,6 +750,41 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     [selectedSymbol, symbolCandidates],
   );
 
+  const [guardrailPolicyForm, setGuardrailPolicyForm] = useState<Record<string, string>>({});
+  const guardrailPolicy = workflowPayload?.guardrail_policy || null;
+
+  useEffect(() => {
+    if (!guardrailPolicy?.thresholds) return;
+    setGuardrailPolicyForm({
+      reject_blocked_reliability_levels: String((guardrailPolicy.thresholds.reject?.blocked_reliability_levels || []).join(', ')),
+      reject_min_profit_factor: String(guardrailPolicy.thresholds.reject?.min_profit_factor ?? ''),
+      reject_min_oos_return_pct: String(guardrailPolicy.thresholds.reject?.min_oos_return_pct ?? ''),
+      reject_max_drawdown_pct: String(guardrailPolicy.thresholds.reject?.max_drawdown_pct ?? ''),
+      reject_min_expected_shortfall_5_pct: String(guardrailPolicy.thresholds.reject?.min_expected_shortfall_5_pct ?? ''),
+      adopt_required_reliability: String(guardrailPolicy.thresholds.adopt?.required_reliability ?? ''),
+      adopt_min_oos_return_pct: String(guardrailPolicy.thresholds.adopt?.min_oos_return_pct ?? ''),
+      adopt_min_profit_factor: String(guardrailPolicy.thresholds.adopt?.min_profit_factor ?? ''),
+      adopt_max_drawdown_pct: String(guardrailPolicy.thresholds.adopt?.max_drawdown_pct ?? ''),
+      adopt_min_positive_window_ratio: String(guardrailPolicy.thresholds.adopt?.min_positive_window_ratio ?? ''),
+      adopt_min_expected_shortfall_5_pct: String(guardrailPolicy.thresholds.adopt?.min_expected_shortfall_5_pct ?? ''),
+      limited_allowed_reliability_levels: String((guardrailPolicy.thresholds.limited_adopt?.allowed_reliability_levels || []).join(', ')),
+      limited_min_oos_return_pct: String(guardrailPolicy.thresholds.limited_adopt?.min_oos_return_pct ?? ''),
+      limited_min_profit_factor: String(guardrailPolicy.thresholds.limited_adopt?.min_profit_factor ?? ''),
+      limited_max_drawdown_pct: String(guardrailPolicy.thresholds.limited_adopt?.max_drawdown_pct ?? ''),
+      limited_min_positive_window_ratio: String(guardrailPolicy.thresholds.limited_adopt?.min_positive_window_ratio ?? ''),
+      limited_min_expected_shortfall_5_pct: String(guardrailPolicy.thresholds.limited_adopt?.min_expected_shortfall_5_pct ?? ''),
+      limited_min_near_miss_count: String(guardrailPolicy.thresholds.limited_adopt?.min_near_miss_count ?? ''),
+      limited_max_near_miss_count: String(guardrailPolicy.thresholds.limited_adopt?.max_near_miss_count ?? ''),
+      runtime_risk_per_trade_pct_multiplier: String(guardrailPolicy.thresholds.limited_adopt_runtime?.risk_per_trade_pct_multiplier ?? ''),
+      runtime_risk_per_trade_pct_cap: String(guardrailPolicy.thresholds.limited_adopt_runtime?.risk_per_trade_pct_cap ?? ''),
+      runtime_max_positions_per_market_cap: String(guardrailPolicy.thresholds.limited_adopt_runtime?.max_positions_per_market_cap ?? ''),
+      runtime_max_symbol_weight_pct_cap: String(guardrailPolicy.thresholds.limited_adopt_runtime?.max_symbol_weight_pct_cap ?? ''),
+      runtime_max_market_exposure_pct_cap: String(guardrailPolicy.thresholds.limited_adopt_runtime?.max_market_exposure_pct_cap ?? ''),
+    });
+  }, [guardrailPolicy?.saved_at, guardrailPolicy?.thresholds]);
+
+  const guardrailPolicyBusy = quantWorkflow.busyAction === 'save_policy' || quantWorkflow.busyAction === 'reset_policy';
+
   useEffect(() => {
     if (symbolCandidates.length === 0) {
       if (selectedSymbol) setSelectedSymbol('');
@@ -1115,6 +1150,64 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     push('error', 'optimizer 후보 재검증이 실패했습니다.', payload?.error || quantWorkflow.lastError || 'workflow 상태를 확인하세요.', 'quant-workflow');
     pushToast({ tone: 'error', title: '재검증 실패', description: payload?.error || quantWorkflow.lastError || 'workflow 상태를 확인하세요.' });
   }, [push, pushToast, quantWorkflow, validationStore.savedQuery, validationStore.savedSettings, validationStore.unsaved]);
+
+  const handleSaveGuardrailPolicy = useCallback(async () => {
+    const payload = await quantWorkflow.savePolicy({
+      version: Number(guardrailPolicy?.version || 1),
+      thresholds: {
+        reject: {
+          blocked_reliability_levels: guardrailPolicyForm.reject_blocked_reliability_levels.split(',').map((item) => item.trim()).filter(Boolean),
+          min_profit_factor: Number(guardrailPolicyForm.reject_min_profit_factor),
+          min_oos_return_pct: Number(guardrailPolicyForm.reject_min_oos_return_pct),
+          max_drawdown_pct: Number(guardrailPolicyForm.reject_max_drawdown_pct),
+          min_expected_shortfall_5_pct: Number(guardrailPolicyForm.reject_min_expected_shortfall_5_pct),
+        },
+        adopt: {
+          required_reliability: guardrailPolicyForm.adopt_required_reliability.trim(),
+          min_oos_return_pct: Number(guardrailPolicyForm.adopt_min_oos_return_pct),
+          min_profit_factor: Number(guardrailPolicyForm.adopt_min_profit_factor),
+          max_drawdown_pct: Number(guardrailPolicyForm.adopt_max_drawdown_pct),
+          min_positive_window_ratio: Number(guardrailPolicyForm.adopt_min_positive_window_ratio),
+          min_expected_shortfall_5_pct: Number(guardrailPolicyForm.adopt_min_expected_shortfall_5_pct),
+        },
+        limited_adopt: {
+          allowed_reliability_levels: guardrailPolicyForm.limited_allowed_reliability_levels.split(',').map((item) => item.trim()).filter(Boolean),
+          min_oos_return_pct: Number(guardrailPolicyForm.limited_min_oos_return_pct),
+          min_profit_factor: Number(guardrailPolicyForm.limited_min_profit_factor),
+          max_drawdown_pct: Number(guardrailPolicyForm.limited_max_drawdown_pct),
+          min_positive_window_ratio: Number(guardrailPolicyForm.limited_min_positive_window_ratio),
+          min_expected_shortfall_5_pct: Number(guardrailPolicyForm.limited_min_expected_shortfall_5_pct),
+          min_near_miss_count: Number(guardrailPolicyForm.limited_min_near_miss_count),
+          max_near_miss_count: Number(guardrailPolicyForm.limited_max_near_miss_count),
+        },
+        limited_adopt_runtime: {
+          risk_per_trade_pct_multiplier: Number(guardrailPolicyForm.runtime_risk_per_trade_pct_multiplier),
+          risk_per_trade_pct_cap: Number(guardrailPolicyForm.runtime_risk_per_trade_pct_cap),
+          max_positions_per_market_cap: Number(guardrailPolicyForm.runtime_max_positions_per_market_cap),
+          max_symbol_weight_pct_cap: Number(guardrailPolicyForm.runtime_max_symbol_weight_pct_cap),
+          max_market_exposure_pct_cap: Number(guardrailPolicyForm.runtime_max_market_exposure_pct_cap),
+        },
+      },
+    });
+    if (payload?.ok) {
+      push('success', 'Guardrail policy를 저장했습니다.', '다음 Revalidate부터 새 기준이 바로 적용됩니다.', 'quant-workflow');
+      pushToast({ tone: 'success', title: 'Guardrail policy 저장', description: 'Revalidate / Save / Apply 기준을 갱신했습니다.' });
+      return;
+    }
+    push('error', 'Guardrail policy 저장이 실패했습니다.', payload?.error || quantWorkflow.lastError || '입력값과 서버 상태를 확인하세요.', 'quant-workflow');
+    pushToast({ tone: 'error', title: 'Guardrail policy 저장 실패', description: payload?.error || quantWorkflow.lastError || '입력값과 서버 상태를 확인하세요.' });
+  }, [guardrailPolicy?.version, guardrailPolicyForm, push, pushToast, quantWorkflow]);
+
+  const handleResetGuardrailPolicy = useCallback(async () => {
+    const payload = await quantWorkflow.resetPolicy();
+    if (payload?.ok) {
+      push('info', 'Guardrail policy를 기본값으로 되돌렸습니다.', '현재 운영 기본값과 동일한 기준으로 복구했습니다.', 'quant-workflow');
+      pushToast({ tone: 'info', title: 'Guardrail policy 초기화', description: '기본 기준으로 되돌렸습니다.' });
+      return;
+    }
+    push('error', 'Guardrail policy 초기화가 실패했습니다.', payload?.error || quantWorkflow.lastError || '서버 상태를 확인하세요.', 'quant-workflow');
+    pushToast({ tone: 'error', title: 'Guardrail policy 초기화 실패', description: payload?.error || quantWorkflow.lastError || '서버 상태를 확인하세요.' });
+  }, [push, pushToast, quantWorkflow]);
 
   const handleSaveValidatedCandidate = useCallback(async () => {
     const payload = await quantWorkflow.saveCandidate(latestValidatedCandidate?.id);
@@ -1726,6 +1819,85 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   <div><strong>실행 순서</strong> 1) 설정 저장 2) 백테스트 3) Search 4) Revalidate 5) Save 6) Apply</div>
                   <div>Search는 optimizer로 후보 풀을 만들고, Revalidate는 같은 버전을 현재 baseline 기준으로 다시 판정합니다.</div>
                   <div>Baseline 진단은 보조 단계이며, Search 전에 막힌 이유를 빠르게 확인할 때 사용합니다.</div>
+                </div>
+
+                <div className="page-section" style={{ marginTop: 12, padding: 16 }}>
+                  <div className="section-head-row">
+                    <div>
+                      <div className="section-title">Guardrail Policy</div>
+                      <div className="section-copy">Revalidate → Save → Apply 판정에 쓰는 기준값이야. 개인용 운영 기준이라 복잡한 권한 대신 바로 수정되게 열어뒀고, 저장하면 다음 재검증부터 반영돼.</div>
+                    </div>
+                    <div className={`inline-badge ${guardrailPolicyBusy ? 'is-warning' : 'is-success'}`}>
+                      v{String(guardrailPolicy?.version || '-')} · {guardrailPolicy?.saved_at ? formatDateTime(guardrailPolicy.saved_at) : '기본값'}
+                    </div>
+                  </div>
+                  <div className="validation-report-grid" style={{ marginTop: 12 }}>
+                    <div className="detail-list">
+                      <div><strong>Reject 게이트</strong></div>
+                      <label>차단 reliability (comma)</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.reject_blocked_reliability_levels || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, reject_blocked_reliability_levels: event.target.value }))} />
+                      <label>최소 PF</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.reject_min_profit_factor || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, reject_min_profit_factor: event.target.value }))} />
+                      <label>최소 OOS 수익률 %</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.reject_min_oos_return_pct || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, reject_min_oos_return_pct: event.target.value }))} />
+                      <label>최대 낙폭 %</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.reject_max_drawdown_pct || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, reject_max_drawdown_pct: event.target.value }))} />
+                      <label>최소 ES(5%) %</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.reject_min_expected_shortfall_5_pct || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, reject_min_expected_shortfall_5_pct: event.target.value }))} />
+                    </div>
+                    <div className="detail-list">
+                      <div><strong>Adopt 게이트</strong></div>
+                      <label>필수 reliability</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.adopt_required_reliability || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, adopt_required_reliability: event.target.value }))} />
+                      <label>최소 OOS 수익률 %</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.adopt_min_oos_return_pct || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, adopt_min_oos_return_pct: event.target.value }))} />
+                      <label>최소 PF</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.adopt_min_profit_factor || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, adopt_min_profit_factor: event.target.value }))} />
+                      <label>최대 낙폭 %</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.adopt_max_drawdown_pct || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, adopt_max_drawdown_pct: event.target.value }))} />
+                      <label>최소 양수 윈도우 비율</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.adopt_min_positive_window_ratio || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, adopt_min_positive_window_ratio: event.target.value }))} />
+                      <label>최소 ES(5%) %</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.adopt_min_expected_shortfall_5_pct || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, adopt_min_expected_shortfall_5_pct: event.target.value }))} />
+                    </div>
+                    <div className="detail-list">
+                      <div><strong>Limited adopt + probation</strong></div>
+                      <label>허용 reliability (comma)</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.limited_allowed_reliability_levels || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, limited_allowed_reliability_levels: event.target.value }))} />
+                      <label>최소 PF</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.limited_min_profit_factor || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, limited_min_profit_factor: event.target.value }))} />
+                      <label>최대 낙폭 %</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.limited_max_drawdown_pct || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, limited_max_drawdown_pct: event.target.value }))} />
+                      <label>최소 양수 윈도우 비율</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.limited_min_positive_window_ratio || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, limited_min_positive_window_ratio: event.target.value }))} />
+                      <label>최소 ES(5%) %</label>
+                      <input className="backtest-input" value={guardrailPolicyForm.limited_min_expected_shortfall_5_pct || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, limited_min_expected_shortfall_5_pct: event.target.value }))} />
+                      <label>near miss 최소/최대 개수</label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <input className="backtest-input" value={guardrailPolicyForm.limited_min_near_miss_count || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, limited_min_near_miss_count: event.target.value }))} />
+                        <input className="backtest-input" value={guardrailPolicyForm.limited_max_near_miss_count || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, limited_max_near_miss_count: event.target.value }))} />
+                      </div>
+                      <label>Runtime risk multiplier / cap</label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <input className="backtest-input" value={guardrailPolicyForm.runtime_risk_per_trade_pct_multiplier || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, runtime_risk_per_trade_pct_multiplier: event.target.value }))} />
+                        <input className="backtest-input" value={guardrailPolicyForm.runtime_risk_per_trade_pct_cap || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, runtime_risk_per_trade_pct_cap: event.target.value }))} />
+                      </div>
+                      <label>Runtime 포지션 / 익스포저 cap</label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                        <input className="backtest-input" value={guardrailPolicyForm.runtime_max_positions_per_market_cap || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, runtime_max_positions_per_market_cap: event.target.value }))} />
+                        <input className="backtest-input" value={guardrailPolicyForm.runtime_max_symbol_weight_pct_cap || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, runtime_max_symbol_weight_pct_cap: event.target.value }))} />
+                        <input className="backtest-input" value={guardrailPolicyForm.runtime_max_market_exposure_pct_cap || ''} onChange={(event) => setGuardrailPolicyForm((prev) => ({ ...prev, runtime_max_market_exposure_pct_cap: event.target.value }))} />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="execution-button-row" style={{ marginTop: 12 }}>
+                    <button className="console-action-button" onClick={() => { void handleSaveGuardrailPolicy(); }} disabled={guardrailPolicyBusy}>
+                      {quantWorkflow.busyAction === 'save_policy' ? '정책 저장 중...' : 'Guardrail policy 저장'}
+                    </button>
+                    <button className="console-action-button" onClick={() => { void handleResetGuardrailPolicy(); }} disabled={guardrailPolicyBusy}>
+                      {quantWorkflow.busyAction === 'reset_policy' ? '기본값 복구 중...' : '기본값으로 되돌리기'}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="execution-button-row" style={{ marginTop: 12 }}>

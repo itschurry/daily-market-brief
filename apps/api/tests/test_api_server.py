@@ -30,10 +30,13 @@ def _install_server_route_stubs() -> list[str]:
         },
         "routes.portfolio": {"handle_portfolio_state": lambda refresh=True: (200, {"refresh": refresh})},
         "routes.quant_ops": {
+            "handle_get_quant_ops_policy": lambda: (200, {"ok": True}),
             "handle_get_quant_ops_workflow": lambda: (200, {"ok": True}),
             "handle_quant_ops_apply_runtime": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_revalidate": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_revalidate_symbol": lambda payload: (200, {"payload": payload}),
+            "handle_quant_ops_reset_policy": lambda: (200, {"ok": True}),
+            "handle_quant_ops_save_policy": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_set_symbol_approval": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_save_symbol_candidate": lambda payload: (200, {"payload": payload}),
             "handle_quant_ops_save_candidate": lambda payload: (200, {"payload": payload}),
@@ -213,12 +216,30 @@ class ApiServerDispatchTests(unittest.TestCase):
         mock_save.assert_called_once_with({"query": {"market_scope": "kospi"}})
         mock_reset.assert_called_once_with()
 
+    def test_dispatch_get_routes_quant_ops_policy(self):
+        with patch("server.handle_get_quant_ops_policy", return_value=(200, {"ok": True, "policy": {"version": 1}})) as mock_handler:
+            result = dispatch_get("/api/quant-ops/policy", {})
+
+        self.assertEqual((200, {"ok": True, "policy": {"version": 1}}), result)
+        mock_handler.assert_called_once_with()
+
     def test_dispatch_get_routes_quant_ops_workflow(self):
         with patch("server.handle_get_quant_ops_workflow", return_value=(200, {"ok": True, "stage_status": {}})) as mock_handler:
             result = dispatch_get("/api/quant-ops/workflow", {})
 
         self.assertEqual((200, {"ok": True, "stage_status": {}}), result)
         mock_handler.assert_called_once_with()
+
+    def test_dispatch_post_routes_quant_ops_policy_actions(self):
+        with patch("server.handle_quant_ops_save_policy", return_value=(200, {"ok": True})) as mock_save, \
+             patch("server.handle_quant_ops_reset_policy", return_value=(200, {"ok": True, "policy": {"version": 1}})) as mock_reset:
+            save_result = dispatch_post("/api/quant-ops/policy/save", {"policy": {"version": 1}})
+            reset_result = dispatch_post("/api/quant-ops/policy/reset", {})
+
+        self.assertEqual((200, {"ok": True}), save_result)
+        self.assertEqual((200, {"ok": True, "policy": {"version": 1}}), reset_result)
+        mock_save.assert_called_once_with({"policy": {"version": 1}})
+        mock_reset.assert_called_once_with()
 
     def test_dispatch_post_routes_quant_ops_actions(self):
         with patch("server.handle_quant_ops_revalidate", return_value=(200, {"ok": True})) as mock_handler:

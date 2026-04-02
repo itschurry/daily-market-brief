@@ -419,6 +419,52 @@ export interface PersistedValidationSettingsResponse {
   error?: string;
 }
 
+export interface QuantOpsGuardrailPolicyPayload {
+  version?: number;
+  thresholds?: {
+    reject?: {
+      blocked_reliability_levels?: string[];
+      min_profit_factor?: number;
+      min_oos_return_pct?: number;
+      max_drawdown_pct?: number;
+      min_expected_shortfall_5_pct?: number;
+    };
+    adopt?: {
+      required_reliability?: string;
+      min_oos_return_pct?: number;
+      min_profit_factor?: number;
+      max_drawdown_pct?: number;
+      min_positive_window_ratio?: number;
+      min_expected_shortfall_5_pct?: number;
+    };
+    limited_adopt?: {
+      allowed_reliability_levels?: string[];
+      min_oos_return_pct?: number;
+      min_profit_factor?: number;
+      max_drawdown_pct?: number;
+      min_positive_window_ratio?: number;
+      min_expected_shortfall_5_pct?: number;
+      min_near_miss_count?: number;
+      max_near_miss_count?: number;
+    };
+    limited_adopt_runtime?: {
+      risk_per_trade_pct_multiplier?: number;
+      risk_per_trade_pct_cap?: number;
+      max_positions_per_market_cap?: number;
+      max_symbol_weight_pct_cap?: number;
+      max_market_exposure_pct_cap?: number;
+    };
+  };
+}
+
+export interface QuantOpsGuardrailPolicyResponse {
+  ok?: boolean;
+  policy?: QuantOpsGuardrailPolicyPayload;
+  saved_at?: string;
+  source?: string;
+  error?: string;
+}
+
 export interface QuantOpsDecisionPayload {
   status?: string;
   label?: string;
@@ -485,6 +531,7 @@ export interface QuantOpsCandidatePayload {
   };
   decision?: QuantOpsDecisionPayload;
   guardrails?: QuantOpsGuardrailsPayload;
+  guardrail_policy?: QuantOpsGuardrailPolicyResponse["policy"] & { saved_at?: string; source?: string };
   diagnosis?: WalkForwardDiagnosisPayload;
   research?: ValidationDiagnosticsResponse['research'];
   validation?: ValidationResponse;
@@ -516,6 +563,7 @@ export interface QuantOpsRuntimeApplyPayload {
   engine_state?: string;
   next_run_at?: string;
   runtime_candidate_source_mode?: string;
+  guardrail_policy?: QuantOpsGuardrailPolicyResponse["policy"] & { saved_at?: string; source?: string };
 }
 
 export interface QuantOpsSymbolApprovalPayload {
@@ -553,6 +601,7 @@ export interface QuantOpsSymbolWorkflowItemPayload {
 
 export interface QuantOpsWorkflowResponse {
   ok?: boolean;
+  guardrail_policy?: QuantOpsGuardrailPolicyResponse["policy"] & { saved_at?: string; source?: string };
   search_result?: QuantOpsSearchResultPayload;
   search_handoff?: {
     requested_at?: string;

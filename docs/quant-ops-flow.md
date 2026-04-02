@@ -143,11 +143,13 @@ Baseline 결과를 해부한다.
 - `quant_ops_state.json`에 종목별 latest/saved/approval/runtime 상태도 분리 저장
 - `optimized_params.json`(탐색 결과)와 `runtime_optimized_params.json`(운영 반영본)을 분리
 - 저장 API와 runtime apply API가 재검증 guardrail 통과 전에는 실행되지 않도록 차단
+- `quant_guardrail_policy.json` 으로 reject / adopt / limited_adopt / probation runtime clamp 기준을 저장·수정·초기화할 수 있게 분리
 - paper engine current config가 저장 후보 반영 시 같이 갱신되도록 연결
 - 종목별 API(`revalidate-symbol`, `set-symbol-approval`, `save-symbol-candidate`)로 운영자 승인 흐름을 명시
 
 ### UI/UX
 - 퀀트 검증 화면 상단에 6단계 workflow 레일 추가
+- Validation → Runtime 영역 안에 Guardrail Policy 편집 카드를 추가해서 기준값을 직접 조정 가능
 - Search / Validated Candidate / Saved / Runtime Apply 상태를 각각 카드로 분리
 - Per-Symbol Candidate Approval 패널에서 종목별 재검증/승인/저장/가드레일 상태를 분리
 - baseline 진단과 optimizer 후보 재검증을 별도 버튼/영역으로 분리
@@ -156,7 +158,7 @@ Baseline 결과를 해부한다.
 ---
 
 ## 한 줄 요약
-최적화는 후보 탐색이고, 재검증이 최종 판단이며, 저장은 재검증 통과 후에만 한다.
+최적화는 후보 탐색이고, 재검증이 최종 판단이며, 저장은 재검증 통과 후에만 한다. 이제 그 판단 기준도 UI/API에서 바로 조정할 수 있다.
 
 
 ## Runtime candidate source mode

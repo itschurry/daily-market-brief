@@ -737,13 +737,53 @@ curl http://127.0.0.1:8001/api/quant-ops/workflow | jq
 
 주요 필드:
 
+- `guardrail_policy` — 현재 채택/보류/거절 정책 스냅샷
 - `search_result` — optimizer 탐색 결과 요약
-- `latest_candidate` — 가장 최근 재검증 후보
+- `latest_candidate` — 가장 최근 재검증 후보 (`guardrail_policy`, `decision.policy_version` 포함)
 - `saved_candidate` — 저장된 후보
 - `runtime_apply` — 실제 runtime 반영 상태
 - `stage_status` — `candidate_search` / `revalidation` / `save` / `runtime_apply`
 
-## 6-12. `POST /api/quant-ops/revalidate`
+## 6-12. `GET /api/quant-ops/policy`
+
+현재 quant guardrail policy 조회.
+
+```bash
+curl http://127.0.0.1:8001/api/quant-ops/policy | jq
+```
+
+주요 필드:
+
+- `policy.thresholds.reject` — 즉시 reject/차단 기준
+- `policy.thresholds.adopt` — full adopt 기준
+- `policy.thresholds.limited_adopt` — limited adopt 기준
+- `policy.thresholds.limited_adopt_runtime` — 제한 채택 시 runtime clamp 기준
+
+## 6-13. `POST /api/quant-ops/policy/save`
+
+현재 guardrail policy 저장.
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/quant-ops/policy/save   -H "Content-Type: application/json"   -d '{
+    "policy": {
+      "version": 1,
+      "thresholds": {
+        "adopt": {"min_profit_factor": 1.12},
+        "limited_adopt": {"max_near_miss_count": 2}
+      }
+    }
+  }' | jq
+```
+
+## 6-14. `POST /api/quant-ops/policy/reset`
+
+기본 guardrail policy로 복구.
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/quant-ops/policy/reset -H "Content-Type: application/json" -d '{}' | jq
+```
+
+## 6-15. `POST /api/quant-ops/revalidate`
 
 optimizer 탐색 결과를 현재 baseline 기준으로 다시 검증한다.
 
@@ -759,7 +799,7 @@ curl -X POST http://127.0.0.1:8001/api/quant-ops/revalidate   -H "Content-Type: 
 - optimizer 결과가 없으면 실패
 - 결과는 `latest_candidate` 로 저장되지만 아직 runtime 반영은 아님
 
-## 6-13. `POST /api/quant-ops/save-candidate`
+## 6-16. `POST /api/quant-ops/save-candidate`
 
 재검증 통과 후보 저장.
 
@@ -772,7 +812,7 @@ curl -X POST http://127.0.0.1:8001/api/quant-ops/save-candidate   -H "Content-Ty
 - `latest_candidate.guardrails.can_save` 가 `true` 인 경우에만 성공
 - 보류/거절 후보거나 optimizer 버전이 바뀌면 차단
 
-## 6-14. `POST /api/quant-ops/apply-runtime`
+## 6-17. `POST /api/quant-ops/apply-runtime`
 
 저장된 후보를 paper/runtime 설정으로 반영.
 

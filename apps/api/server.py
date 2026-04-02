@@ -13,12 +13,15 @@ from routes.optimization import (
 )
 from routes.portfolio import handle_portfolio_state
 from routes.quant_ops import (
+    handle_get_quant_ops_policy,
     handle_get_quant_ops_workflow,
     handle_quant_ops_apply_runtime,
     handle_quant_ops_revalidate,
     handle_quant_ops_revalidate_symbol,
     handle_quant_ops_save_symbol_candidate,
+    handle_quant_ops_reset_policy,
     handle_quant_ops_save_candidate,
+    handle_quant_ops_save_policy,
     handle_quant_ops_set_symbol_approval,
 )
 from routes.reports import (
@@ -96,6 +99,7 @@ GET_ROUTES: tuple[Route, ...] = (
     Route("/api/validation/diagnostics", lambda _path, query: handle_validation_diagnostics(query)),
     Route("/api/validation/settings", lambda _path, _query: handle_validation_settings_get()),
     Route("/api/quant-ops/workflow", lambda _path, _query: handle_get_quant_ops_workflow()),
+    Route("/api/quant-ops/policy", lambda _path, _query: handle_get_quant_ops_policy()),
     Route("/api/reports/explain", lambda _path, query: handle_reports_explain(_query_value(query, "date") or None)),
     Route("/api/reports/index", lambda _path, _query: handle_reports_index()),
     Route("/api/live-market", lambda _path, _query: handle_live_market()),
@@ -149,6 +153,8 @@ POST_ROUTES: tuple[Route, ...] = (
     Route("/api/run-optimization", lambda _path, _payload: handle_run_optimization(_payload)),
     Route("/api/validation/settings/save", lambda _path, payload: handle_validation_settings_save(payload)),
     Route("/api/validation/settings/reset", lambda _path, _payload: handle_validation_settings_reset()),
+    Route("/api/quant-ops/policy/save", lambda _path, payload: handle_quant_ops_save_policy(payload)),
+    Route("/api/quant-ops/policy/reset", lambda _path, _payload: handle_quant_ops_reset_policy()),
     Route("/api/quant-ops/revalidate", lambda _path, payload: handle_quant_ops_revalidate(payload)),
     Route("/api/quant-ops/revalidate-symbol", lambda _path, payload: handle_quant_ops_revalidate_symbol(payload)),
     Route("/api/quant-ops/set-symbol-approval", lambda _path, payload: handle_quant_ops_set_symbol_approval(payload)),

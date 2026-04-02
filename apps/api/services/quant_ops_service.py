@@ -22,6 +22,7 @@ from services.optimized_params_store import (
     load_search_optimized_params,
     write_runtime_optimized_params,
 )
+from services.quant_guardrail_policy_store import load_quant_guardrail_policy
 from services.validation_service import run_validation_diagnostics
 from services.signal_service import normalize_runtime_candidate_source_mode
 
@@ -47,29 +48,6 @@ _OPTIMIZABLE_KEYS = {
 _OPTIMIZED_PARAMS_MAX_AGE_DAYS = 30
 _OPTIMIZER_MAX_RUNTIME_SECONDS = 3900
 _SYMBOL_APPROVAL_STATUSES = {"approved", "rejected", "hold"}
-
-_FULL_ADOPT_THRESHOLDS = {
-    "profit_factor": 1.08,
-    "max_drawdown_pct": 22.0,
-    "positive_window_ratio": 0.5,
-    "expected_shortfall_5_pct": -15.0,
-}
-
-_LIMITED_ADOPT_CORE_THRESHOLDS = {
-    "profit_factor": 1.0,
-    "max_drawdown_pct": 25.0,
-    "positive_window_ratio": 0.45,
-    "expected_shortfall_5_pct": -16.0,
-    "allowed_reliability_levels": {"high", "medium"},
-}
-
-_LIMITED_ADOPT_RUNTIME_RESTRICTIONS = {
-    "risk_per_trade_pct_multiplier": 0.5,
-    "risk_per_trade_pct_cap": 0.2,
-    "max_positions_per_market_cap": 2,
-    "max_symbol_weight_pct_cap": 10.0,
-    "max_market_exposure_pct_cap": 35.0,
-}
 
 
 def _default_state() -> dict[str, Any]:
@@ -623,7 +601,25 @@ def _blocked_guardrail_reasons(
     return [fallback]
 
 
-def _candidate_decision(metrics: dict[str, Any], *, min_trades: int, search_is_stale: bool, search_version_changed: bool) -> tuple[dict[str, Any], dict[str, Any]]:
+
+
+def _current_guardrail_policy() -> dict[str, Any]:
+    payload = load_quant_guardrail_policy()
+    policy = payload.get("policy") if isinstance(payload.get("policy"), dict) else {}
+    return {
+        "version": policy.get("version"),
+        "thresholds": copy.deepcopy(policy.get("thresholds") if isinstance(policy.get("thresholds"), dict) else {}),
+        "saved_at": str(payload.get("saved_at") or ""),
+        "source": str(payload.get("source") or ""),
+    }
+def _candidate_decision(
+    metrics: dict[str, Any],
+    *,
+    min_trades: int,
+    search_is_stale: bool,
+    search_version_changed: bool,
+    policy: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     oos_return = _to_float(metrics.get("oos_return_pct"), 0.0)
     profit_factor = _to_float(metrics.get("profit_factor"), 0.0)
     max_drawdown_pct = _to_float(metrics.get("max_drawdown_pct"), 0.0)
@@ -631,6 +627,19 @@ def _candidate_decision(metrics: dict[str, Any], *, min_trades: int, search_is_s
     reliability = str(metrics.get("reliability") or "insufficient")
     positive_window_ratio = _to_float(metrics.get("positive_window_ratio"), 0.0)
     expected_shortfall = _to_float(metrics.get("expected_shortfall_5_pct"), 0.0)
+    policy = policy if isinstance(policy, dict) else _current_guardrail_policy()
+    thresholds = policy.get("thresholds") if isinstance(policy.get("thresholds"), dict) else {}
+    reject_thresholds = thresholds.get("reject") if isinstance(thresholds.get("reject"), dict) else {}
+    adopt_thresholds = thresholds.get("adopt") if isinstance(thresholds.get("adopt"), dict) else {}
+    limited_thresholds = thresholds.get("limited_adopt") if isinstance(thresholds.get("limited_adopt"), dict) else {}
+    blocked_reliability_levels = {
+        str(item).strip().lower()
+        for item in (reject_thresholds.get("blocked_reliability_levels") if isinstance(reject_thresholds.get("blocked_reliability_levels"), list) else [])
+    }
+    allowed_reliability_levels = {
+        str(item).strip().lower()
+        for item in (limited_thresholds.get("allowed_reliability_levels") if isinstance(limited_thresholds.get("allowed_reliability_levels"), list) else [])
+    }
 
     decision_status = "hold"
     decision_label = "보류"
@@ -641,26 +650,26 @@ def _candidate_decision(metrics: dict[str, Any], *, min_trades: int, search_is_s
     hard_reasons: list[str] = []
     if trade_count < max(1, min_trades):
         hard_reasons.append("validation_min_trades_not_met")
-    if reliability in {"low", "insufficient"}:
+    if reliability in blocked_reliability_levels:
         hard_reasons.append("oos_reliability_low")
-    if profit_factor < 0.95:
+    if profit_factor < _to_float(reject_thresholds.get("min_profit_factor"), 0.95):
         hard_reasons.append("profit_factor_too_low")
-    if oos_return < -2.0:
+    if oos_return < _to_float(reject_thresholds.get("min_oos_return_pct"), -2.0):
         hard_reasons.append("oos_return_negative")
-    if abs(max_drawdown_pct) > 30.0:
+    if abs(max_drawdown_pct) > _to_float(reject_thresholds.get("max_drawdown_pct"), 30.0):
         hard_reasons.append("max_drawdown_too_large")
-    if expected_shortfall < -20.0:
+    if expected_shortfall < _to_float(reject_thresholds.get("min_expected_shortfall_5_pct"), -20.0):
         hard_reasons.append("tail_risk_too_large")
 
     if not hard_reasons:
         if (
-            oos_return > 0.0
-            and reliability == "high"
-            and profit_factor >= _FULL_ADOPT_THRESHOLDS["profit_factor"]
-            and abs(max_drawdown_pct) <= _FULL_ADOPT_THRESHOLDS["max_drawdown_pct"]
+            oos_return > _to_float(adopt_thresholds.get("min_oos_return_pct"), 0.0)
+            and reliability == str(adopt_thresholds.get("required_reliability") or "high")
+            and profit_factor >= _to_float(adopt_thresholds.get("min_profit_factor"), 1.08)
+            and abs(max_drawdown_pct) <= _to_float(adopt_thresholds.get("max_drawdown_pct"), 22.0)
             and trade_count >= max(1, min_trades)
-            and positive_window_ratio >= _FULL_ADOPT_THRESHOLDS["positive_window_ratio"]
-            and expected_shortfall >= _FULL_ADOPT_THRESHOLDS["expected_shortfall_5_pct"]
+            and positive_window_ratio >= _to_float(adopt_thresholds.get("min_positive_window_ratio"), 0.5)
+            and expected_shortfall >= _to_float(adopt_thresholds.get("min_expected_shortfall_5_pct"), -15.0)
         ):
             decision_status = "adopt"
             decision_label = "채택 후보"
@@ -668,22 +677,24 @@ def _candidate_decision(metrics: dict[str, Any], *, min_trades: int, search_is_s
             approval_level = "full"
         else:
             limited_core_pass = (
-                oos_return > 0.0
-                and reliability in _LIMITED_ADOPT_CORE_THRESHOLDS["allowed_reliability_levels"]
+                oos_return > _to_float(limited_thresholds.get("min_oos_return_pct"), 0.0)
+                and reliability in allowed_reliability_levels
                 and trade_count >= max(1, min_trades)
-                and profit_factor >= _LIMITED_ADOPT_CORE_THRESHOLDS["profit_factor"]
-                and abs(max_drawdown_pct) <= _LIMITED_ADOPT_CORE_THRESHOLDS["max_drawdown_pct"]
-                and positive_window_ratio >= _LIMITED_ADOPT_CORE_THRESHOLDS["positive_window_ratio"]
-                and expected_shortfall >= _LIMITED_ADOPT_CORE_THRESHOLDS["expected_shortfall_5_pct"]
+                and profit_factor >= _to_float(limited_thresholds.get("min_profit_factor"), 1.0)
+                and abs(max_drawdown_pct) <= _to_float(limited_thresholds.get("max_drawdown_pct"), 25.0)
+                and positive_window_ratio >= _to_float(limited_thresholds.get("min_positive_window_ratio"), 0.45)
+                and expected_shortfall >= _to_float(limited_thresholds.get("min_expected_shortfall_5_pct"), -16.0)
             )
             threshold_checks = [
-                ("profit_factor", profit_factor >= _FULL_ADOPT_THRESHOLDS["profit_factor"]),
-                ("max_drawdown_pct", abs(max_drawdown_pct) <= _FULL_ADOPT_THRESHOLDS["max_drawdown_pct"]),
-                ("positive_window_ratio", positive_window_ratio >= _FULL_ADOPT_THRESHOLDS["positive_window_ratio"]),
-                ("expected_shortfall_5_pct", expected_shortfall >= _FULL_ADOPT_THRESHOLDS["expected_shortfall_5_pct"]),
+                ("profit_factor", profit_factor >= _to_float(adopt_thresholds.get("min_profit_factor"), 1.08)),
+                ("max_drawdown_pct", abs(max_drawdown_pct) <= _to_float(adopt_thresholds.get("max_drawdown_pct"), 22.0)),
+                ("positive_window_ratio", positive_window_ratio >= _to_float(adopt_thresholds.get("min_positive_window_ratio"), 0.5)),
+                ("expected_shortfall_5_pct", expected_shortfall >= _to_float(adopt_thresholds.get("min_expected_shortfall_5_pct"), -15.0)),
             ]
             near_miss_metrics = [metric for metric, passed in threshold_checks if not passed]
-            if limited_core_pass and 1 <= len(near_miss_metrics) <= 2:
+            min_near_miss = _to_int(limited_thresholds.get("min_near_miss_count"), 1)
+            max_near_miss = _to_int(limited_thresholds.get("max_near_miss_count"), 2)
+            if limited_core_pass and min_near_miss <= len(near_miss_metrics) <= max_near_miss:
                 decision_status = "limited_adopt"
                 decision_label = "제한 채택 후보"
                 summary = "핵심 품질 게이트는 통과했지만 일부 위험 지표가 풀채택 기준에 근접 미달이라 제한 운영으로만 반영할 수 있습니다."
@@ -717,6 +728,7 @@ def _candidate_decision(metrics: dict[str, Any], *, min_trades: int, search_is_s
         "approval_level": approval_level,
         "near_miss_metrics": near_miss_metrics,
         "hard_reasons": hard_reasons,
+        "policy_version": policy.get("version"),
     }, {
         "can_save": can_save,
         "can_apply": can_apply,
@@ -735,6 +747,7 @@ def _refresh_candidate(candidate: dict[str, Any] | None, search: dict[str, Any])
     refreshed = copy.deepcopy(candidate)
     metrics = refreshed.get("metrics") if isinstance(refreshed.get("metrics"), dict) else {}
     settings = refreshed.get("settings") if isinstance(refreshed.get("settings"), dict) else {}
+    policy = _current_guardrail_policy()
     min_trades = _to_int(settings.get("minTrades"), 8)
     search_version_changed = bool(search.get("available")) and bool(search.get("version")) and str(refreshed.get("search_version") or "") != str(search.get("version") or "")
     decision, guardrails = _candidate_decision(
@@ -742,11 +755,12 @@ def _refresh_candidate(candidate: dict[str, Any] | None, search: dict[str, Any])
         min_trades=min_trades,
         search_is_stale=bool(search.get("is_stale")),
         search_version_changed=search_version_changed,
+        policy=policy,
     )
     refreshed["decision"] = decision
     refreshed["guardrails"] = guardrails
+    refreshed["guardrail_policy"] = copy.deepcopy(policy)
     return refreshed
-
 
 def _build_candidate(
     *,
@@ -760,6 +774,7 @@ def _build_candidate(
     diagnosis = diagnostics.get("diagnosis") if isinstance(diagnostics.get("diagnosis"), dict) else {}
     research = diagnostics.get("research") if isinstance(diagnostics.get("research"), dict) else {}
     metrics = _read_validation_metrics(validation)
+    policy = _current_guardrail_policy()
     patch = {key: value for key, value in (search.get("global_params") or {}).items() if key in _OPTIMIZABLE_KEYS}
     search_version_changed = False
     decision, guardrails = _candidate_decision(
@@ -767,6 +782,7 @@ def _build_candidate(
         min_trades=_to_int(settings.get("minTrades"), 8),
         search_is_stale=bool(search.get("is_stale")),
         search_version_changed=search_version_changed,
+        policy=policy,
     )
     runtime_candidate_source_mode = normalize_runtime_candidate_source_mode(settings.get("runtime_candidate_source_mode"))
     return {
@@ -786,6 +802,7 @@ def _build_candidate(
         "metrics": metrics,
         "decision": decision,
         "guardrails": guardrails,
+        "guardrail_policy": copy.deepcopy(policy),
         "diagnosis": diagnosis,
         "research": research,
         "validation": validation,
@@ -1131,6 +1148,7 @@ def get_quant_ops_workflow() -> dict[str, Any]:
 
     return {
         "ok": True,
+        "guardrail_policy": _current_guardrail_policy(),
         "search_result": search,
         "search_available": bool(search.get("available")),
         "candidate_search": stage_status["candidate_search"],
@@ -1657,19 +1675,23 @@ def _global_runtime_validation_baseline(candidate: dict[str, Any]) -> dict[str, 
 
 def _runtime_restrictions_for_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     decision = candidate.get("decision") if isinstance(candidate.get("decision"), dict) else {}
+    policy = candidate.get("guardrail_policy") if isinstance(candidate.get("guardrail_policy"), dict) else _current_guardrail_policy()
+    thresholds = policy.get("thresholds") if isinstance(policy.get("thresholds"), dict) else {}
+    runtime_thresholds = thresholds.get("limited_adopt_runtime") if isinstance(thresholds.get("limited_adopt_runtime"), dict) else {}
     if str(decision.get("status") or "") != "limited_adopt":
         return {
             "enabled": False,
             "approval_level": str(decision.get("approval_level") or "full"),
             "reason": "full_adopt",
+            "policy_version": policy.get("version"),
         }
     return {
         "enabled": True,
         "approval_level": str(decision.get("approval_level") or "probationary"),
         "reason": "limited_adopt_probationary_runtime",
-        **_LIMITED_ADOPT_RUNTIME_RESTRICTIONS,
+        "policy_version": policy.get("version"),
+        **copy.deepcopy(runtime_thresholds),
     }
-
 
 def _build_runtime_payload(
     candidate: dict[str, Any],
@@ -1688,6 +1710,7 @@ def _build_runtime_payload(
     runtime_candidate_source_mode = normalize_runtime_candidate_source_mode(candidate.get("runtime_candidate_source_mode"))
     decision = candidate.get("decision") if isinstance(candidate.get("decision"), dict) else {}
     runtime_restrictions = _runtime_restrictions_for_candidate(candidate)
+    guardrail_policy = candidate.get("guardrail_policy") if isinstance(candidate.get("guardrail_policy"), dict) else _current_guardrail_policy()
     return {
         "optimized_at": applied_at,
         "applied_at": applied_at,
@@ -1696,6 +1719,7 @@ def _build_runtime_payload(
         "runtime_candidate_source_mode": runtime_candidate_source_mode,
         "runtime_restrictions": runtime_restrictions,
         "validation_baseline": _global_runtime_validation_baseline(candidate),
+        "guardrail_policy": copy.deepcopy(guardrail_policy),
         "per_symbol": per_symbol_overlay,
         "meta": {
             **meta,
@@ -1710,6 +1734,9 @@ def _build_runtime_payload(
             "global_overlay_source": "validated_candidate",
             "validation_baseline_source": "validated_candidate",
             "runtime_restrictions": runtime_restrictions,
+            "guardrail_policy_version": guardrail_policy.get("version"),
+            "guardrail_policy_saved_at": guardrail_policy.get("saved_at"),
+            "guardrail_policy": copy.deepcopy(guardrail_policy),
             "approved_symbol_count": len(per_symbol_overlay),
             "approved_symbols": sorted(per_symbol_overlay.keys()),
         },

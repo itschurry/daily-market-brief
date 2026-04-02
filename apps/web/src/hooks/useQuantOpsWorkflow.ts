@@ -4,6 +4,8 @@ import {
   fetchQuantOpsWorkflow,
   revalidateQuantOpsCandidate,
   revalidateQuantOpsSymbolCandidate,
+  resetQuantOpsPolicy,
+  saveQuantOpsPolicy,
   saveQuantOpsSymbolCandidate,
   saveQuantOpsCandidate,
   setQuantOpsSymbolApproval,
@@ -20,6 +22,8 @@ export type QuantOpsBusyAction =
   | 'save_symbol'
   | 'save'
   | 'apply'
+  | 'save_policy'
+  | 'reset_policy'
   | null;
 
 export function useQuantOpsWorkflow() {
@@ -110,6 +114,47 @@ export function useQuantOpsWorkflow() {
     }
   }, [handleActionResponse]);
 
+
+  const savePolicy = useCallback(async (policy: Record<string, unknown>) => {
+    setBusyAction('save_policy');
+    try {
+      const response = await saveQuantOpsPolicy(policy);
+      if (response.data.ok) {
+        const workflowPayload = await fetchQuantOpsWorkflow();
+        setWorkflow(workflowPayload);
+        setLastError('');
+      } else {
+        setLastError(response.data.error || 'guardrail policy 저장이 실패했습니다.');
+      }
+      return response.data;
+    } catch {
+      setLastError('guardrail policy 저장이 실패했습니다.');
+      return { ok: false, error: 'guardrail policy 저장이 실패했습니다.' };
+    } finally {
+      setBusyAction(null);
+    }
+  }, []);
+
+  const resetPolicy = useCallback(async () => {
+    setBusyAction('reset_policy');
+    try {
+      const response = await resetQuantOpsPolicy();
+      if (response.data.ok) {
+        const workflowPayload = await fetchQuantOpsWorkflow();
+        setWorkflow(workflowPayload);
+        setLastError('');
+      } else {
+        setLastError(response.data.error || 'guardrail policy 초기화가 실패했습니다.');
+      }
+      return response.data;
+    } catch {
+      setLastError('guardrail policy 초기화가 실패했습니다.');
+      return { ok: false, error: 'guardrail policy 초기화가 실패했습니다.' };
+    } finally {
+      setBusyAction(null);
+    }
+  }, []);
+
   const applyRuntime = useCallback(async (candidateId?: string) => {
     setBusyAction('apply');
     try {
@@ -132,5 +177,7 @@ export function useQuantOpsWorkflow() {
     saveSymbolCandidate,
     saveCandidate,
     applyRuntime,
+    savePolicy,
+    resetPolicy,
   };
 }
