@@ -31,7 +31,7 @@ def handle_reports_explain(date: str | None = None) -> tuple[int, dict]:
                 }
                 for item in signal_book.get("signals", [])[:30]
             ],
-            "report_reasoning": brief.get("report_reasoning") if isinstance(brief, dict) else (analysis.get("analysis_playbook") if isinstance(analysis, dict) else {}),
+            "report_reasoning": brief.get("report_reasoning") if isinstance(brief, dict) else (analysis.get("hanna_context") if isinstance(analysis, dict) else {}),
             "generated_at": (brief.get("generated_at") if isinstance(brief, dict) else None) or signal_book.get("generated_at"),
         }
     except Exception as exc:

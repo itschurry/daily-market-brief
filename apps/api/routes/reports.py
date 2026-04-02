@@ -330,14 +330,22 @@ def _fallback_today_picks(date: str | None = None) -> dict:
         _get_recommendations() if not date
         else _load_report_json("recommendations", date, latest=False)
     )
-    if not recommendations.get("recommendations"):
+    recommendations = recommendations if isinstance(recommendations, dict) else {}
+    recommendation_rows = recommendations.get("recommendations")
+    if not isinstance(recommendation_rows, list):
+        recommendation_rows = []
+    if not recommendation_rows and isinstance(recommendations.get("picks"), list):
+        recommendation_rows = list(recommendations.get("picks") or [])
+    if not recommendation_rows and isinstance(recommendations.get("items"), list):
+        recommendation_rows = list(recommendations.get("items") or [])
+    if not recommendation_rows:
         return {"picks": [], "auto_candidates": []}
 
     optimized_params = _load_optimized_params_payload() or {}
     per_symbol = optimized_params.get("per_symbol") if isinstance(optimized_params.get("per_symbol"), dict) else {}
 
     all_candidates = []
-    for item in recommendations.get("recommendations", []):
+    for item in recommendation_rows:
         ticker = (item.get("ticker") or "").split(".")[0]
         code = str(item.get("code") or ticker).strip().upper()
         market = _infer_recommendation_market(

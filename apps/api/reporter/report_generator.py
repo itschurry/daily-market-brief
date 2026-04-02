@@ -109,7 +109,7 @@ def save_report(content: str, date: str, fmt: str = "html") -> str:
 
 
 def save_analysis_cache(analysis: str, date: str, playbook: dict | None = None) -> None:
-    """AI 분석 결과를 SQLite에 캐시 저장 (api_server.py가 읽어 /api/analysis 제공)"""
+    """분석 결과를 SQLite에 캐시 저장 (api_server.py가 읽어 /api/analysis 제공)"""
     from reporter.storage import save_report
     summary_lines = _extract_summary(analysis)
 
@@ -130,20 +130,10 @@ def save_analysis_cache(analysis: str, date: str, playbook: dict | None = None) 
         "summary_lines": summary_lines,
         "analysis_html": analysis_html,
         "date":          date,
-        "analysis_playbook": playbook or {},
+        "hanna_context": playbook or {},
     }
     save_report(date, "analysis", payload)
     logger.info(f"분석 캐시 저장: {date}/analysis")
-
-
-def save_analysis_playbook_cache(payload: dict, date: str) -> None:
-    """구조화된 분석 플레이북을 SQLite에 저장한다."""
-    from reporter.storage import save_report
-    out = dict(payload)
-    out["date"] = date
-    save_report(date, "analysis_playbook", out)
-    logger.info(f"분석 플레이북 캐시 저장: {date}/analysis_playbook")
-
 
 def save_recommendations_cache(payload: dict, date: str) -> None:
     """투자 추천 결과를 SQLite에 캐시 저장 (api_server.py가 읽어 /api/recommendations 제공)"""

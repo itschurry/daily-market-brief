@@ -13,39 +13,6 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def _summary_lines_from_analysis(analysis: dict[str, Any]) -> list[str]:
-    lines = analysis.get("summary_lines") if isinstance(analysis.get("summary_lines"), list) else []
-    normalized = [str(item).strip() for item in lines if str(item).strip()]
-    if normalized:
-        return normalized[:5]
-
-    summary = str(analysis.get("summary") or analysis.get("brief") or "").strip()
-    if summary:
-        return [summary]
-    return []
-
-
-def build_hanna_brief_payload(*, analysis: dict[str, Any], date: str | None = None) -> dict[str, Any]:
-    summary_lines = _summary_lines_from_analysis(analysis)
-    report_reasoning = analysis.get("analysis_playbook") if isinstance(analysis.get("analysis_playbook"), dict) else {}
-    generated_at = str(analysis.get("generated_at") or analysis.get("date") or date or "")
-
-    return {
-        "ok": True,
-        "brief_type": "hanna_operator_brief_v1",
-        "owner": "hanna",
-        "date": str(analysis.get("date") or date or ""),
-        "generated_at": generated_at,
-        "summary_lines": summary_lines,
-        "analysis": analysis,
-        "report_reasoning": report_reasoning,
-        "migration": {
-            "backend_owner": "hanna",
-            "legacy_source_retained": True,
-            "stage": "phase_1_bridge",
-        },
-    }
-
 
 def build_hanna_brief_from_runtime(
     *,
@@ -127,3 +94,34 @@ def build_hanna_brief_from_runtime(
             "stage": "phase_2_runtime_brief",
         },
     }
+
+
+def build_hanna_daily_report_text(*, daily_data: Any) -> str:
+    market = getattr(daily_data, "market", None)
+    market_context = getattr(daily_data, "market_context", None)
+    summary = str(getattr(market_context, "summary", "") or "").strip() or "시장 컨텍스트 요약이 아직 충분하지 않아."
+    risks = [str(item).strip() for item in (getattr(market_context, "risks", None) or []) if str(item).strip()]
+    supports = [str(item).strip() for item in (getattr(market_context, "supports", None) or []) if str(item).strip()]
+
+    lines = ["## 한나 투자 브리프", "", "### 3줄 요약"]
+    lines.append(f"1. {summary}")
+    lines.append(f"2. 오늘은 {' / '.join(supports[:2]) if supports else '정량 신호 우선 확인'} 쪽이 먼저야.")
+    lines.append(f"3. 주의할 건 {' / '.join(risks[:2]) if risks else '과한 추격 진입과 유동성 부족'}이야.")
+    lines.append("")
+    lines.append("### 시장 체크")
+    if market is not None:
+        if getattr(market, "kospi", None) is not None:
+            lines.append(f"- KOSPI {market.kospi:,.2f} ({float(getattr(market, 'kospi_change_pct', 0.0)):+.2f}%)")
+        if getattr(market, "kosdaq", None) is not None:
+            lines.append(f"- KOSDAQ {market.kosdaq:,.2f} ({float(getattr(market, 'kosdaq_change_pct', 0.0)):+.2f}%)")
+        if getattr(market, "nasdaq", None) is not None:
+            lines.append(f"- NASDAQ {market.nasdaq:,.2f} ({float(getattr(market, 'nasdaq_change_pct', 0.0)):+.2f}%)")
+        if getattr(market, "usd_krw", None) is not None:
+            lines.append(f"- USD/KRW {market.usd_krw:,.2f}")
+    lines.append("")
+    lines.append("### 운영 메모")
+    lines.append("- 설명은 한나가 맡고, 진입 여부와 리스크 가드는 정량 엔진 기준으로 본다.")
+    lines.append("- 오늘 브리프는 장세 요약과 우선순위 정리용이지, 주문 명령문이 아니다.")
+    if risks:
+        lines.append(f"- 핵심 리스크: {risks[0]}")
+    return "\n".join(lines)

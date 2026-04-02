@@ -1,4 +1,4 @@
-"""Playbook-aware investment recommendation engine."""
+"""Hanna commentary-aware investment recommendation engine."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -545,7 +545,7 @@ def generate_recommendations(data: DailyData, playbook: dict | None = None) -> D
     return {
         "generated_at": now.strftime("%Y-%m-%d %H:%M KST"),
         "date": now.strftime("%Y-%m-%d"),
-        "strategy": "playbook-aware-hybrid-v1",
+        "strategy": "hanna-commentary-hybrid-v1",
         "universe": "news-expanded",
         "signal_counts": signal_counts,
         "playbook_ref": playbook.get("generated_at") or playbook.get("date"),

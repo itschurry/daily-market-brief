@@ -12,11 +12,11 @@ from datetime import datetime
 
 from loguru import logger
 
+from analyzer.hanna_signal_engine import generate_stock_aux_signals
 from analyzer.market_context_builder import build_market_context
-from analyzer.openai_analyzer import analyze_with_playbook
-from analyzer.openai_signal_engine import generate_stock_aux_signals
 from analyzer.recommendation_engine import generate_recommendations
 from analyzer.today_picks_engine import generate_today_picks
+from services.hanna_brief_service import build_hanna_daily_report_text
 from collectors.calendar_collector import collect_calendar_events
 from collectors.disclosure_collector import collect_disclosures
 from collectors.flow_collector import collect_investor_flows
@@ -30,7 +30,6 @@ from reporter.email_sender import send_report as send_email
 from reporter.report_generator import (
     save_ai_signals_cache,
     save_analysis_cache,
-    save_analysis_playbook_cache,
     save_calendar_cache,
     save_disclosures_cache,
     save_investor_flows_cache,
@@ -65,7 +64,7 @@ def _setup_logging() -> None:
 async def run_report_pipeline() -> None:
     _setup_logging()
     logger.info("=== 일일 리포트 생성 시작 ===")
-    llm_tasks = ["report", "playbook", "signal"]
+    llm_tasks = ["signal"]
     if DELIVERY_METHOD in ("telegram", "both"):
         llm_tasks.append("quote")
     validate_runtime_tasks(llm_tasks)
@@ -113,19 +112,26 @@ async def run_report_pipeline() -> None:
         investor_flows=investor_flows,
     )
 
-    logger.info("[8/10] LLM 분석 중...")
-    analysis, analysis_playbook = await analyze_with_playbook(daily_data)
+    logger.info("[8/10] 한나 투자 브리프 생성 중...")
+    analysis = build_hanna_daily_report_text(daily_data=daily_data)
+    hanna_context = {
+        "owner": "hanna",
+        "market_regime": str(getattr(market_context, "market_regime", "neutral") or "neutral"),
+        "short_term_bias": str(getattr(market_context, "short_term_bias", "neutral") or "neutral"),
+        "mid_term_bias": str(getattr(market_context, "mid_term_bias", "neutral") or "neutral"),
+        "key_risks": list(getattr(market_context, "risks", []) or [])[:3],
+        "favored_sectors": list(getattr(market_context, "supports", []) or [])[:3],
+    }
 
     logger.info("[9/10] LLM 보조신호 생성 중...")
     ai_signals = await generate_stock_aux_signals(daily_data)
 
     logger.info("[10/10] 투자 추천 계산 및 저장...")
-    recommendations = generate_recommendations(daily_data, playbook=analysis_playbook)
-    today_picks = generate_today_picks(daily_data, ai_signals=ai_signals, playbook=analysis_playbook)
+    recommendations = generate_recommendations(daily_data, playbook=None)
+    today_picks = generate_today_picks(daily_data, ai_signals=ai_signals, playbook=None)
 
     date_str = datetime.now().strftime("%Y-%m-%d")
-    save_analysis_cache(analysis, date_str, playbook=analysis_playbook)
-    save_analysis_playbook_cache(analysis_playbook, date_str)
+    save_analysis_cache(analysis, date_str, playbook=hanna_context)
     save_news_cache(daily_data.news, date_str)
     save_macro_cache(daily_data.macro, date_str)
     save_ai_signals_cache(ai_signals, date_str)

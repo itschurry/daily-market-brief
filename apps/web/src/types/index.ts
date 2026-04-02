@@ -14,6 +14,50 @@ export interface AnalysisData {
   generated_at?: string;
   summary_lines?: string[];
   analysis_html?: string;
+  hanna_context?: {
+    owner?: string;
+    deprecated_legacy_playbook?: boolean;
+    market_regime?: string;
+    short_term_bias?: 'bullish' | 'neutral' | 'defensive';
+    mid_term_bias?: 'bullish' | 'neutral' | 'defensive';
+    favored_sectors?: string[];
+    avoided_sectors?: string[];
+    tactical_setups?: string[];
+    invalid_setups?: string[];
+    key_risks?: string[];
+    event_watchlist?: Array<{
+      name?: string;
+      timing?: string;
+      importance?: string;
+      note?: string;
+    }>;
+    stock_candidates_short_term?: Array<{
+      name?: string;
+      code?: string;
+      market?: string;
+      sector?: string;
+      thesis?: string;
+      action?: 'buy' | 'watch' | 'avoid';
+      confidence?: number;
+      reasons?: string[];
+      risks?: string[];
+      technical_view?: string;
+      setup_quality?: string;
+    }>;
+    stock_candidates_mid_term?: Array<{
+      name?: string;
+      code?: string;
+      market?: string;
+      sector?: string;
+      thesis?: string;
+      action?: 'buy' | 'watch' | 'avoid';
+      confidence?: number;
+      reasons?: string[];
+      risks?: string[];
+      technical_view?: string;
+      setup_quality?: string;
+    }>;
+  };
   analysis_playbook?: {
     market_regime?: string;
     short_term_bias?: 'bullish' | 'neutral' | 'defensive';

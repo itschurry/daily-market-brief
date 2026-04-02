@@ -197,7 +197,7 @@ def _ai_signal_adjustment(ai_signal: dict | None) -> tuple[float, list[str], lis
         "summary": summary,
         "reasons": reasons,
         "risks": risks,
-        "source": ai_signal.get("source", "openai-aux-signal-v1"),
+        "source": ai_signal.get("source", "hanna-aux-signal-v1"),
     }
     return round(score, 1), reasons, risks, serialized
 
@@ -796,7 +796,7 @@ def generate_today_picks(
         "generated_at": now.strftime("%Y-%m-%d %H:%M KST"),
         "date": now.strftime("%Y-%m-%d"),
         "market_tone": market_tone,
-        "strategy": "news-driven-picks-v1+playbook+openai-aux" if playbook else ("news-driven-picks-v1+openai-aux" if (ai_signals or {}).get("signals") else "news-driven-picks-v1"),
+        "strategy": "news-driven-picks-v1+hanna-commentary" if playbook else ("news-driven-picks-v1+hanna-aux" if (ai_signals or {}).get("signals") else "news-driven-picks-v1"),
         "playbook_ref": (playbook or {}).get("generated_at") or (playbook or {}).get("date"),
         "picks": matched[:limit],
         "auto_candidates": auto_candidates,

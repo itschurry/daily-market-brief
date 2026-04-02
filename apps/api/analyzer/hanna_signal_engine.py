@@ -1,4 +1,4 @@
-"""OpenAI 기반 종목 보조신호 생성기."""
+"""Hanna 기반 종목 보조신호 생성기."""
 from __future__ import annotations
 
 import asyncio
@@ -206,12 +206,12 @@ def _normalize_signal_item(item: dict, allowed: dict[str, CompanyCatalogEntry]) 
         "summary": summary,
         "reasons": reasons,
         "risks": risks,
-        "source": "openai-aux-signal-v1",
+        "source": "hanna-aux-signal-v1",
     }
 
 
 async def generate_stock_aux_signals(data: DailyData, limit: int = 10) -> dict:
-    """종목별 OpenAI 보조신호를 생성한다."""
+    """종목별 Hanna 보조신호를 생성한다."""
     now = datetime.now(_KST)
     candidates = _collect_candidates(data, limit=limit)
     model_name = get_model_for_task("signal")
