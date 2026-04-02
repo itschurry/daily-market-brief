@@ -1048,6 +1048,19 @@ def build_watchlist_actions(
         elif current_rec:
             confidence = current_rec.get("confidence", confidence)
 
+        deduped_reasons = (score_notes + technical_reasons + flow_reasons + reasons)[:4] or ["오늘 기준 뚜렷한 추가 재료는 제한적입니다."]
+        deduped_risks = (technical_risks + flow_risks + ai_risks + risks)[:3] or ["단기 변동성 관리가 필요합니다."]
+        commentary = build_hanna_candidate_commentary(
+            name=str(watch.get("name", "")),
+            market=str(watch.get("market", "")),
+            signal=signal,
+            gate_status=gate_status,
+            reasons=deduped_reasons,
+            risks=deduped_risks,
+            technical_view=(current_pick or {}).get("technical_view") or (current_rec or {}).get("technical_view") or "",
+            base_thesis=ai_thesis,
+        )
+
         actions.append({
             "code": watch.get("code", ""),
             "name": watch.get("name", ""),
@@ -1058,8 +1071,8 @@ def build_watchlist_actions(
             "signal": signal,
             "score": score,
             "confidence": confidence,
-            "reasons": (score_notes + technical_reasons + flow_reasons + reasons)[:4] or ["오늘 기준 뚜렷한 추가 재료는 제한적입니다."],
-            "risks": (technical_risks + flow_risks + ai_risks + risks)[:3] or ["단기 변동성 관리가 필요합니다."],
+            "reasons": deduped_reasons,
+            "risks": deduped_risks,
             "related_news": related_news[:2],
             "technicals": technicals or None,
             "investor_flow": investor_flow or None,
@@ -1069,7 +1082,10 @@ def build_watchlist_actions(
             "gate_reasons": gate_reasons[:3],
             "horizon": horizon if horizon in {"short_term", "mid_term"} else "short_term",
             "playbook_alignment": playbook_alignment,
-            "ai_thesis": ai_thesis,
+            "ai_thesis": commentary["ai_thesis"],
+            "technical_view": commentary["technical_view"],
+            "commentary_owner": commentary["commentary_owner"],
+            "risk_note": commentary["risk_note"],
         })
 
     actions.sort(key=lambda item: item["score"], reverse=True)

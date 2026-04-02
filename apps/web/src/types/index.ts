@@ -300,6 +300,8 @@ export interface WatchlistActionItem extends WatchlistItem {
   ai_thesis?: string | null;
   technical_view?: string | null;
   setup_quality?: string | null;
+  commentary_owner?: string | null;
+  risk_note?: string | null;
   changed_from_yesterday?: {
     previous_signal?: string;
     score_diff?: number;
