@@ -33,7 +33,7 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 
-_OPTIMIZED_PARAMS_PATH = _PROJECT_ROOT / "config" / "optimized_params.json"
+_OPTIMIZED_PARAMS_PATH = Path(os.getenv("LOGS_DIR", str(_PROJECT_ROOT.parent.parent / "storage" / "logs"))) / "optimized_params.json"
 
 # 파라미터 클램핑 범위
 _STOP_LOSS_RANGE = (2.0, 15.0)

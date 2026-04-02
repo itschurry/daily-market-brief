@@ -527,10 +527,18 @@ def _build_service_query(query: dict[str, Any], settings: dict[str, Any] | None 
     return service_query
 
 
-def _merge_query_patch(query: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+def _merge_query_patch(
+    query: dict[str, Any],
+    patch: dict[str, Any],
+    *,
+    preserve_keys: set[str] | None = None,
+) -> dict[str, Any]:
     merged = copy.deepcopy(query or {})
+    protected = {str(key) for key in (preserve_keys or set())}
     for key, value in (patch or {}).items():
         if key not in _OPTIMIZABLE_KEYS:
+            continue
+        if key in protected:
             continue
         merged[key] = value
     return merged
@@ -1161,8 +1169,17 @@ def _revalidate_optimizer_candidate_impl(query: dict[str, Any], settings: dict[s
     if not search.get("global_params"):
         return {"ok": False, "error": "optimizer_global_params_missing"}
 
-    _, resolved_query, resolved_settings = _resolve_validation_context(query, settings)
-    mutated_query = _merge_query_patch(resolved_query, search.get("global_params") or {})
+    raw_query = query if isinstance(query, dict) else {}
+    _, resolved_query, resolved_settings = _resolve_validation_context(raw_query, settings)
+    explicit_override_keys = {
+        str(key) for key in raw_query.keys()
+        if str(key) in _OPTIMIZABLE_KEYS
+    }
+    mutated_query = _merge_query_patch(
+        resolved_query,
+        search.get("global_params") or {},
+        preserve_keys=explicit_override_keys,
+    )
     diagnostics = run_validation_diagnostics(_build_service_query(mutated_query, resolved_settings))
     if not isinstance(diagnostics, dict) or diagnostics.get("error") or not diagnostics.get("ok"):
         return {

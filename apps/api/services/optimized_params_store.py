@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+import os
 
 
 _API_DIR = Path(__file__).resolve().parent.parent
-SEARCH_OPTIMIZED_PARAMS_PATH = _API_DIR / "config" / "optimized_params.json"
-RUNTIME_OPTIMIZED_PARAMS_PATH = _API_DIR / "config" / "runtime_optimized_params.json"
+_REPO_ROOT = _API_DIR.parent.parent
+_LOGS_DIR = Path(os.getenv("LOGS_DIR", str(_REPO_ROOT / "storage" / "logs")))
+SEARCH_OPTIMIZED_PARAMS_PATH = _LOGS_DIR / "optimized_params.json"
+RUNTIME_OPTIMIZED_PARAMS_PATH = _LOGS_DIR / "runtime_optimized_params.json"
 _EXECUTION_APPROVED_SOURCES = {
     "validated_candidate",
     "quant_ops_saved_candidate",

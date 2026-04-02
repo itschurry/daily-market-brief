@@ -187,8 +187,8 @@ class QuantOpsWorkflowTests(unittest.TestCase):
         self.assertEqual("quant_only", candidate["runtime_candidate_source_mode"])
         self.assertEqual("adopt", candidate["decision"]["status"])
         self.assertTrue(candidate["guardrails"]["can_save"])
-        self.assertIn("stop_loss_pct: 5.0 → 6.0", candidate["patch_lines"])
-        self.assertEqual(18, candidate["candidate_query"]["max_holding_days"])
+        self.assertNotIn("stop_loss_pct: 5.0 → 6.0", candidate["patch_lines"])
+        self.assertEqual(21, candidate["candidate_query"]["max_holding_days"])
         self.assertTrue(result["workflow"]["search_result"]["available"])
         self.assertEqual("adopt", result["workflow"]["stage_status"]["revalidation"])
         self.assertTrue(self.state_path.exists())
@@ -489,6 +489,43 @@ class QuantOpsWorkflowTests(unittest.TestCase):
         self.assertIn("validation_settings_changed", workflow["saved_candidate_state"]["reasons"])
         self.assertEqual("missing", workflow["stage_status"]["revalidation"])
         self.assertEqual("missing", workflow["stage_status"]["save"])
+
+    def test_revalidate_preserves_explicit_manual_overrides_over_search_overlay(self):
+        diagnostics = _adopt_diagnostics()
+        captured_query = {}
+
+        def fake_run_validation(service_query):
+            nonlocal captured_query
+            captured_query = {key: values[0] for key, values in service_query.items()}
+            return diagnostics
+
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path),              patch.object(svc, "load_search_optimized_params", return_value=self.search_payload),              patch.object(svc, "load_runtime_optimized_params", return_value=None),              patch.object(svc, "run_validation_diagnostics", side_effect=fake_run_validation):
+            result = svc.revalidate_optimizer_candidate({
+                "query": {
+                    "market_scope": "kospi",
+                    "lookback_days": 365,
+                    "stop_loss_pct": 9.0,
+                    "take_profit_pct": 16.0,
+                    "max_holding_days": 12,
+                },
+                "settings": {
+                    "strategy": "수동 후보 검증",
+                    "trainingDays": 180,
+                    "validationDays": 60,
+                    "walkForward": True,
+                    "minTrades": 8,
+                },
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("9.0", captured_query["stop_loss_pct"])
+        self.assertEqual("16.0", captured_query["take_profit_pct"])
+        self.assertEqual("12", captured_query["max_holding_days"])
+        self.assertEqual(9.0, result["candidate"]["candidate_query"]["stop_loss_pct"])
+        self.assertEqual(16.0, result["candidate"]["candidate_query"]["take_profit_pct"])
+        self.assertEqual(12, result["candidate"]["candidate_query"]["max_holding_days"])
+        self.assertNotIn("max_holding_days: 20 → 12", result["candidate"]["patch_lines"])
+        self.assertEqual(self.search_payload["global_params"]["rsi_min"], result["candidate"]["candidate_query"]["rsi_min"])
 
     def test_revalidate_uses_current_saved_validation_baseline_for_sparse_payload(self):
         baseline_query = {
