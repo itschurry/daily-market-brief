@@ -120,6 +120,62 @@ class RuntimeCandidatePolicyTests(unittest.TestCase):
         self.assertEqual("today_picks", candidates[0]["research_source"])
         self.assertEqual(200.0, candidates[0]["technical_snapshot"]["current_price"])
 
+    def test_quant_runtime_candidates_ignore_research_min_score(self):
+        runtime_payload = {
+            "per_symbol": {
+                "000810": {
+                    "market": "KOSPI",
+                    "is_reliable": False,
+                    "strategy_reliability": "insufficient",
+                    "reliability_reason": "insufficient_validation_signals",
+                    "trade_count": 79,
+                    "validation_trades": 6,
+                    "validation_sharpe": 0.0,
+                    "composite_score": 33.02,
+                }
+            }
+        }
+        with patch.object(svc, "load_execution_optimized_params", return_value=runtime_payload), \
+             patch.object(svc, "fetch_technical_snapshot", return_value=None):
+            candidates = svc.collect_runtime_candidates(
+                "KOSPI",
+                cfg={
+                    "runtime_candidate_source_mode": "quant_only",
+                    "min_score": 50,
+                },
+            )
+
+        self.assertEqual(1, len(candidates))
+        self.assertEqual("000810", candidates[0]["code"])
+
+    def test_quant_runtime_candidates_can_use_dedicated_quant_min_score(self):
+        runtime_payload = {
+            "per_symbol": {
+                "000810": {
+                    "market": "KOSPI",
+                    "is_reliable": False,
+                    "strategy_reliability": "insufficient",
+                    "reliability_reason": "insufficient_validation_signals",
+                    "trade_count": 79,
+                    "validation_trades": 6,
+                    "validation_sharpe": 0.0,
+                    "composite_score": 33.02,
+                }
+            }
+        }
+        with patch.object(svc, "load_execution_optimized_params", return_value=runtime_payload), \
+             patch.object(svc, "fetch_technical_snapshot", return_value=None):
+            candidates = svc.collect_runtime_candidates(
+                "KOSPI",
+                cfg={
+                    "runtime_candidate_source_mode": "quant_only",
+                    "min_score": 50,
+                    "quant_min_score": 34,
+                },
+            )
+
+        self.assertEqual([], candidates)
+
 
 if __name__ == "__main__":
     unittest.main()

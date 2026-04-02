@@ -213,13 +213,12 @@ def collect_quant_runtime_candidates(market: str, cfg: dict | None = None) -> li
     if not per_symbol or not normalized_market:
         return []
 
-    min_score = 0.0
     raw_cfg = cfg or {}
     runtime_source_mode = normalize_runtime_candidate_source_mode(raw_cfg.get("runtime_candidate_source_mode"))
     try:
-        min_score = float(raw_cfg.get("min_score", 0.0))
+        min_quant_score = float(raw_cfg.get("quant_min_score", 0.0))
     except (TypeError, ValueError):
-        min_score = 0.0
+        min_quant_score = 0.0
 
     candidates: list[dict[str, Any]] = []
     for raw_code, raw_item in per_symbol.items():
@@ -232,7 +231,7 @@ def collect_quant_runtime_candidates(market: str, cfg: dict | None = None) -> li
             continue
         listing = lookup_company_listing(code=code, market=item_market, scope="core") or {}
         score = _quant_candidate_score(item)
-        if score < min_score:
+        if score < min_quant_score:
             continue
         candidates.append(
             _build_quant_runtime_candidate(
