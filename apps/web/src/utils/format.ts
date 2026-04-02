@@ -102,13 +102,14 @@ export function formatCount(value: number | string | null | undefined, unit: str
   return `${formatNumber(numeric, 0)}${unit}`;
 }
 
-function resolveSymbolName(code?: string, payloadName?: string): string {
+export function resolveSymbolName(code?: string, payloadName?: string): string {
   const normalizedCode = String(code || '').toUpperCase().trim();
   const normalizedPayloadName = String(payloadName || '').trim();
-  if (normalizedPayloadName) return normalizedPayloadName;
-  if (!normalizedCode) return '';
+  if (normalizedPayloadName && normalizedPayloadName.toUpperCase() !== normalizedCode) return normalizedPayloadName;
+  if (!normalizedCode) return normalizedPayloadName;
   const mapped = NAME_BY_CODE.get(normalizedCode);
   if (mapped) return mapped;
+  if (normalizedPayloadName) return normalizedPayloadName;
   if (!WARNED_SYMBOL_CODES.has(normalizedCode)) {
     WARNED_SYMBOL_CODES.add(normalizedCode);
     console.warn(UI_TEXT.errors.symbolNameMissing, { code: normalizedCode });
@@ -116,13 +117,17 @@ function resolveSymbolName(code?: string, payloadName?: string): string {
   return '';
 }
 
-export function formatSymbol(code?: string, name?: string): string {
+export function formatSymbolLabel(code?: string, name?: string, separator = ' · '): string {
   const normalizedCode = String(code || '').toUpperCase().trim();
   const resolvedName = resolveSymbolName(normalizedCode, name);
-  if (normalizedCode && resolvedName) return `${normalizedCode} ${resolvedName}`;
+  if (normalizedCode && resolvedName) return `${normalizedCode}${separator}${resolvedName}`;
   if (normalizedCode) return normalizedCode;
   if (resolvedName) return resolvedName;
   return '-';
+}
+
+export function formatSymbol(code?: string, name?: string): string {
+  return formatSymbolLabel(code, name, ' ');
 }
 
 export function explainOrderFailureReason(reason: string | null | undefined): string {

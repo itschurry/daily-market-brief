@@ -27,6 +27,7 @@ const RAW_COMPANY_CATALOG: CompanyCatalogEntry[] = [
   { name: '포스코퓨처엠', code: '003670', market: 'KOSPI', aliases: ['포스코퓨처엠', '포스코 퓨처엠'] },
   { name: '셀트리온', code: '068270', market: 'KOSPI', aliases: ['셀트리온'] },
   { name: '유한양행', code: '000100', market: 'KOSPI', aliases: ['유한양행'] },
+  { name: '삼성화재', code: '000810', market: 'KOSPI', aliases: ['삼성화재', '삼성 화재', '삼성화재해상보험'] },
   { name: '녹십자', code: '006280', market: 'KOSPI', aliases: ['녹십자'] },
   { name: '한미반도체', code: '042700', market: 'KOSPI', aliases: ['한미반도체', '한미 반도체'] },
   { name: '한화에어로스페이스', code: '012450', market: 'KOSPI', aliases: ['한화에어로스페이스', '한화 에어로스페이스'] },

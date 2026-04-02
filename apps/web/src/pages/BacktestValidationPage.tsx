@@ -24,7 +24,7 @@ import {
   tailRiskHeadline,
   weakestComponents,
 } from '../utils/strategyScorecard';
-import { formatCount, formatDateTime, formatNumber, formatPercent } from '../utils/format';
+import { formatCount, formatDateTime, formatNumber, formatPercent, formatSymbolLabel, resolveSymbolName } from '../utils/format';
 
 interface BacktestValidationPageProps {
   snapshot: ConsoleSnapshot;
@@ -551,6 +551,17 @@ function runtimeCandidateSourceModeDescription(mode: string | undefined): string
   if (mode === 'research_only') return '리서치 경로만 사용해 today picks / recommendations 후보만 runtime 후보 풀로 씁니다. 퀀트 검증 후보는 실행 소스에서 제외합니다.';
   if (mode === 'hybrid') return '퀀트와 리서치 경로를 섞어 평가하지 않고 분리해 수집한 뒤, runtime 후보 풀에서 합집합으로 병합합니다.';
   return '퀀트 검증 경로만 사용해 저장된 validation/runtime overlay 후보만 runtime 후보 풀로 씁니다. 기본값이자 안전 모드입니다.';
+}
+
+function formatKnownSymbolLabel(symbol: string | null | undefined, name?: string | null): string {
+  return formatSymbolLabel(String(symbol || '').trim(), String(name || '').trim() || undefined);
+}
+
+function formatMaybeSymbolLabel(value: string | null | undefined): string {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '-';
+  if (!/^[A-Z0-9._-]+$/i.test(normalized)) return normalized;
+  return formatSymbolLabel(normalized, resolveSymbolName(normalized));
 }
 
 export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefresh }: BacktestValidationPageProps) {
@@ -2052,7 +2063,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                       >
                         {symbolCandidates.map((item) => (
                           <option key={String(item.symbol || '')} value={String(item.symbol || '')}>
-                            {String(item.symbol || '')}
+                            {formatKnownSymbolLabel(String(item.symbol || ''))}
                           </option>
                         ))}
                       </select>
@@ -2098,7 +2109,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                         <div className="summary-metric-grid" style={{ marginTop: 12 }}>
                           <SummaryMetricCard
                             label="선택 종목"
-                            value={String(selectedSymbolWorkflow.symbol || '-')}
+                            value={formatKnownSymbolLabel(String(selectedSymbolWorkflow.symbol || '-'))}
                             detail={`승인 ${symbolApprovalLabel(selectedSymbolWorkflow.approval?.status)} · 저장 ${selectedSymbolWorkflow.saved_candidate?.saved_at ? '완료' : '대기'}`}
                             tone={symbolApprovalTone(selectedSymbolWorkflow.approval?.status)}
                           />
@@ -2336,7 +2347,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                     />
                     <SummaryMetricCard
                       label="손실 집중 종목"
-                      value={primarySymbolWeakness?.label || '-'}
+                      value={formatMaybeSymbolLabel(primarySymbolWeakness?.label || '-')}
                       detail={primarySymbolWeakness ? formatScopeWeaknessDetail(primarySymbolWeakness) : '문제 종목 데이터가 없습니다.'}
                       tone={primarySymbolWeakness ? 'bad' : 'neutral'}
                     />
@@ -2389,7 +2400,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                       <div><strong>문제 종목 상위</strong></div>
                       {(oosExitReasonAnalysis?.symbol_weaknesses || validationExitReasonAnalysis?.symbol_weaknesses || overallExitReasonAnalysis?.symbol_weaknesses || []).slice(0, 4).map((row) => (
                         <div key={`symbol-${row.key || row.label}`}>
-                          {row.label || row.key || '기타'} · {formatScopeWeaknessDetail(row)}
+                          {formatMaybeSymbolLabel(row.label || row.key || '기타')} · {formatScopeWeaknessDetail(row)}
                         </div>
                       ))}
                       {(!oosExitReasonAnalysis?.symbol_weaknesses || oosExitReasonAnalysis.symbol_weaknesses.length === 0)
@@ -2497,7 +2508,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   <div>재검증 후보: {latestValidatedCandidate?.decision?.label || '없음'} · 저장 {latestValidatedCandidate?.guardrails?.can_save ? '가능' : '차단'}</div>
                   <div>종목 승인/저장: {formatCount(workflowPayload?.symbol_summary?.approved_count, '건')} / {formatCount(workflowPayload?.symbol_summary?.saved_count, '건')}</div>
                   <div>저장 후보 / runtime: {savedValidatedCandidate?.saved_at ? formatDateTime(savedValidatedCandidate.saved_at) : '없음'} / {runtimeApplyState?.status === 'applied' ? formatDateTime(runtimeApplyState.applied_at) : '미반영'}</div>
-                  <div>runtime 종목 반영: {formatCount(runtimeApplyState?.applied_symbol_count, '건')} · {Array.isArray(runtimeApplyState?.applied_symbols) && runtimeApplyState?.applied_symbols?.length ? runtimeApplyState.applied_symbols.join(', ') : '없음'}</div>
+                  <div>runtime 종목 반영: {formatCount(runtimeApplyState?.applied_symbol_count, '건')} · {Array.isArray(runtimeApplyState?.applied_symbols) && runtimeApplyState?.applied_symbols?.length ? runtimeApplyState.applied_symbols.map((symbol) => formatKnownSymbolLabel(symbol)).join(', ') : '없음'}</div>
                   <div>마지막 실행 시각: {executedRun?.executedAt ? formatDateTime(executedRun.executedAt) : runFinishedAt ? formatDateTime(runFinishedAt) : '없음'}</div>
                   <div>서버 저장 기준: {validationStore.lastSavedAt ? formatDateTime(validationStore.lastSavedAt) : '없음'} · runtime 최적화 반영과는 별개로 관리합니다.</div>
                   <div>화면 새로고침은 상태와 서버 저장값을 다시 불러오고, 결과 카드는 다시 계산하지 않습니다.</div>
