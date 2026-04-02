@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchEngineStatus,
-  fetchNotificationStatus,
   fetchPerformanceSummary,
   fetchReportsExplain,
   fetchScannerStatus,
@@ -46,7 +45,6 @@ function emptySnapshot(): ConsoleSnapshot {
     portfolio: {},
     validation: {},
     reports: {},
-    notifications: {},
     fetchedAt: nowIso,
   };
 }
@@ -55,79 +53,79 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
   if (route.section === 'home') {
     return {
       signalLimit: 40,
-      initialTargets: ['engine', 'signals', 'notifications'],
+      initialTargets: ['engine', 'signals'],
       fastTargets: ['engine'],
       midTargets: ['signals'],
-      slowTargets: ['notifications'],
+      slowTargets: [],
     };
   }
 
   if (route.section === 'reports') {
     return {
       signalLimit: 80,
-      initialTargets: ['engine', 'signals', 'validation', 'reports', 'notifications'],
+      initialTargets: ['engine', 'signals', 'validation', 'reports'],
       fastTargets: ['engine'],
       midTargets: ['signals'],
-      slowTargets: ['validation', 'reports', 'notifications'],
+      slowTargets: ['validation', 'reports'],
     };
   }
 
   if (route.consoleTab === 'orders') {
     return {
       signalLimit: 0,
-      initialTargets: ['engine', 'notifications'],
+      initialTargets: ['engine'],
       fastTargets: ['engine'],
       midTargets: [],
-      slowTargets: ['notifications'],
+      slowTargets: [],
     };
   }
 
   if (route.consoleTab === 'strategies') {
     return {
       signalLimit: 0,
-      initialTargets: ['engine', 'strategies', 'notifications'],
+      initialTargets: ['engine', 'strategies'],
       fastTargets: ['engine'],
       midTargets: ['strategies'],
-      slowTargets: ['notifications'],
+      slowTargets: [],
     };
   }
 
   if (route.consoleTab === 'scanner') {
     return {
       signalLimit: 0,
-      initialTargets: ['engine', 'scanner', 'notifications'],
+      initialTargets: ['engine', 'scanner'],
       fastTargets: ['engine'],
       midTargets: ['scanner'],
-      slowTargets: ['notifications'],
+      slowTargets: [],
     };
   }
 
   if (route.consoleTab === 'universe') {
     return {
       signalLimit: 0,
-      initialTargets: ['universe', 'notifications'],
+      initialTargets: ['universe'],
       fastTargets: [],
       midTargets: ['universe'],
-      slowTargets: ['notifications'],
+      slowTargets: [],
     };
   }
 
   if (route.consoleTab === 'performance') {
     return {
       signalLimit: 0,
-      initialTargets: ['engine', 'performance', 'notifications'],
+      initialTargets: ['engine', 'performance'],
       fastTargets: ['engine'],
       midTargets: [],
-      slowTargets: ['performance', 'notifications'],
+      slowTargets: ['performance'],
     };
   }
 
   return {
     signalLimit: 0,
-    initialTargets: ['engine', 'strategies', 'notifications'],
+    initialTargets: ['engine', 'strategies'],
     fastTargets: ['engine'],
     midTargets: ['strategies'],
-    slowTargets: ['notifications'],
+    slowTargets: [],
   };
 }
 
@@ -167,7 +165,6 @@ export function useConsoleData(route: ConsoleDataRoute) {
       if (key === 'universe') return fetchUniverse();
       if (key === 'performance') return fetchPerformanceSummary();
       if (key === 'validation') return fetchValidationWalkForward();
-      if (key === 'notifications') return fetchNotificationStatus();
       if (key === 'reports') return fetchReportsExplain();
       return Promise.resolve({});
     });

@@ -59,7 +59,7 @@ from routes.trading import (
     handle_paper_order,
     handle_paper_reset,
 )
-from routes.system import handle_notifications_status, handle_system_mode
+from routes.system import handle_system_mode
 from routes.universe import handle_universe_list
 from routes.validation import (
     handle_validation_backtest,
@@ -151,7 +151,6 @@ GET_ROUTES: tuple[Route, ...] = (
     Route("/api/paper/orders", lambda _path, query: handle_paper_orders(query)),
     Route("/api/paper/account/history", lambda _path, query: handle_paper_account_history(query)),
     Route("/api/system/mode", lambda _path, _query: handle_system_mode()),
-    Route("/api/system/notifications/status", lambda _path, _query: handle_notifications_status()),
     Route("/api/optimized-params", lambda _path, _query: handle_get_optimized_params()),
     Route("/api/optimization-status", lambda _path, _query: handle_get_optimization_status()),
 )

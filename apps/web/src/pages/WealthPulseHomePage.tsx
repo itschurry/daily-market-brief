@@ -122,8 +122,6 @@ export function WealthPulseHomePage({
   const riskGuard = snapshot.engine.risk_guard_state || snapshot.portfolio.risk_guard_state || {};
   const riskGuardAllowed = Boolean(riskGuard.entry_allowed);
   const riskReasons = riskGuard.reasons || [];
-  const notifications = snapshot.notifications || {};
-  const alertingWarning = !notifications.enabled || !(notifications.configured && notifications.chat_id_configured);
 
   return (
     <div className="app-shell">
@@ -275,13 +273,6 @@ export function WealthPulseHomePage({
                     {riskGuardAllowed ? '신규 진입 가능' : '신규 진입 제한'}
                   </div>
                   <div className="wealth-list-copy">{riskReasons.join(' · ') || '현재 차단 사유 없음'}</div>
-                </div>
-                <div className="wealth-list-item">
-                  <div className="wealth-list-title">알림 채널</div>
-                  <div className={`wealth-list-copy ${alertingWarning ? 'is-down' : 'is-up'}`}>
-                    {alertingWarning ? '설정 확인 필요' : '정상'}
-                  </div>
-                  <div className="wealth-list-copy">{notifications.last_error || notifications.last_sent_at || '최근 알림 이력 없음'}</div>
                 </div>
                 <div className="wealth-list-item">
                   <div className="wealth-list-title">오늘의 모드</div>

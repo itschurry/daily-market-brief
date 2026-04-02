@@ -1,7 +1,6 @@
 import { getJSON, postJSON } from './client';
 import type {
   EngineStatusResponse,
-  NotificationStatusResponse,
   PerformanceSummaryResponse,
   PortfolioStateResponse,
   QuantOpsActionResponse,
@@ -165,6 +164,3 @@ export function fetchReportsExplain() {
   return getJSON<ReportsExplainResponse>('/api/reports/explain', { noStore: true });
 }
 
-export function fetchNotificationStatus() {
-  return getJSON<NotificationStatusResponse>('/api/system/notifications/status', { noStore: true });
-}

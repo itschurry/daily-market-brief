@@ -1,7 +1,6 @@
 import type {
   DomainSignal,
   EngineStatusResponse,
-  NotificationStatusResponse,
   PerformanceSummaryResponse,
   PortfolioStateResponse,
   ReportsExplainResponse,
@@ -22,7 +21,6 @@ export interface ConsoleSnapshot {
   portfolio: PortfolioStateResponse;
   validation: ValidationResponse;
   reports: ReportsExplainResponse;
-  notifications: NotificationStatusResponse;
   fetchedAt: string;
 }
 

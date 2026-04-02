@@ -84,7 +84,6 @@ def _install_server_route_stubs() -> list[str]:
             "handle_paper_reset": lambda payload: (200, {"payload": payload}),
         },
         "routes.system": {
-            "handle_notifications_status": lambda: (200, {"ok": True}),
             "handle_system_mode": lambda: (200, {"ok": True}),
         },
         "routes.universe": {"handle_universe_list": lambda query: (200, {"query": query})},
@@ -235,13 +234,6 @@ class ApiServerDispatchTests(unittest.TestCase):
             dispatch_get("/api/portfolio/state", {"refresh": ["0"]})
 
         mock_handler.assert_called_once_with(False)
-
-    def test_dispatch_get_routes_notifications_status(self):
-        with patch("server.handle_notifications_status", return_value=(200, {"ok": True, "channel": "telegram"})) as mock_handler:
-            result = dispatch_get("/api/system/notifications/status", {})
-
-        self.assertEqual((200, {"ok": True, "channel": "telegram"}), result)
-        mock_handler.assert_called_once_with()
 
     def test_dispatch_get_routes_validation_diagnostics(self):
         with patch("server.handle_validation_diagnostics", return_value=(200, {"ok": True, "research": {}})) as mock_handler:

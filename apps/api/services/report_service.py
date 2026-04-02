@@ -23,8 +23,7 @@ from collectors.macro_collector import collect_macro
 from collectors.market_collector import collect_market
 from collectors.models import DailyData
 from collectors.news_collector import collect_news
-from config.settings import DELIVERY_METHOD, LOGS_DIR
-from reporter.email_sender import send_report as send_email
+from config.settings import LOGS_DIR
 from reporter.report_generator import (
     save_analysis_cache,
     save_calendar_cache,
@@ -36,7 +35,6 @@ from reporter.report_generator import (
     save_recommendations_cache,
     save_today_picks_cache,
 )
-from reporter.telegram_sender import send_report as send_telegram
 
 _log_handler_id: int | None = None
 
@@ -132,16 +130,5 @@ async def run_report_pipeline() -> None:
     save_market_context_cache(daily_data.market_context, date_str)
     save_recommendations_cache(recommendations, date_str)
     save_today_picks_cache(today_picks, date_str)
-
-    delivery = DELIVERY_METHOD
-    if delivery in ("telegram", "both"):
-        await send_telegram(analysis)
-    if delivery in ("email", "both"):
-        simple_html = (
-            "<html><body><pre style='font-family:sans-serif;white-space:pre-wrap;'>"
-            + analysis
-            + "</pre></body></html>"
-        )
-        await send_email(simple_html, f"📊 일일 경제 리포트 {date_str}")
 
     logger.info("=== 리포트 생성 완료 ===")

@@ -78,18 +78,6 @@ class Settings(BaseSettings):
         alias="KIS_BASE_URL",
     )
 
-    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
-    telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
-    telegram_enabled: bool = Field(default=False, alias="TELEGRAM_ENABLED")
-    report_web_url: str = Field(default="http://localhost:8081", alias="REPORT_WEB_URL")
-
-    smtp_host: str = Field(default="smtp.gmail.com", alias="SMTP_HOST")
-    smtp_port: int = Field(default=587, alias="SMTP_PORT")
-    smtp_user: str = Field(default="", alias="SMTP_USER")
-    smtp_password: str = Field(default="", alias="SMTP_PASSWORD")
-    report_recipient: str = Field(default="", alias="REPORT_RECIPIENT")
-
-    delivery_method: str = Field(default="none", alias="DELIVERY_METHOD")
     report_output_dir: Path = Field(default=REPORTS_DIR, alias="REPORT_OUTPUT_DIR")
     logs_dir: Path = Field(default=LOGS_DIR, alias="LOGS_DIR")
 
@@ -131,17 +119,5 @@ KIS_ACCOUNT_CANO = settings.kis_account_cano
 KIS_ACCOUNT_ACNT_PRDT_CD = settings.kis_account_acnt_prdt_cd
 KIS_BASE_URL = settings.kis_base_url
 
-TELEGRAM_BOT_TOKEN = settings.telegram_bot_token
-TELEGRAM_CHAT_ID = settings.telegram_chat_id
-TELEGRAM_ENABLED = settings.telegram_enabled
-REPORT_WEB_URL = settings.report_web_url
-
-SMTP_HOST = settings.smtp_host
-SMTP_PORT = settings.smtp_port
-SMTP_USER = settings.smtp_user
-SMTP_PASSWORD = settings.smtp_password
-REPORT_RECIPIENT = settings.report_recipient
-
-DELIVERY_METHOD = settings.delivery_method
 REPORT_OUTPUT_DIR = settings.report_output_dir
 LOGS_DIR = settings.logs_dir

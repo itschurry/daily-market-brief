@@ -910,12 +910,3 @@ export interface ReportsExplainResponse {
   }>;
 }
 
-export interface NotificationStatusResponse {
-  ok?: boolean;
-  channel?: string;
-  enabled?: boolean;
-  configured?: boolean;
-  chat_id_configured?: boolean;
-  last_sent_at?: string;
-  last_error?: string;
-}

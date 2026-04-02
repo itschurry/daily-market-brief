@@ -388,7 +388,6 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
   const engineState = snapshot.engine.execution?.state || {};
   const riskGuard = snapshot.engine.risk_guard_state || snapshot.portfolio.risk_guard_state || {};
   const allocator = snapshot.engine.allocator || {};
-  const notifications = snapshot.notifications || {};
   const validationSummary = snapshot.validation.summary || {};
   const allowedSignals = Number(allocator.entry_allowed_count || 0);
   const blockedSignals = Number(allocator.blocked_count || 0);
@@ -402,7 +401,6 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
   const guardBlocked = riskGuard.entry_allowed === false;
   const validationGateEnabled = Boolean(engineState.validation_policy?.validation_gate_enabled);
   const reliability = reliabilityToKorean(String(validationSummary.oos_reliability || '').toLowerCase());
-  const notificationConfigured = Boolean(notifications.enabled && notifications.configured && notifications.chat_id_configured);
   const latestSignals = (snapshot.signals.signals || []).filter((item) => !item.entry_allowed).slice(0, 5);
 
   const alerts = [
@@ -447,17 +445,6 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
       detail: `OOS 신뢰도 ${reliability || '-'} · min trades ${formatCount(Number(engineState.validation_policy?.validation_min_trades || 0), '건')}`,
       severity: validationGateEnabled && String(validationSummary.oos_reliability || '').toLowerCase() === 'low' ? 2 : 0,
     },
-    {
-      key: 'notifications',
-      label: '알림 채널',
-      value: notifications.enabled ? '사용' : '꺼짐',
-      detail: notifications.enabled
-        ? notificationConfigured
-          ? `${String(notifications.channel || 'channel')} 연결 완료`
-          : `${String(notifications.channel || 'channel')} 설정 미완료`
-        : '알림 발송이 비활성 상태입니다.',
-      severity: notifications.enabled && !notificationConfigured ? 2 : (!notifications.enabled ? 1 : -1),
-    },
   ];
 
   const actionLines = [
@@ -466,7 +453,6 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
     staleOptimized ? '최적화 파라미터가 stale 상태면 검증 화면에서 최적화를 다시 돌리는 편이 안전합니다.' : '',
     repeatedCashRetries.length > 0 ? '같은 종목에서 현금 부족 실패가 반복되면 자동 재시도보다 수량/예산 조정이 먼저입니다.' : '',
     failedOrders > 0 ? '실패 주문이 있으면 최근 체결 내역과 엔진 이벤트 로그를 먼저 확인하세요.' : '',
-    notifications.enabled && !notificationConfigured ? '텔레그램 알림이 미완료 상태라면 운영 전에 채널 설정부터 맞추는 게 좋습니다.' : '',
   ].filter(Boolean);
 
   const riskReasons = (riskGuard.reasons || []).map((reason) => reasonCodeToKorean(reason));
@@ -480,7 +466,7 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
           <span className="report-hero-meta">실행 리스크 우선 확인</span>
         </div>
         <div className="report-decision-title">지금 조치 필요: {alerts.filter((item) => item.severity >= 2).length}건</div>
-        <div className="report-hero-copy">단순 알림판이 아니라 paper/live 실행 전에 이상 징후를 잡는 리스크 보드입니다. 엔진 상태, 진입 차단, stale optimization, 실패 주문, 알림 이상부터 먼저 확인하면 됩니다. 여기서 보는 경고는 Risk Gate와 Layer E 최종 액션을 흔드는 운영 경고입니다.</div>
+        <div className="report-hero-copy">단순 알림판이 아니라 paper/live 실행 전에 이상 징후를 잡는 리스크 보드입니다. 엔진 상태, 진입 차단, stale optimization, 실패 주문부터 먼저 확인하면 됩니다. 여기서 보는 경고는 Risk Gate와 Layer E 최종 액션을 흔드는 운영 경고입니다.</div>
         <div className="report-decision-strip">
           <div className={`report-decision-chip ${isRunning ? 'is-good' : 'is-bad'}`}>엔진 {isRunning ? '실행 중' : '정지'}</div>
           <div className={`report-decision-chip ${guardBlocked ? 'is-bad' : 'is-good'}`}>진입 {guardBlocked ? '차단' : '허용'}</div>
@@ -549,23 +535,6 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
         </div>
       </div>
 
-      <div className="page-section report-evidence-card" style={{ padding: 16 }}>
-        <div className="section-head-row">
-          <div>
-            <div className="section-title">알림 채널 상태</div>
-            <div className="section-copy">문제가 생기면 운영자가 놓치기 쉬운 부분입니다.</div>
-          </div>
-          <div className={`inline-badge ${notificationConfigured ? 'is-success' : 'is-warning'}`}>{notificationConfigured ? '정상' : '점검 필요'}</div>
-        </div>
-        <div className="detail-list">
-          <div>채널: {String(notifications.channel || '-')}</div>
-          <div>enabled: {notifications.enabled ? 'true' : 'false'}</div>
-          <div>configured: {notifications.configured ? 'true' : 'false'}</div>
-          <div>chat_id_configured: {notifications.chat_id_configured ? 'true' : 'false'}</div>
-          <div>last_sent_at: {formatDateTime(notifications.last_sent_at || '')}</div>
-          <div>last_error: {String(notifications.last_error || '-')}</div>
-        </div>
-      </div>
     </div>
   );
 }

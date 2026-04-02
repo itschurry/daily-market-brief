@@ -73,7 +73,6 @@ def _install_server_route_stubs() -> list[str]:
             "handle_paper_reset": lambda payload: (200, {"payload": payload}),
         },
         "routes.system": {
-            "handle_notifications_status": lambda: (200, {"ok": True}),
             "handle_system_mode": lambda: (200, {"ok": True}),
         },
         "routes.validation": {
