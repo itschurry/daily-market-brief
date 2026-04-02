@@ -432,8 +432,12 @@ def _apply_validation_gate(signal: dict[str, Any], cfg: dict[str, Any]) -> tuple
     optimized = _load_optimized_params() or {}
     per_symbol = optimized.get("per_symbol", {}) if isinstance(
         optimized, dict) else {}
-    symbol_payload = per_symbol.get(
+    raw_symbol_payload = per_symbol.get(
         code, {}) if isinstance(per_symbol, dict) else {}
+    symbol_payload = raw_symbol_payload if isinstance(raw_symbol_payload, dict) and should_apply_symbol_overlay(
+        is_reliable=bool(raw_symbol_payload.get("is_reliable", False)),
+        reliability_reason=str(raw_symbol_payload.get("reliability_reason") or ""),
+    ) else {}
     global_baseline = _optimized_validation_baseline(optimized)
     optimized_validation_payload = symbol_payload if symbol_payload else global_baseline
     validation_source = "signal"

@@ -93,6 +93,59 @@ class RuntimeValidationGateTests(unittest.TestCase):
         self.assertAlmostEqual(0.93, meta["sharpe"])
         self.assertEqual("high", meta["reliability"])
 
+    def test_validation_gate_ignores_unreliable_symbol_snapshot_when_global_baseline_exists(self):
+        signal = {
+            "code": "000810",
+            "validation_snapshot": {
+                "trade_count": 0,
+                "validation_trades": 0,
+                "validation_sharpe": 0.0,
+                "strategy_reliability": "insufficient",
+            },
+            "ev_metrics": {},
+        }
+        cfg = {
+            "validation_gate_enabled": True,
+            "validation_min_trades": 8,
+            "validation_min_sharpe": 0.2,
+            "validation_block_on_low_reliability": True,
+            "validation_require_optimized_reliability": True,
+        }
+        optimized_payload = {
+            "validation_baseline": {
+                "trade_count": 61,
+                "validation_trades": 61,
+                "validation_sharpe": 0.4,
+                "max_drawdown_pct": -7.28,
+                "strategy_reliability": "high",
+                "reliability_reason": "validated_candidate",
+                "passes_minimum_gate": True,
+                "is_reliable": True,
+            },
+            "per_symbol": {
+                "000810": {
+                    "trade_count": 79,
+                    "validation_trades": 6,
+                    "validation_sharpe": 0.0,
+                    "max_drawdown_pct": -17.8626,
+                    "strategy_reliability": "insufficient",
+                    "reliability_reason": "insufficient_validation_signals",
+                    "passes_minimum_gate": False,
+                    "is_reliable": False,
+                }
+            },
+        }
+
+        with patch.object(execution_svc, "_load_optimized_params", return_value=optimized_payload):
+            allowed, reasons, meta = execution_svc._apply_validation_gate(signal, cfg)
+
+        self.assertTrue(allowed)
+        self.assertEqual([], reasons)
+        self.assertEqual("global", meta["source"])
+        self.assertEqual(61, meta["trades"])
+        self.assertAlmostEqual(0.4, meta["sharpe"])
+        self.assertEqual("high", meta["reliability"])
+
 
 class StrategyEngineRuntimePathTests(unittest.TestCase):
     def test_build_signal_book_falls_back_to_global_validation_when_symbol_overlay_is_unreliable(self):
