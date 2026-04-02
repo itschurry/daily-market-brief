@@ -125,6 +125,8 @@ export interface RecommendationItem {
   technical_snapshot?: TechnicalSnapshot | null;
   technical_view?: string | null;
   setup_quality?: string | null;
+  commentary_owner?: string | null;
+  risk_note?: string | null;
 }
 
 export interface RecommendationsData {
@@ -257,6 +259,8 @@ export interface TodayPickItem {
   technical_snapshot?: TechnicalSnapshot | null;
   technical_view?: string | null;
   setup_quality?: string | null;
+  commentary_owner?: string | null;
+  risk_note?: string | null;
   // Phase 5: 신뢰도 정보 필드 추가
   strategy_reliability?: 'high' | 'medium' | 'low' | 'insufficient';
   validation_trades?: number;

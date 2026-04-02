@@ -10,6 +10,7 @@ from analyzer.utils import normalize_lower as _normalize
 from collectors.models import DailyData
 from config.portfolio import HOLDINGS
 from market_utils import lookup_company_listing, resolve_market
+from services.hanna_commentary_service import build_hanna_candidate_commentary
 
 _KST = ZoneInfo("Asia/Seoul")
 _ALLOWED_HORIZONS = {"short_term", "mid_term"}
@@ -481,6 +482,19 @@ def generate_recommendations(data: DailyData, playbook: dict | None = None) -> D
         if data.market_context and data.market_context.risks:
             risks.extend(data.market_context.risks[:2])
 
+        deduped_reasons = list(dict.fromkeys(reasons))[:4]
+        deduped_risks = list(dict.fromkeys(risks))[:4]
+        commentary = build_hanna_candidate_commentary(
+            name=catalog_entry["name"],
+            market=catalog_entry["market"],
+            signal=signal,
+            gate_status=gate_status,
+            reasons=deduped_reasons,
+            risks=deduped_risks,
+            technical_view=str(candidate.get("technical_view") or technical_assessment.get("technical_view") or "").strip(),
+            base_thesis=thesis or "",
+        )
+
         item = {
             "rank": 0,
             "name": catalog_entry["name"],
@@ -490,19 +504,21 @@ def generate_recommendations(data: DailyData, playbook: dict | None = None) -> D
             "score": score,
             "confidence": confidence,
             "risk_level": risk_level,
-            "reasons": list(dict.fromkeys(reasons))[:4],
-            "risks": list(dict.fromkeys(risks))[:4],
+            "reasons": deduped_reasons,
+            "risks": deduped_risks,
             "horizon": str(candidate.get("horizon", "short_term")),
             "gate_status": gate_status,
             "gate_reasons": gate_reasons,
             "playbook_alignment": round(alignment, 1),
-            "ai_thesis": thesis or "플레이북 논리 요약 없음",
+            "ai_thesis": commentary["ai_thesis"],
             "playbook_ref": playbook.get("generated_at") or playbook.get("date"),
             "market": catalog_entry["market"],
             "code": catalog_entry["code"],
             "technical_snapshot": technical_snapshot,
-            "technical_view": str(candidate.get("technical_view") or technical_assessment.get("technical_view") or "").strip(),
+            "technical_view": commentary["technical_view"],
             "setup_quality": str(candidate.get("setup_quality") or technical_assessment.get("setup_quality") or "mixed").strip(),
+            "commentary_owner": commentary["commentary_owner"],
+            "risk_note": commentary["risk_note"],
         }
         if gate_status == "blocked":
             rejected_candidates.append(item)

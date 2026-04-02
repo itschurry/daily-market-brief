@@ -14,6 +14,7 @@ from analyzer.utils import (
 from collectors.models import DailyData, NewsArticle
 from config.company_catalog import CompanyCatalogEntry, get_company_catalog
 from market_utils import resolve_market
+from services.hanna_commentary_service import build_hanna_candidate_commentary
 
 _KST = ZoneInfo("Asia/Seoul")
 
@@ -637,12 +638,26 @@ def _build_pick(
         matched_themes,
     )
 
+    signal = "회피" if playbook_meta["gate_status"] == "blocked" else ("중립" if playbook_meta["gate_status"] == "caution" and _signal_from_score(score) == "추천" else _signal_from_score(score))
+    deduped_reasons = reasons[:4]
+    deduped_risks = risks[:3]
+    commentary = build_hanna_candidate_commentary(
+        name=entry.name,
+        market=entry.market,
+        signal=signal,
+        gate_status=playbook_meta["gate_status"],
+        reasons=deduped_reasons,
+        risks=deduped_risks,
+        technical_view=playbook_meta["technical_view"],
+        base_thesis=playbook_meta["ai_thesis"] or (serialized_ai_signal or {}).get("summary"),
+    )
+
     return {
         "name": entry.name,
         "code": entry.code,
         "market": entry.market,
         "sector": entry.sector,
-        "signal": "회피" if playbook_meta["gate_status"] == "blocked" else ("중립" if playbook_meta["gate_status"] == "caution" and _signal_from_score(score) == "추천" else _signal_from_score(score)),
+        "signal": signal,
         "score": score,
         "confidence": max(
             45,
@@ -655,8 +670,8 @@ def _build_pick(
                 ),
             ),
         ),
-        "reasons": reasons[:4],
-        "risks": risks[:3],
+        "reasons": deduped_reasons,
+        "risks": deduped_risks,
         "catalysts": catalysts[:3],
         "related_news": [_serialize_article(article) for article in articles[:3]],
         "related_disclosures": [_serialize_disclosure(item) for item in related_disclosures],
@@ -671,10 +686,12 @@ def _build_pick(
         "gate_status": playbook_meta["gate_status"],
         "gate_reasons": playbook_meta["gate_reasons"],
         "playbook_alignment": playbook_meta["playbook_alignment"],
-        "ai_thesis": playbook_meta["ai_thesis"] or (serialized_ai_signal or {}).get("summary"),
+        "ai_thesis": commentary["ai_thesis"],
         "technical_snapshot": playbook_meta["technical_snapshot"],
-        "technical_view": playbook_meta["technical_view"],
+        "technical_view": commentary["technical_view"],
         "setup_quality": playbook_meta["setup_quality"],
+        "commentary_owner": commentary["commentary_owner"],
+        "risk_note": commentary["risk_note"],
     }
 
 

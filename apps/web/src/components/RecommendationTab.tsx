@@ -159,13 +159,18 @@ function PickCard({ item }: { item: TodayPickItem }) {
         </div>
 
         <div style={{ padding: '14px 16px', borderRadius: 18, background: 'rgba(15,76,92,.06)', border: '1px solid rgba(15,76,92,.12)' }}>
-          <div style={{ fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Playbook Thesis</div>
+          <div style={{ fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Hanna Thesis</div>
           <div style={{ fontSize: 14, color: 'var(--text-2)', lineHeight: 1.7, marginTop: 8 }}>
             {item.ai_thesis || item.technical_view || item.catalysts[0] || item.reasons[0] || '핵심 촉매 데이터 없음'}
           </div>
           {item.technical_view && (
             <div style={{ fontSize: 12, color: 'var(--text-4)', marginTop: 8 }}>
               {item.technical_view}
+            </div>
+          )}
+          {item.risk_note && (
+            <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 8 }}>
+              주의: {item.risk_note}
             </div>
           )}
         </div>
