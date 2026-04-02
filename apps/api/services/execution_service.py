@@ -1,12 +1,16 @@
 import datetime
 import json
+import logging
 import os
 import threading
 import uuid
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
+try:
+    from loguru import logger
+except Exception:  # pragma: no cover - fallback for lightweight test envs
+    logger = logging.getLogger(__name__)
 from helpers import (
     _KST,
     _SUPPORTED_AUTO_TRADE_MARKETS,

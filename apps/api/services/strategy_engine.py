@@ -1,4 +1,4 @@
-"""Live signal book wrapper backed by strategy registry and scanner services."""
+"""Runtime strategy-engine compatibility layer for live signal book construction."""
 
 from __future__ import annotations
 
@@ -6,6 +6,10 @@ from typing import Any
 
 from routes.reports import _get_market_context
 from services.live_signal_engine import build_live_signal_book
+from services.optimized_params_store import load_execution_optimized_params
+from services.reliability_policy import should_apply_symbol_overlay
+from services.signal_service import collect_pick_candidates
+from services.sizing_service import recommend_position_size
 
 
 def _context_snapshot() -> tuple[str, str]:
@@ -20,17 +24,204 @@ def _context_snapshot() -> tuple[str, str]:
     return regime, risk_level
 
 
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _load_optimized_params() -> dict[str, Any] | None:
+    payload = load_execution_optimized_params()
+    return payload if isinstance(payload, dict) else None
+
+
+def determine_strategy_type(candidate: dict[str, Any]) -> str:
+    return str(candidate.get("strategy_type") or candidate.get("source") or "quant").strip() or "quant"
+
+
+def allocator_weight(*, candidate: dict[str, Any], cfg: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
+    return {"enabled": True, "weight": 1.0}
+
+
+def build_risk_guard_state(*, candidate: dict[str, Any], cfg: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
+    return {"entry_allowed": True, "reasons": []}
+
+
+def compute_ev_metrics(*, candidate: dict[str, Any], validation_snapshot: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
+    reliability = str(validation_snapshot.get("strategy_reliability") or "insufficient")
+    return {
+        "expected_value": round(_to_float(candidate.get("score"), 0.0) / 100.0, 4),
+        "reliability": reliability,
+        "reliability_detail": {
+            "label": reliability,
+            "reason": str(validation_snapshot.get("reliability_reason") or "validation_snapshot"),
+            "passes_minimum_gate": bool(validation_snapshot.get("passes_minimum_gate")),
+            "is_reliable": bool(validation_snapshot.get("is_reliable")),
+        },
+        "calibration": {},
+    }
+
+
+def _validation_snapshot_for_candidate(candidate: dict[str, Any], optimized_payload: dict[str, Any] | None) -> dict[str, Any]:
+    base_snapshot = candidate.get("validation_snapshot") if isinstance(candidate.get("validation_snapshot"), dict) else {}
+    code = str(candidate.get("code") or "").upper()
+    optimized_payload = optimized_payload if isinstance(optimized_payload, dict) else {}
+    per_symbol = optimized_payload.get("per_symbol") if isinstance(optimized_payload.get("per_symbol"), dict) else {}
+    global_baseline = optimized_payload.get("validation_baseline") if isinstance(optimized_payload.get("validation_baseline"), dict) else {}
+    symbol_payload = per_symbol.get(code) if isinstance(per_symbol.get(code), dict) else {}
+
+    use_symbol = bool(symbol_payload) and should_apply_symbol_overlay(
+        is_reliable=bool(symbol_payload.get("is_reliable", False)),
+        reliability_reason=str(symbol_payload.get("reliability_reason") or ""),
+    )
+    overlay = symbol_payload if use_symbol else global_baseline
+    source = "symbol" if use_symbol else "global" if overlay else str(base_snapshot.get("validation_source") or "signal")
+
+    trade_count = overlay.get("trade_count") if overlay else base_snapshot.get("trade_count")
+    validation_trades = overlay.get("validation_trades") if overlay else base_snapshot.get("validation_trades")
+    if trade_count in (None, ""):
+        trade_count = validation_trades or 0
+    if validation_trades in (None, ""):
+        validation_trades = trade_count or 0
+
+    return {
+        **base_snapshot,
+        "validation_source": source,
+        "trade_count": int(trade_count or 0),
+        "validation_trades": int(validation_trades or 0),
+        "validation_sharpe": _to_float((overlay or {}).get("validation_sharpe"), _to_float(base_snapshot.get("validation_sharpe"), 0.0)),
+        "max_drawdown_pct": (overlay or {}).get("max_drawdown_pct", base_snapshot.get("max_drawdown_pct")),
+        "strategy_reliability": str((overlay or {}).get("strategy_reliability") or base_snapshot.get("strategy_reliability") or "insufficient"),
+        "reliability_reason": str((overlay or {}).get("reliability_reason") or base_snapshot.get("reliability_reason") or "validation_snapshot"),
+        "passes_minimum_gate": bool((overlay or {}).get("passes_minimum_gate", base_snapshot.get("passes_minimum_gate", False))),
+        "is_reliable": bool((overlay or {}).get("is_reliable", base_snapshot.get("is_reliable", False))),
+        "composite_score": (overlay or {}).get("composite_score", base_snapshot.get("composite_score")),
+    }
+
+
+def _risk_inputs_for_candidate(candidate: dict[str, Any], optimized_payload: dict[str, Any] | None, cfg: dict[str, Any]) -> dict[str, Any]:
+    code = str(candidate.get("code") or "").upper()
+    optimized_payload = optimized_payload if isinstance(optimized_payload, dict) else {}
+    per_symbol = optimized_payload.get("per_symbol") if isinstance(optimized_payload.get("per_symbol"), dict) else {}
+    global_baseline = optimized_payload.get("validation_baseline") if isinstance(optimized_payload.get("validation_baseline"), dict) else {}
+    symbol_payload = per_symbol.get(code) if isinstance(per_symbol.get(code), dict) else {}
+
+    use_symbol = bool(symbol_payload) and should_apply_symbol_overlay(
+        is_reliable=bool(symbol_payload.get("is_reliable", False)),
+        reliability_reason=str(symbol_payload.get("reliability_reason") or ""),
+    )
+    overlay = symbol_payload if use_symbol else global_baseline
+
+    stop_loss_pct = overlay.get("stop_loss_pct") if isinstance(overlay, dict) else None
+    if stop_loss_pct in (None, ""):
+        stop_loss_pct = candidate.get("stop_loss_pct")
+    if stop_loss_pct in (None, ""):
+        stop_loss_pct = cfg.get("stop_loss_pct", 5.0)
+
+    return {
+        "stop_loss_pct": _to_float(stop_loss_pct, 5.0),
+    }
+
+
+def _build_signal_from_candidate(
+    *,
+    candidate: dict[str, Any],
+    market: str,
+    cfg: dict[str, Any],
+    account: dict[str, Any],
+    optimized_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    validation_snapshot = _validation_snapshot_for_candidate(candidate, optimized_payload)
+    risk_inputs = _risk_inputs_for_candidate(candidate, optimized_payload, cfg)
+    risk_guard_state = build_risk_guard_state(candidate=candidate, cfg=cfg, account=account)
+    ev_metrics = compute_ev_metrics(candidate=candidate, validation_snapshot=validation_snapshot, cfg=cfg)
+    size_recommendation = recommend_position_size(
+        account=account,
+        market=str(candidate.get("market") or market),
+        unit_price_local=_to_float(
+            candidate.get("price"),
+            _to_float((candidate.get("technical_snapshot") or {}).get("current_price"), 0.0),
+        ),
+        stop_loss_pct=_to_float(risk_inputs.get("stop_loss_pct"), 5.0),
+        expected_value=_to_float(ev_metrics.get("expected_value"), 0.0),
+        reliability=str(ev_metrics.get("reliability") or validation_snapshot.get("strategy_reliability") or "insufficient"),
+        risk_guard_state=risk_guard_state,
+        cfg=cfg,
+        symbol_key=f"{str(candidate.get('market') or market).upper()}:{str(candidate.get('code') or '').upper()}",
+        sector=str(candidate.get("sector") or "미분류"),
+    )
+    entry_allowed = bool(risk_guard_state.get("entry_allowed", True)) and str(candidate.get("gate_status") or "passed") == "passed"
+
+    return {
+        **candidate,
+        "market": str(candidate.get("market") or market).upper(),
+        "signal_state": str(candidate.get("signal_state") or "entry"),
+        "entry_intent": True,
+        "exit_intent": False,
+        "entry_allowed": entry_allowed,
+        "validation_snapshot": validation_snapshot,
+        "risk_inputs": risk_inputs,
+        "risk_guard_state": risk_guard_state,
+        "strategy_type": determine_strategy_type(candidate),
+        "allocation": allocator_weight(candidate=candidate, cfg=cfg, account=account),
+        "ev_metrics": ev_metrics,
+        "size_recommendation": size_recommendation,
+        "execution_realism": {
+            "liquidity_gate_status": "ok" if entry_allowed else "blocked",
+            **(candidate.get("execution_realism") if isinstance(candidate.get("execution_realism"), dict) else {}),
+        },
+    }
+
+
 def build_signal_book(
     *,
     markets: list[str] | None = None,
     cfg: dict[str, Any] | None = None,
     account: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    refresh = bool((cfg or {}).get("refresh_scanner"))
-    book = build_live_signal_book(markets=markets, account=account, refresh=refresh)
+    cfg = cfg or {}
+    account = account or {}
+    refresh = bool(cfg.get("refresh_scanner"))
+
+    # Keep the strategy-registry live path for callers that don't need candidate-policy compatibility.
+    if not markets:
+        book = build_live_signal_book(markets=markets, account=account, refresh=refresh)
+        regime, risk_level = _context_snapshot()
+        payload = {**book, "regime": regime, "risk_level": risk_level}
+        if isinstance(payload.get("risk_guard_state"), dict):
+            payload["risk_guard_state"].setdefault("regime", regime)
+            payload["risk_guard_state"].setdefault("risk_level", risk_level)
+        return payload
+
+    optimized_payload = _load_optimized_params()
     regime, risk_level = _context_snapshot()
+    signals: list[dict[str, Any]] = []
+    risk_guard_state: dict[str, Any] = {}
+
+    for market in markets:
+        for candidate in collect_pick_candidates(market=market, cfg=cfg):
+            if not isinstance(candidate, dict):
+                continue
+            signal = _build_signal_from_candidate(
+                candidate=candidate,
+                market=market,
+                cfg=cfg,
+                account=account,
+                optimized_payload=optimized_payload,
+            )
+            signals.append(signal)
+            if not risk_guard_state and isinstance(signal.get("risk_guard_state"), dict):
+                risk_guard_state = dict(signal.get("risk_guard_state") or {})
+
     payload = {
-        **book,
+        "generated_at": "",
+        "signals": signals,
+        "count": len(signals),
+        "blocked_count": sum(1 for item in signals if str(item.get("signal_state") or "") == "entry" and not bool(item.get("entry_allowed"))),
+        "entry_allowed_count": sum(1 for item in signals if bool(item.get("entry_allowed"))),
+        "risk_guard_state": risk_guard_state,
+        "scanner": [],
         "regime": regime,
         "risk_level": risk_level,
     }

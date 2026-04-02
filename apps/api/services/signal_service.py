@@ -70,9 +70,9 @@ def parse_theme_gate_config(raw: dict | None = None) -> dict:
 
 
 def normalize_runtime_candidate_source_mode(raw: Any) -> RuntimeCandidateSourceMode:
-    mode = str(raw or "hybrid").strip().lower()
+    mode = str(raw or "quant_only").strip().lower()
     if mode not in _RUNTIME_CANDIDATE_SOURCE_MODES:
-        return "hybrid"
+        return "quant_only"
     return mode  # type: ignore[return-value]
 
 
