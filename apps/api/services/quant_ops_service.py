@@ -49,10 +49,10 @@ _OPTIMIZER_MAX_RUNTIME_SECONDS = 3900
 _SYMBOL_APPROVAL_STATUSES = {"approved", "rejected", "hold"}
 
 _FULL_ADOPT_THRESHOLDS = {
-    "profit_factor": 1.1,
-    "max_drawdown_pct": 20.0,
+    "profit_factor": 1.08,
+    "max_drawdown_pct": 22.0,
     "positive_window_ratio": 0.5,
-    "expected_shortfall_5_pct": -14.0,
+    "expected_shortfall_5_pct": -15.0,
 }
 
 _LIMITED_ADOPT_CORE_THRESHOLDS = {
@@ -60,6 +60,7 @@ _LIMITED_ADOPT_CORE_THRESHOLDS = {
     "max_drawdown_pct": 25.0,
     "positive_window_ratio": 0.45,
     "expected_shortfall_5_pct": -16.0,
+    "allowed_reliability_levels": {"high", "medium"},
 }
 
 _LIMITED_ADOPT_RUNTIME_RESTRICTIONS = {
@@ -668,7 +669,7 @@ def _candidate_decision(metrics: dict[str, Any], *, min_trades: int, search_is_s
         else:
             limited_core_pass = (
                 oos_return > 0.0
-                and reliability == "high"
+                and reliability in _LIMITED_ADOPT_CORE_THRESHOLDS["allowed_reliability_levels"]
                 and trade_count >= max(1, min_trades)
                 and profit_factor >= _LIMITED_ADOPT_CORE_THRESHOLDS["profit_factor"]
                 and abs(max_drawdown_pct) <= _LIMITED_ADOPT_CORE_THRESHOLDS["max_drawdown_pct"]

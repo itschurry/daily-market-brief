@@ -677,6 +677,54 @@ class QuantOpsWorkflowTests(unittest.TestCase):
         self.assertFalse(workflow["search_handoff"]["active"])
         self.assertIsNone(persisted["pending_search_handoff"])
 
+    def test_medium_reliability_candidate_can_now_be_limited_adopt_when_tail_risk_is_controlled(self):
+        medium_diag = _adopt_diagnostics()
+        medium_diag["validation"]["segments"]["oos"].update({
+            "total_return_pct": 2.78,
+            "profit_factor": 1.38,
+            "max_drawdown_pct": -6.09,
+            "trade_count": 60,
+        })
+        medium_diag["validation"]["summary"].update({
+            "positive_window_ratio": 1.0,
+            "oos_reliability": "medium",
+            "reliability_diagnostic": {
+                "target_reached": True,
+                "current": {
+                    "label": "medium",
+                    "reason": "borderline_validation_sharpe",
+                    "trade_count": 60,
+                    "validation_signals": 60,
+                    "validation_sharpe": 0.31,
+                    "max_drawdown_pct": -6.09,
+                    "passes_minimum_gate": True,
+                    "is_reliable": False,
+                },
+            },
+        })
+        medium_diag["validation"]["scorecard"]["tail_risk"].update({
+            "expected_shortfall_5_pct": -15.45,
+            "return_p05_pct": -14.8445,
+        })
+        medium_diag["validation"]["segments"]["oos"]["strategy_scorecard"]["tail_risk"].update({
+            "expected_shortfall_5_pct": -15.45,
+            "return_p05_pct": -14.8445,
+        })
+
+        with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path), \
+             patch.object(svc, "load_search_optimized_params", return_value=self.search_payload), \
+             patch.object(svc, "load_runtime_optimized_params", return_value=None), \
+             patch.object(svc, "run_validation_diagnostics", return_value=medium_diag):
+            result = svc.revalidate_optimizer_candidate({
+                "query": {"market_scope": "all", "lookback_days": 365},
+                "settings": {"strategy": "완화된 운영 전략", "minTrades": 12},
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("limited_adopt", result["candidate"]["decision"]["status"])
+        self.assertEqual(["expected_shortfall_5_pct"], result["candidate"]["decision"]["near_miss_metrics"])
+        self.assertTrue(result["candidate"]["guardrails"]["can_save"])
+
     def test_limited_adopt_candidate_can_be_saved_with_probationary_metadata(self):
         with patch.object(svc, "_QUANT_OPS_STATE_PATH", self.state_path),              patch.object(svc, "load_search_optimized_params", return_value=self.search_payload),              patch.object(svc, "load_runtime_optimized_params", return_value=None),              patch.object(svc, "run_validation_diagnostics", return_value=_limited_adopt_diagnostics()):
             result = svc.revalidate_optimizer_candidate({
