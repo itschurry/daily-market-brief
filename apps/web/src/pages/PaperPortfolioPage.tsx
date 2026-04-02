@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
-import { UI_TEXT } from '../constants/uiText';
+import { UI_TEXT, reasonCodeToKorean } from '../constants/uiText';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import { usePaperTrading } from '../hooks/usePaperTrading';
 import { useToast } from '../hooks/useToast';
@@ -138,6 +138,27 @@ function formatMarketWithCurrency(market: unknown): string {
   return `${normalized} · ${marketCurrency(market)}`;
 }
 
+type HannaState = 'healthy' | 'degraded' | 'timeout' | 'research_unavailable';
+
+function resolveHannaState(status: unknown, researchUnavailable: unknown): HannaState {
+  if (Boolean(researchUnavailable)) return 'research_unavailable';
+  if (String(status || '') === 'timeout') return 'timeout';
+  if (String(status || '') === 'degraded') return 'degraded';
+  return 'healthy';
+}
+
+function hannaBadgeClass(state: HannaState) {
+  if (state === 'healthy') return 'inline-badge is-success';
+  if (state === 'timeout' || state === 'degraded') return 'inline-badge is-danger';
+  return 'inline-badge';
+}
+
+function hannaTone(state: HannaState): 'neutral' | 'good' | 'bad' {
+  if (state === 'healthy') return 'good';
+  if (state === 'timeout' || state === 'degraded') return 'bad';
+  return 'neutral';
+}
+
 export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh }: PaperPortfolioPageProps) {
   const { pushToast } = useToast();
   const { entries, push, clear } = useConsoleLogs();
@@ -172,6 +193,55 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
     .slice(0, 80)
     .sort((a, b) => String((b as { timestamp?: string; ts?: string }).timestamp || (b as { ts?: string }).ts || '')
       .localeCompare(String((a as { timestamp?: string; ts?: string }).timestamp || (a as { ts?: string }).ts || '')));
+  const currentHannaState = useMemo<HannaState>(() => {
+    const states = (snapshot.signals.signals || []).map((signal) => resolveHannaState(signal.research_status, signal.research_unavailable));
+    if (states.includes('timeout')) return 'timeout';
+    if (states.includes('degraded')) return 'degraded';
+    if (states.includes('healthy')) return 'healthy';
+    return 'research_unavailable';
+  }, [snapshot.signals.signals]);
+  const signalRiskActionLogs = useMemo(() => {
+    return [...signalSnapshots]
+      .sort((left, right) => String((right as { timestamp?: string; logged_at?: string }).timestamp || (right as { logged_at?: string }).logged_at || '')
+        .localeCompare(String((left as { timestamp?: string; logged_at?: string }).timestamp || (left as { logged_at?: string }).logged_at || '')))
+      .slice(0, 14)
+      .map((row) => {
+        const item = row as {
+          timestamp?: string;
+          logged_at?: string;
+          code?: string;
+          name?: string;
+          market?: string;
+          strategy_name?: string;
+          strategy_id?: string;
+          research_status?: string;
+          research_unavailable?: boolean;
+          reason_codes?: string[];
+          final_action?: string;
+          entry_allowed?: boolean;
+          risk_check?: { reason_code?: string; message?: string };
+          risk_reason_code?: string;
+          risk_message?: string;
+        };
+        const hannaState = resolveHannaState(item.research_status, item.research_unavailable);
+        const rawReasonCodes = Array.isArray(item.reason_codes) ? item.reason_codes.map((code) => String(code)) : [];
+        const riskReasonCode = String(item.risk_reason_code || item.risk_check?.reason_code || '-');
+        return {
+          key: `${item.timestamp || item.logged_at || 'time'}:${item.market || 'market'}:${item.code || 'code'}`,
+          timestamp: String(item.timestamp || item.logged_at || ''),
+          symbol: formatSymbol(item.code, item.name),
+          strategy: String(item.strategy_name || item.strategy_id || '-'),
+          market: String(item.market || '-'),
+          hannaState,
+          riskDecision: item.entry_allowed ? 'allowed' : 'blocked',
+          riskReasonCode,
+          riskMessage: String(item.risk_message || item.risk_check?.message || '-'),
+          finalAction: String(item.final_action || '-'),
+          translatedReasons: rawReasonCodes.map((code) => reasonCodeToKorean(code)),
+          rawReasons: rawReasonCodes,
+        };
+      });
+  }, [signalSnapshots]);
 
   const vm = useMemo<PaperViewModel>(() => {
     const unrealized = positions.reduce((sum, item) => sum + toNumber(item.unrealized_pnl_krw), 0);
@@ -211,7 +281,12 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
       value: `${vm.positionCount}건`,
       tone: 'neutral',
     },
-  ]), [engineState.engine_state, engineState.running, riskGuardState.entry_allowed, status, vm.positionCount]);
+    {
+      label: 'Hanna',
+      value: currentHannaState,
+      tone: hannaTone(currentHannaState),
+    },
+  ]), [currentHannaState, engineState.engine_state, engineState.running, riskGuardState.entry_allowed, status, vm.positionCount]);
 
   const handleRefreshAll = useCallback(async () => {
     onRefresh();
@@ -557,8 +632,8 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
       <div className="page-frame">
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <ConsoleActionBar
-            title="Paper 실행 운용"
-            subtitle="paper 계좌, 포지션, 실행 엔진 상태를 확인하고 시작·중지·초기화를 직접 수행합니다. 리서치 결과를 실행 가능한 후보로 넘기는 관제 화면입니다."
+            title="주문/리스크"
+            subtitle="계좌, 포지션, 주문 이력, 리스크 거절 사유를 한 화면에서 확인합니다. 신호가 있었는데 왜 주문이 없었는지 이 화면에서 바로 추적합니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage || lastError}
@@ -630,7 +705,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
               <span className={`report-decision-chip ${entryAllowed ? 'is-good' : 'is-bad'}`}>신규 진입 {entryAllowed ? '가능' : '차단'}</span>
             </div>
             <div className="report-decision-title">운용 우선순위: {riskyPositions.length > 0 || todayFailCount > 0 ? '리스크 정리 먼저' : '정상 운영 지속'}</div>
-            <div className="report-hero-copy">리서치가 끝난 후보를 paper 계좌에 태우기 전에 위험 포지션, 오늘 체결/실패, 엔진 신뢰도, 신규 진입 허용 여부를 먼저 확인하는 실행 관제 화면입니다. 실행 후보는 today picks 우선·recommendations fallback 합집합 흐름이며, quant validation gate는 별도로 얹힙니다.</div>
+            <div className="report-hero-copy">이 화면은 실행 관제판입니다. live order path는 Layer B quant 후보 → Layer C research scorer(Hanna, 선택) → Layer D risk veto → Layer E final action 순서로만 흘러갑니다. 뉴스/테마/자유문장 파싱으로 바로 주문시키는 길은 여기서 끊었습니다.</div>
             {repeatedCashRetries.length > 0 && (
               <div className="inline-warning-card" style={{ marginTop: 12 }}>
                 <div><strong>반복 현금 부족 실패 감지</strong></div>
@@ -665,9 +740,9 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
             <div className="page-section" style={{ padding: 16 }}>
               <div className="section-title">리서치 입력 분리</div>
               <div className="detail-list">
-                <div>퀀트: 백테스트/최적화로 관리한 validation gate, sizing, runtime overlay</div>
-                <div>AI/테마/뉴스: today picks / recommendations 기반 리서치 후보</div>
-                <div>실행 해석: 둘 다 동시에 있어야 하는 교집합이 아니라, 둘 중 하나만 있어도 downstream 후보가 될 수 있는 합집합 흐름</div>
+                <div>Layer B: 퀀트 스캐너가 진입 후보를 만든 뒤 reason code와 스냅샷을 남깁니다.</div>
+                <div>Layer C: Hanna는 external research scorer일 뿐이고, buy/sell/order를 직접 내리지 못합니다.</div>
+                <div>Layer D/E: Risk Gate가 최종 veto를 쥐고, 결과는 review_for_entry / watch_only / blocked / do_not_touch로만 끝냅니다.</div>
               </div>
             </div>
             <div className="page-section" style={{ padding: 16 }}>
@@ -826,10 +901,13 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                     name?: string;
                     market?: string;
                     side?: string;
+                    strategy_name?: string;
                     quantity?: number;
                     filled_price_local?: number;
                     success?: boolean;
                     failure_reason?: string;
+                    reason_code?: string;
+                    message?: string;
                   };
                   const isSuccess = item.success !== false;
                   return (
@@ -843,8 +921,14 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                     <div style={{ marginTop: 4, color: 'var(--text-3)' }}>
                       {item.market ? `${formatMarketWithCurrency(item.market)} · ` : ''}수량 {formatCount(item.quantity, '주')} · 체결가 {formatLocalPrice(item.filled_price_local, item.market)} · {formatDateTime(item.timestamp || item.ts)}
                     </div>
+                    {!!item.strategy_name && (
+                      <div className="signal-cell-copy" style={{ marginTop: 4 }}>전략: {item.strategy_name}</div>
+                    )}
                     {!isSuccess && (
-                      <div style={{ marginTop: 4, color: 'var(--down)' }}>실패 사유: {explainOrderFailureReason(item.failure_reason)}</div>
+                      <div style={{ marginTop: 4, color: 'var(--down)', display: 'grid', gap: 4 }}>
+                        <div>reason code: {item.reason_code || item.failure_reason || '-'}</div>
+                        <div>상세: {item.message || explainOrderFailureReason(item.failure_reason)}</div>
+                      </div>
                     )}
                   </div>
                 );})}
@@ -882,6 +966,69 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                   <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{UI_TEXT.empty.noSkipReasons}</div>
                 )}
               </div>
+            </div>
+          </div>
+
+          <div className="page-section" style={{ padding: 16 }}>
+            <div className="section-head-row">
+              <div>
+                <div className="section-title">Risk / Action 로그</div>
+                <div className="section-copy">Layer D risk 결과와 Layer E final action을 분리해서 보여줍니다. Hanna 상태는 참고 정보이고 주문 허용 여부는 risk veto 기준으로 읽으면 됩니다.</div>
+              </div>
+              <div className={hannaBadgeClass(currentHannaState)}>Hanna {currentHannaState}</div>
+            </div>
+            <div style={{ overflow: 'auto', marginTop: 12 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1120 }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg-soft)', textAlign: 'left' }}>
+                    <th style={{ padding: 12, fontSize: 12 }}>시각</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>종목</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>전략</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>Hanna</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>Layer D</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>Layer E</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>reason code</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {signalRiskActionLogs.map((item) => (
+                    <tr key={item.key} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: 12, fontSize: 12 }}>{formatDateTime(item.timestamp)}</td>
+                      <td style={{ padding: 12, fontSize: 12 }}>
+                        <div style={{ fontWeight: 700 }}>{item.symbol}</div>
+                        <div className="signal-cell-copy">{item.market}</div>
+                      </td>
+                      <td style={{ padding: 12, fontSize: 12 }}>{item.strategy}</td>
+                      <td style={{ padding: 12, fontSize: 12 }}>
+                        <div className={hannaBadgeClass(item.hannaState)}>{item.hannaState}</div>
+                      </td>
+                      <td style={{ padding: 12, fontSize: 12 }}>
+                        <div className={item.riskDecision === 'allowed' ? 'inline-badge is-success' : 'inline-badge is-danger'}>
+                          {item.riskDecision}
+                        </div>
+                        <div className="signal-cell-copy" style={{ marginTop: 6 }}>{reasonCodeToKorean(item.riskReasonCode)}</div>
+                      </td>
+                      <td style={{ padding: 12, fontSize: 12 }}>
+                        <div className={item.finalAction === 'review_for_entry' ? 'inline-badge is-success' : item.finalAction === 'blocked' ? 'inline-badge is-danger' : 'inline-badge'}>
+                          {item.finalAction}
+                        </div>
+                        <div className="signal-cell-copy" style={{ marginTop: 6 }}>{item.riskMessage}</div>
+                      </td>
+                      <td style={{ padding: 12, fontSize: 12 }}>
+                        <div>{item.translatedReasons.join(', ') || '-'}</div>
+                        <div className="signal-cell-copy" style={{ marginTop: 6 }}>{item.rawReasons.join(', ') || '-'}</div>
+                      </td>
+                    </tr>
+                  ))}
+                  {signalRiskActionLogs.length === 0 && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: 16, fontSize: 12, color: 'var(--text-4)' }}>
+                        아직 기록된 signal snapshot이 없습니다. 엔진을 한 번 실행하면 Layer D/E 로그가 여기에 누적됩니다.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
 

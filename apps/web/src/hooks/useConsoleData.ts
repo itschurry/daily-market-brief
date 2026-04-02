@@ -2,8 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchEngineStatus,
   fetchNotificationStatus,
+  fetchPerformanceSummary,
   fetchReportsExplain,
+  fetchScannerStatus,
   fetchSignals,
+  fetchStrategies,
+  fetchUniverse,
   fetchValidationWalkForward,
 } from '../api/domain';
 import { UI_TEXT } from '../constants/uiText';
@@ -35,6 +39,10 @@ function emptySnapshot(): ConsoleSnapshot {
   return {
     engine: {},
     signals: {},
+    strategies: {},
+    scanner: {},
+    universe: {},
+    performance: {},
     portfolio: {},
     validation: {},
     reports: {},
@@ -64,7 +72,7 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
     };
   }
 
-  if (route.consoleTab === 'paper') {
+  if (route.consoleTab === 'orders') {
     return {
       signalLimit: 0,
       initialTargets: ['engine', 'notifications'],
@@ -74,21 +82,51 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
     };
   }
 
-  if (route.consoleTab === 'validation') {
+  if (route.consoleTab === 'strategies') {
     return {
       signalLimit: 0,
-      initialTargets: ['engine', 'validation', 'notifications'],
+      initialTargets: ['engine', 'strategies', 'notifications'],
+      fastTargets: ['engine'],
+      midTargets: ['strategies'],
+      slowTargets: ['notifications'],
+    };
+  }
+
+  if (route.consoleTab === 'scanner') {
+    return {
+      signalLimit: 0,
+      initialTargets: ['engine', 'scanner', 'notifications'],
+      fastTargets: ['engine'],
+      midTargets: ['scanner'],
+      slowTargets: ['notifications'],
+    };
+  }
+
+  if (route.consoleTab === 'universe') {
+    return {
+      signalLimit: 0,
+      initialTargets: ['universe', 'notifications'],
+      fastTargets: [],
+      midTargets: ['universe'],
+      slowTargets: ['notifications'],
+    };
+  }
+
+  if (route.consoleTab === 'performance') {
+    return {
+      signalLimit: 0,
+      initialTargets: ['engine', 'performance', 'notifications'],
       fastTargets: ['engine'],
       midTargets: [],
-      slowTargets: ['validation', 'notifications'],
+      slowTargets: ['performance', 'notifications'],
     };
   }
 
   return {
-    signalLimit: route.consoleTab === 'signals' ? 120 : 80,
-    initialTargets: ['engine', 'signals', 'notifications'],
+    signalLimit: 0,
+    initialTargets: ['engine', 'strategies', 'notifications'],
     fastTargets: ['engine'],
-    midTargets: ['signals'],
+    midTargets: ['strategies'],
     slowTargets: ['notifications'],
   };
 }
@@ -124,6 +162,10 @@ export function useConsoleData(route: ConsoleDataRoute) {
     const tasks = targets.map((key) => {
       if (key === 'engine') return fetchEngineStatus();
       if (key === 'signals') return fetchSignals(profile.signalLimit);
+      if (key === 'strategies') return fetchStrategies();
+      if (key === 'scanner') return fetchScannerStatus();
+      if (key === 'universe') return fetchUniverse();
+      if (key === 'performance') return fetchPerformanceSummary();
       if (key === 'validation') return fetchValidationWalkForward();
       if (key === 'notifications') return fetchNotificationStatus();
       if (key === 'reports') return fetchReportsExplain();

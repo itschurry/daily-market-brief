@@ -23,6 +23,7 @@ def _install_server_route_stubs() -> list[str]:
             "handle_stock_price": lambda code, market: (200, {"code": code, "market": market}),
             "handle_stock_search": lambda query: (200, {"q": query}),
         },
+        "routes.performance": {"handle_performance_summary": lambda: (200, {"ok": True})},
         "routes.optimization": {
             "handle_get_optimization_status": lambda: (200, {"ok": True}),
             "handle_get_optimized_params": lambda: (200, {"ok": True}),
@@ -55,10 +56,17 @@ def _install_server_route_stubs() -> list[str]:
             "handle_reports_explain": lambda date=None: (200, {"date": date}),
             "handle_reports_index": lambda: (200, {"ok": True}),
         },
+        "routes.scanner": {"handle_scanner_status": lambda query: (200, {"query": query})},
         "routes.signals": {
             "handle_signal_detail": lambda path: (200, {"path": path}),
             "handle_signal_snapshots": lambda query: (200, {"query": query}),
             "handle_signals_rank": lambda query: (200, {"query": query}),
+        },
+        "routes.strategies": {
+            "handle_strategies_list": lambda query: (200, {"query": query}),
+            "handle_strategy_detail": lambda path: (200, {"path": path}),
+            "handle_strategy_toggle": lambda payload: (200, {"payload": payload}),
+            "handle_strategy_save": lambda payload: (200, {"payload": payload}),
         },
         "routes.trading": {
             "handle_paper_account": lambda refresh=True: (200, {"refresh": refresh}),
@@ -78,6 +86,7 @@ def _install_server_route_stubs() -> list[str]:
             "handle_notifications_status": lambda: (200, {"ok": True}),
             "handle_system_mode": lambda: (200, {"ok": True}),
         },
+        "routes.universe": {"handle_universe_list": lambda query: (200, {"query": query})},
         "routes.validation": {
             "handle_validation_backtest": lambda query: (200, {"query": query}),
             "handle_validation_diagnostics": lambda query: (200, {"query": query}),
@@ -164,6 +173,41 @@ class ApiServerDispatchTests(unittest.TestCase):
         self.assertEqual((200, {"ok": True, "count": 1}), result)
         mock_handler.assert_called_once_with({"limit": ["10"]})
 
+    def test_dispatch_get_routes_strategies(self):
+        with patch("server.handle_strategies_list", return_value=(200, {"ok": True, "count": 2})) as mock_handler:
+            result = dispatch_get("/api/strategies", {"live_only": ["1"]})
+
+        self.assertEqual((200, {"ok": True, "count": 2}), result)
+        mock_handler.assert_called_once_with({"live_only": ["1"]})
+
+    def test_dispatch_get_routes_strategy_detail(self):
+        with patch("server.handle_strategy_detail", return_value=(200, {"ok": True, "item": {}})) as mock_handler:
+            result = dispatch_get("/api/strategies/kr_momentum_v1", {})
+
+        self.assertEqual((200, {"ok": True, "item": {}}), result)
+        mock_handler.assert_called_once_with("/api/strategies/kr_momentum_v1")
+
+    def test_dispatch_get_routes_scanner_status(self):
+        with patch("server.handle_scanner_status", return_value=(200, {"ok": True, "count": 1})) as mock_handler:
+            result = dispatch_get("/api/scanner/status", {"refresh": ["1"]})
+
+        self.assertEqual((200, {"ok": True, "count": 1}), result)
+        mock_handler.assert_called_once_with({"refresh": ["1"]})
+
+    def test_dispatch_get_routes_universe(self):
+        with patch("server.handle_universe_list", return_value=(200, {"ok": True, "count": 1})) as mock_handler:
+            result = dispatch_get("/api/universe", {"refresh": ["1"]})
+
+        self.assertEqual((200, {"ok": True, "count": 1}), result)
+        mock_handler.assert_called_once_with({"refresh": ["1"]})
+
+    def test_dispatch_get_routes_performance_summary(self):
+        with patch("server.handle_performance_summary", return_value=(200, {"ok": True, "live": {}})) as mock_handler:
+            result = dispatch_get("/api/performance/summary", {})
+
+        self.assertEqual((200, {"ok": True, "live": {}}), result)
+        mock_handler.assert_called_once_with()
+
     def test_dispatch_get_routes_signal_snapshots(self):
         with patch("server.handle_signal_snapshots", return_value=(200, {"ok": True, "count": 1})) as mock_handler:
             result = dispatch_get("/api/signals/snapshots", {"limit": ["20"]})
@@ -240,6 +284,17 @@ class ApiServerDispatchTests(unittest.TestCase):
         self.assertEqual((200, {"ok": True, "policy": {"version": 1}}), reset_result)
         mock_save.assert_called_once_with({"policy": {"version": 1}})
         mock_reset.assert_called_once_with()
+
+    def test_dispatch_post_routes_strategy_actions(self):
+        with patch("server.handle_strategy_toggle", return_value=(200, {"ok": True})) as mock_toggle, \
+             patch("server.handle_strategy_save", return_value=(200, {"ok": True, "item": {"strategy_id": "kr"}})) as mock_save:
+            toggle_result = dispatch_post("/api/strategies/toggle", {"strategy_id": "kr", "enabled": False})
+            save_result = dispatch_post("/api/strategies/save", {"strategy_id": "kr"})
+
+        self.assertEqual((200, {"ok": True}), toggle_result)
+        self.assertEqual((200, {"ok": True, "item": {"strategy_id": "kr"}}), save_result)
+        mock_toggle.assert_called_once_with({"strategy_id": "kr", "enabled": False})
+        mock_save.assert_called_once_with({"strategy_id": "kr"})
 
     def test_dispatch_post_routes_quant_ops_actions(self):
         with patch("server.handle_quant_ops_revalidate", return_value=(200, {"ok": True})) as mock_handler:

@@ -2,15 +2,23 @@ import type {
   DomainSignal,
   EngineStatusResponse,
   NotificationStatusResponse,
+  PerformanceSummaryResponse,
   PortfolioStateResponse,
   ReportsExplainResponse,
+  ScannerStatusResponse,
   SignalsRankResponse,
+  StrategiesResponse,
+  UniverseResponse,
   ValidationResponse,
 } from './domain';
 
 export interface ConsoleSnapshot {
   engine: EngineStatusResponse;
   signals: SignalsRankResponse;
+  strategies: StrategiesResponse;
+  scanner: ScannerStatusResponse;
+  universe: UniverseResponse;
+  performance: PerformanceSummaryResponse;
   portfolio: PortfolioStateResponse;
   validation: ValidationResponse;
   reports: ReportsExplainResponse;

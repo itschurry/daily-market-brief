@@ -241,41 +241,20 @@ def _default_validation_policy() -> dict[str, Any]:
 
 
 def _optimized_params_status() -> dict[str, Any]:
-    effective_payload = _load_optimized_params() or {}
-    search_payload = load_search_optimized_params() or {}
-    runtime_payload = load_runtime_optimized_params() or {}
-    optimized_at = str(effective_payload.get("optimized_at") or "")
-    version = str(effective_payload.get("version")
-                  or optimized_at or "unknown")
-    stale = False
-    if optimized_at:
-        try:
-            optimized_ts = datetime.datetime.fromisoformat(optimized_at)
-            age_days = (
-                datetime.datetime.now(datetime.timezone.utc)
-                - optimized_ts.astimezone(datetime.timezone.utc)
-            ).days
-            stale = age_days > _OPTIMIZED_PARAMS_MAX_AGE_DAYS
-        except Exception:
-            stale = True
-    runtime_meta = runtime_payload.get("meta") if isinstance(
-        runtime_payload.get("meta"), dict) else {}
-    effective_meta = effective_payload.get("meta") if isinstance(
-        effective_payload.get("meta"), dict) else {}
     return {
-        "version": version,
-        "optimized_at": optimized_at,
-        "is_stale": stale,
-        "source": str(_RUNTIME_OPTIMIZED_PARAMS_PATH if runtime_payload else _OPTIMIZED_PARAMS_PATH),
-        "effective_source": "runtime" if runtime_payload else "search" if search_payload else "missing",
-        "search_version": str(search_payload.get("version") or search_payload.get("optimized_at") or ""),
-        "search_optimized_at": str(search_payload.get("optimized_at") or ""),
-        "search_source": str(_OPTIMIZED_PARAMS_PATH),
-        "runtime_candidate_id": runtime_meta.get("applied_candidate_id"),
-        "runtime_applied_at": runtime_payload.get("applied_at"),
-        "runtime_source": str(_RUNTIME_OPTIMIZED_PARAMS_PATH),
-        "global_overlay_source": effective_meta.get("global_overlay_source"),
-        "overlay_policy": effective_meta.get("overlay_policy") if isinstance(effective_meta.get("overlay_policy"), dict) else overlay_policy_metadata(),
+        "version": "strategy_registry",
+        "optimized_at": "",
+        "is_stale": False,
+        "source": "strategy_registry",
+        "effective_source": "strategy_registry",
+        "search_version": "",
+        "search_optimized_at": "",
+        "search_source": "",
+        "runtime_candidate_id": "",
+        "runtime_applied_at": "",
+        "runtime_source": "",
+        "global_overlay_source": "strategy_registry",
+        "overlay_policy": overlay_policy_metadata(),
     }
 
 
@@ -766,32 +745,6 @@ def _default_auto_trader_config() -> dict:
         "slippage_bps_base": 8.0,
         "market_profiles": profiles,
     }
-    # 몬테카를로 최적화 결과 오버레이
-    optimized = _load_optimized_params()
-    if optimized:
-        global_params = optimized.get("global_params", {})
-        _OPTIMIZABLE_KEYS = {
-            "stop_loss_pct",
-            "take_profit_pct",
-            "max_holding_days",
-            "rsi_min",
-            "rsi_max",
-            "volume_ratio_min",
-            "adx_min",
-            "mfi_min",
-            "mfi_max",
-            "bb_pct_min",
-            "bb_pct_max",
-            "stoch_k_min",
-            "stoch_k_max",
-        }
-        for key in _OPTIMIZABLE_KEYS:
-            if key in global_params and global_params[key] is not None:
-                base[key] = global_params[key]
-                for market_key in ("KOSPI", "NASDAQ"):
-                    if market_key in base["market_profiles"]:
-                        base["market_profiles"][market_key][key] = global_params[key]
-        logger.info("몬테카를로 최적 파라미터 적용: {}", global_params)
     return base
 
 
@@ -970,14 +923,11 @@ def _should_enter_by_indicators(technicals: dict, cfg: dict, market: str) -> boo
 def _should_exit_by_indicators(position: dict, technicals: dict, cfg: dict, market: str) -> str | None:
     if not isinstance(technicals, dict):
         return None
-    code = str(position.get("code") or "").upper()
-    symbol_params = _get_symbol_optimized_params(code)
-    effective_cfg = {**cfg, **symbol_params} if symbol_params else cfg
     return should_exit_from_snapshot(
         technicals,
         entry_price=float(position.get("avg_price_local") or 0.0) or None,
         holding_days=_position_holding_days(position),
-        profile=_auto_trader_profile(effective_cfg, market),
+        profile=_auto_trader_profile(cfg, market),
     )
 
 
@@ -1205,7 +1155,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
     candidate_counts_by_market: dict[str, int] = {
         market: 0 for market in markets}
     signal_snapshots: list[dict[str, Any]] = []
-    validation_blocked_counts_by_market: dict[str, int] = {
+    blocked_counts_by_market: dict[str, int] = {
         market: 0 for market in markets}
     risk_guard_state: dict[str, Any] = {}
 
@@ -1273,6 +1223,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                     "filled_price_krw": event.get("filled_price_krw"),
                     "notional_krw": event.get("notional_krw"),
                     "failure_reason": "",
+                    "reason_code": "",
+                    "message": "",
                     "originating_cycle_id": cycle_id,
                     "originating_signal_key": f"{market}:{code}",
                     "quote_source": event.get("quote_source"),
@@ -1298,6 +1250,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                     "filled_price_krw": None,
                     "notional_krw": None,
                     "failure_reason": failure_reason,
+                    "reason_code": failure_reason,
+                    "message": failure_reason,
                     "originating_cycle_id": cycle_id,
                     "originating_signal_key": f"{market}:{code}",
                 })
@@ -1334,28 +1288,46 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
         market_signals = signal_book.get("signals", []) if isinstance(
             signal_book.get("signals"), list) else []
         effective_candidates: list[dict[str, Any]] = []
-        validation_blocked = 0
+        blocked_count = 0
         for signal in market_signals:
             if not isinstance(signal, dict):
                 continue
             candidate = dict(signal)
-            allowed_by_gate, gate_reasons, gate_meta = _apply_validation_gate(
-                candidate, cfg)
             merged_reasons = list(candidate.get("reason_codes") or [])
-            entry_allowed = bool(candidate.get(
-                "entry_allowed")) and allowed_by_gate
-            if not entry_allowed:
-                if gate_reasons:
-                    validation_blocked += 1
-                merged_reasons = list(dict.fromkeys(
-                    [*merged_reasons, *gate_reasons]))
+            signal_state = str(candidate.get("signal_state") or "")
+            risk_check = candidate.get("risk_check") if isinstance(candidate.get("risk_check"), dict) else {}
+            entry_allowed = bool(candidate.get("entry_allowed")) and signal_state == "entry"
+            if signal_state == "entry" and not entry_allowed:
+                blocked_count += 1
+                if not merged_reasons and risk_check.get("reason_code"):
+                    merged_reasons = [str(risk_check.get("reason_code"))]
                 for reason in merged_reasons:
                     key = str(reason or "unknown")
                     blocked_reason_counts[key] = blocked_reason_counts.get(
                         key, 0) + 1
+                append_order_event({
+                    "timestamp": _now_iso(),
+                    "success": False,
+                    "side": "buy",
+                    "code": candidate.get("code"),
+                    "market": candidate.get("market") or market,
+                    "strategy_id": candidate.get("strategy_id"),
+                    "strategy_name": candidate.get("strategy_name"),
+                    "quantity": int(((candidate.get("size_recommendation") or {}).get("quantity") or 0) if isinstance(candidate.get("size_recommendation"), dict) else 0),
+                    "order_type": "screened",
+                    "submitted_at": started_at,
+                    "filled_at": "",
+                    "filled_price_local": None,
+                    "filled_price_krw": None,
+                    "notional_krw": None,
+                    "failure_reason": str(risk_check.get("reason_code") or merged_reasons[0] if merged_reasons else "RISK_GUARD_BLOCKED"),
+                    "reason_code": str(risk_check.get("reason_code") or merged_reasons[0] if merged_reasons else "RISK_GUARD_BLOCKED"),
+                    "message": str(risk_check.get("message") or "risk gate blocked order"),
+                    "originating_cycle_id": cycle_id,
+                    "originating_signal_key": f"{market}:{candidate.get('code')}",
+                })
             candidate["entry_allowed"] = entry_allowed
             candidate["reason_codes"] = merged_reasons
-            candidate["validation_gate"] = gate_meta
             if entry_allowed:
                 effective_candidates.append(candidate)
 
@@ -1374,7 +1346,10 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 "code": candidate.get("code"),
                 "name": candidate.get("name"),
                 "market": candidate.get("market") or market,
+                "strategy_id": candidate.get("strategy_id"),
+                "strategy_name": candidate.get("strategy_name"),
                 "strategy_type": candidate.get("strategy_type"),
+                "signal_state": signal_state,
                 "score": candidate.get("score"),
                 "confidence": ev_metrics.get("win_probability"),
                 "expected_value": ev_metrics.get("expected_value"),
@@ -1383,9 +1358,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 "size_recommendation": size_reco,
                 "liquidity_gate_status": realism.get("liquidity_gate_status"),
                 "slippage_bps": realism.get("slippage_bps"),
-                "validation_trades": gate_meta.get("trades"),
-                "validation_sharpe": gate_meta.get("sharpe"),
-                "reliability": gate_meta.get("reliability"),
+                "risk_reason_code": risk_check.get("reason_code"),
+                "risk_message": risk_check.get("message"),
                 "ai_reasoning_summary": report_reasoning.get("summary") or "",
                 "candidate_source": candidate.get("candidate_source"),
                 "candidate_source_label": candidate.get("candidate_source_label"),
@@ -1394,13 +1368,19 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 "candidate_source_priority": candidate.get("candidate_source_priority"),
                 "candidate_runtime_source_mode": candidate.get("candidate_runtime_source_mode"),
                 "candidate_research_source": candidate.get("candidate_research_source"),
+                "research_status": candidate.get("research_status"),
+                "research_unavailable": candidate.get("research_unavailable"),
+                "research_score": candidate.get("research_score"),
+                "final_action": candidate.get("final_action"),
+                "final_action_snapshot": candidate.get("final_action_snapshot"),
+                "layer_events": candidate.get("layer_events"),
                 "source": "strategy_engine",
                 "fetched_at": signal_book.get("generated_at") or started_at,
                 "is_stale": False,
-                "validation_gate": gate_meta,
+                "risk_check": risk_check,
             })
 
-        validation_blocked_counts_by_market[market] = validation_blocked
+        blocked_counts_by_market[market] = blocked_count
         candidate_counts_by_market[market] = len(market_signals)
         for candidate in effective_candidates:
             if slots <= 0 or buy_count >= daily_buy_limit:
@@ -1459,6 +1439,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                     "side": "buy",
                     "code": code,
                     "market": market,
+                    "strategy_id": candidate.get("strategy_id"),
+                    "strategy_name": candidate.get("strategy_name"),
                     "quantity": event.get("quantity"),
                     "order_type": "market",
                     "submitted_at": started_at,
@@ -1467,6 +1449,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                     "filled_price_krw": event.get("filled_price_krw"),
                     "notional_krw": event.get("notional_krw"),
                     "failure_reason": "",
+                    "reason_code": "",
+                    "message": "",
                     "originating_cycle_id": cycle_id,
                     "originating_signal_key": f"{market}:{code}",
                     "quote_source": event.get("quote_source"),
@@ -1484,6 +1468,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                     "side": "buy",
                     "code": code,
                     "market": market,
+                    "strategy_id": candidate.get("strategy_id"),
+                    "strategy_name": candidate.get("strategy_name"),
                     "quantity": quantity,
                     "order_type": "market",
                     "submitted_at": _now_iso(),
@@ -1492,6 +1478,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                     "filled_price_krw": None,
                     "notional_krw": None,
                     "failure_reason": failure_reason,
+                    "reason_code": failure_reason,
+                    "message": failure_reason,
                     "originating_cycle_id": cycle_id,
                     "originating_signal_key": f"{market}:{code}",
                 })
@@ -1521,7 +1509,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 1 for item in executed_sells
                 if str(item.get("market") or "").upper() == market
             ),
-            "blocked_count": int(validation_blocked_counts_by_market.get(market, 0)),
+            "blocked_count": int(blocked_counts_by_market.get(market, 0)),
             "skipped_count": sum(
                 1 for item in skipped
                 if str(item.get("market") or "").upper() == market
@@ -1552,11 +1540,11 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
         "closed_markets": closed_markets,
         "risk_guard_state": risk_guard_state,
         "validation_gate_summary": {
-            "enabled": bool(cfg.get("validation_gate_enabled", True)),
-            "min_trades": int(cfg.get("validation_min_trades", 8)),
-            "min_sharpe": float(cfg.get("validation_min_sharpe", 0.2)),
+            "enabled": False,
+            "min_trades": 0,
+            "min_sharpe": 0.0,
             "blocked_reason_counts": blocked_reason_counts,
-            "blocked_count_by_market": validation_blocked_counts_by_market,
+            "blocked_count_by_market": blocked_counts_by_market,
         },
         "pnl_snapshot": {
             "realized_today": _today_realized_pnl(final_account),
@@ -1892,6 +1880,8 @@ def handle_paper_order(payload: dict) -> tuple[int, dict]:
                 "filled_price_krw": event.get("filled_price_krw"),
                 "notional_krw": event.get("notional_krw"),
                 "failure_reason": "",
+                "reason_code": "",
+                "message": "",
                 "originating_cycle_id": "",
                 "originating_signal_key": f"{market}:{code}",
                 "quote_source": event.get("quote_source"),
@@ -1934,6 +1924,8 @@ def handle_paper_order(payload: dict) -> tuple[int, dict]:
                 "filled_price_krw": None,
                 "notional_krw": None,
                 "failure_reason": reason,
+                "reason_code": reason,
+                "message": reason,
                 "originating_cycle_id": "",
                 "originating_signal_key": f"{market}:{code}",
             })

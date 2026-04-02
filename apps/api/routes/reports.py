@@ -189,7 +189,8 @@ def _map_strategy_signal(item: dict[str, Any], rank: int) -> dict[str, Any]:
 
     score = max(0.0, min(100.0, 50.0 + (expected_value * 8.0)))
     confidence = max(1, min(99, int(round(win_probability * 100.0))))
-    gate_status = "passed" if bool(item.get("entry_allowed")) else "blocked"
+    final_action = str(item.get("final_action") or ("review_for_entry" if bool(item.get("entry_allowed")) else "blocked"))
+    gate_status = "passed" if final_action == "review_for_entry" else "blocked"
     reason_codes = [str(reason) for reason in (item.get("reason_codes") or []) if reason]
     candidate_reasons = [str(reason) for reason in (reasoning.get("candidate_reasons") or []) if reason]
     candidate_risks = [str(reason) for reason in (reasoning.get("candidate_risks") or []) if reason]
@@ -267,6 +268,12 @@ def _map_strategy_signal(item: dict[str, Any], rank: int) -> dict[str, Any]:
         "candidate_source_priority": item.get("candidate_source_priority"),
         "candidate_runtime_source_mode": item.get("candidate_runtime_source_mode"),
         "candidate_research_source": item.get("candidate_research_source"),
+        "research_status": item.get("research_status"),
+        "research_unavailable": item.get("research_unavailable"),
+        "research_score": item.get("research_score"),
+        "final_action": final_action,
+        "final_action_snapshot": item.get("final_action_snapshot"),
+        "layer_events": item.get("layer_events"),
     }
 
 

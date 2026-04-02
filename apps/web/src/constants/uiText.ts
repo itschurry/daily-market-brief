@@ -6,10 +6,11 @@ export const UI_TEXT = {
     reports: '리서치 리포트',
   },
   consoleTabs: {
-    overview: '운용 개요',
-    signals: '실행 후보',
-    paper: 'Paper 실행',
-    validation: '전략 검증',
+    strategies: '전략 관리',
+    scanner: '장중 스캐너',
+    orders: '주문/리스크',
+    universe: '유니버스',
+    performance: '성과',
   },
   reportTabs: {
     todayReport: '투자 브리프',
@@ -66,7 +67,7 @@ export const UI_TEXT = {
     paused: '일시정지',
     stopped: '중지',
     error: '오류',
-    allowed: '추천',
+    allowed: '검토 필요',
     blocked: '차단',
     active: '활성',
     inactive: '비활성',
@@ -94,9 +95,22 @@ export const REASON_CODE_KR: Record<string, string> = {
   account_unavailable: '계좌 정보 없음',
   size_zero: '권장 수량 0',
   invalid_unit_price: '유효하지 않은 가격',
+  research_unavailable: 'Hanna 리서치 미사용/일시 불가',
+  headline_stronger_than_body: '헤드라인 강도 대비 본문 근거 약함',
+  already_extended_intraday: '장중 과열로 추격 주의',
+  low_evidence_density: '근거 밀도 낮음',
+  theme_recycled: '반복된 테마 이슈',
+  contrarian_flow_risk: '역방향 수급 리스크',
+  policy_uncertainty: '정책 불확실성',
+  liquidity_mismatch: '유동성 불일치',
+  too_many_similar_news: '유사 뉴스 과다',
 };
 
 export function reasonCodeToKorean(code: string): string {
+  if (code.startsWith('research_warning:')) {
+    const warning = code.replace('research_warning:', '');
+    return `Hanna 경고 · ${REASON_CODE_KR[warning] || warning}`;
+  }
   return REASON_CODE_KR[code] || code;
 }
 

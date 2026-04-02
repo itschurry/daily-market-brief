@@ -11,6 +11,7 @@ from routes.optimization import (
     handle_get_optimized_params,
     handle_run_optimization,
 )
+from routes.performance import handle_performance_summary
 from routes.portfolio import handle_portfolio_state
 from routes.quant_ops import (
     handle_get_quant_ops_policy,
@@ -35,7 +36,14 @@ from routes.reports import (
     handle_today_picks,
 )
 from routes.reports_domain import handle_reports_explain, handle_reports_index
+from routes.scanner import handle_scanner_status
 from routes.signals import handle_signal_detail, handle_signal_snapshots, handle_signals_rank
+from routes.strategies import (
+    handle_strategies_list,
+    handle_strategy_detail,
+    handle_strategy_save,
+    handle_strategy_toggle,
+)
 from routes.trading import (
     handle_paper_account,
     handle_paper_account_history,
@@ -51,6 +59,7 @@ from routes.trading import (
     handle_paper_reset,
 )
 from routes.system import handle_notifications_status, handle_system_mode
+from routes.universe import handle_universe_list
 from routes.validation import (
     handle_validation_backtest,
     handle_validation_diagnostics,
@@ -102,6 +111,11 @@ GET_ROUTES: tuple[Route, ...] = (
     Route("/api/quant-ops/policy", lambda _path, _query: handle_get_quant_ops_policy()),
     Route("/api/reports/explain", lambda _path, query: handle_reports_explain(_query_value(query, "date") or None)),
     Route("/api/reports/index", lambda _path, _query: handle_reports_index()),
+    Route("/api/strategies", lambda _path, query: handle_strategies_list(query)),
+    Route("/api/strategies/", lambda path, _query: handle_strategy_detail(path), prefix=True),
+    Route("/api/scanner/status", lambda _path, query: handle_scanner_status(query)),
+    Route("/api/universe", lambda _path, query: handle_universe_list(query)),
+    Route("/api/performance/summary", lambda _path, _query: handle_performance_summary()),
     Route("/api/live-market", lambda _path, _query: handle_live_market()),
     Route("/api/reports", lambda _path, _query: handle_reports()),
     Route("/api/analysis", lambda _path, query: handle_analysis(_query_value(query, "date") or None)),
@@ -150,6 +164,8 @@ POST_ROUTES: tuple[Route, ...] = (
     Route("/api/paper/engine/pause", lambda _path, _payload: handle_paper_engine_pause()),
     Route("/api/paper/engine/resume", lambda _path, _payload: handle_paper_engine_resume()),
     Route("/api/paper/engine/stop", lambda _path, _payload: handle_paper_engine_stop()),
+    Route("/api/strategies/toggle", lambda _path, payload: handle_strategy_toggle(payload)),
+    Route("/api/strategies/save", lambda _path, payload: handle_strategy_save(payload)),
     Route("/api/run-optimization", lambda _path, _payload: handle_run_optimization(_payload)),
     Route("/api/validation/settings/save", lambda _path, payload: handle_validation_settings_save(payload)),
     Route("/api/validation/settings/reset", lambda _path, _payload: handle_validation_settings_reset()),

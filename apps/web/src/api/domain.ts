@@ -2,13 +2,17 @@ import { getJSON, postJSON } from './client';
 import type {
   EngineStatusResponse,
   NotificationStatusResponse,
+  PerformanceSummaryResponse,
   PortfolioStateResponse,
   QuantOpsActionResponse,
   PersistedValidationSettingsResponse,
   QuantOpsGuardrailPolicyResponse,
   QuantOpsWorkflowResponse,
   ReportsExplainResponse,
+  ScannerStatusResponse,
   SignalsRankResponse,
+  StrategiesResponse,
+  UniverseResponse,
   ValidationDiagnosticsResponse,
   ValidationResponse,
 } from '../types/domain';
@@ -61,6 +65,26 @@ export function fetchEngineStatus() {
 
 export function fetchSignals(limit = 100) {
   return getJSON<SignalsRankResponse>(`/api/signals/rank?limit=${encodeURIComponent(String(limit))}`, { noStore: true });
+}
+
+export function fetchStrategies() {
+  return getJSON<StrategiesResponse>('/api/strategies', { noStore: true });
+}
+
+export function fetchScannerStatus(refresh = false) {
+  return getJSON<ScannerStatusResponse>(`/api/scanner/status?refresh=${refresh ? '1' : '0'}`, { noStore: true });
+}
+
+export function fetchUniverse(refresh = false) {
+  return getJSON<UniverseResponse>(`/api/universe?refresh=${refresh ? '1' : '0'}`, { noStore: true });
+}
+
+export function fetchPerformanceSummary() {
+  return getJSON<PerformanceSummaryResponse>('/api/performance/summary', { noStore: true });
+}
+
+export function toggleStrategyEnabled(strategyId: string, enabled: boolean) {
+  return postJSON<StrategiesResponse>('/api/strategies/toggle', { strategy_id: strategyId, enabled });
 }
 
 export function fetchPortfolioState(refresh = true) {

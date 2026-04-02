@@ -13,6 +13,9 @@ ENGINE_CYCLES_DIR = LOGS_DIR / "engine_cycles"
 ORDER_EVENTS_PATH = LOGS_DIR / "order_events.jsonl"
 SIGNAL_SNAPSHOTS_PATH = LOGS_DIR / "signal_snapshots.jsonl"
 ACCOUNT_SNAPSHOTS_PATH = LOGS_DIR / "account_snapshots.jsonl"
+UNIVERSE_SNAPSHOTS_DIR = LOGS_DIR / "universe_snapshots"
+STRATEGY_SCANS_DIR = LOGS_DIR / "strategy_scans"
+RUNTIME_EVENTS_PATH = LOGS_DIR / "runtime_events.jsonl"
 
 
 def _now_iso() -> str:
@@ -145,3 +148,58 @@ def append_account_snapshot(payload: dict[str, Any]) -> None:
 
 def read_account_snapshots(limit: int = 100) -> list[dict[str, Any]]:
     return _read_latest_jsonl(ACCOUNT_SNAPSHOTS_PATH, limit)
+
+
+def _safe_key(value: str) -> str:
+    return "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in str(value or "").strip()) or "default"
+
+
+def save_universe_snapshot(rule_name: str, payload: dict[str, Any]) -> None:
+    path = UNIVERSE_SNAPSHOTS_DIR / f"{_safe_key(rule_name)}.json"
+    _write_json(path, payload)
+
+
+def load_universe_snapshot(rule_name: str) -> dict[str, Any]:
+    path = UNIVERSE_SNAPSHOTS_DIR / f"{_safe_key(rule_name)}.json"
+    return _read_json(path, {})
+
+
+def list_universe_snapshots() -> list[dict[str, Any]]:
+    UNIVERSE_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    rows: list[dict[str, Any]] = []
+    for path in sorted(UNIVERSE_SNAPSHOTS_DIR.glob("*.json")):
+        item = _read_json(path, {})
+        if item:
+            rows.append(item)
+    rows.sort(key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""), reverse=True)
+    return rows
+
+
+def save_strategy_scan(strategy_id: str, payload: dict[str, Any]) -> None:
+    path = STRATEGY_SCANS_DIR / f"{_safe_key(strategy_id)}.json"
+    _write_json(path, payload)
+
+
+def load_strategy_scan(strategy_id: str) -> dict[str, Any]:
+    path = STRATEGY_SCANS_DIR / f"{_safe_key(strategy_id)}.json"
+    return _read_json(path, {})
+
+
+def list_strategy_scans() -> list[dict[str, Any]]:
+    STRATEGY_SCANS_DIR.mkdir(parents=True, exist_ok=True)
+    rows: list[dict[str, Any]] = []
+    for path in sorted(STRATEGY_SCANS_DIR.glob("*.json")):
+        item = _read_json(path, {})
+        if item:
+            rows.append(item)
+    rows.sort(key=lambda item: str(item.get("last_scan_at") or item.get("scanned_at") or ""), reverse=True)
+    return rows
+
+
+def append_runtime_event(payload: dict[str, Any]) -> None:
+    record = {"logged_at": _now_iso(), **payload}
+    _append_jsonl(RUNTIME_EVENTS_PATH, record)
+
+
+def read_runtime_events(limit: int = 200) -> list[dict[str, Any]]:
+    return _read_latest_jsonl(RUNTIME_EVENTS_PATH, limit)

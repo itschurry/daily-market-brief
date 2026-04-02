@@ -74,7 +74,7 @@ function tabHeadline(tab: ReportTab): string {
 function tabDescription(tab: ReportTab): string {
   if (tab === 'alerts') return '실행 전·실행 중 조치가 필요한 운영 리스크를 먼저 모아보는 화면입니다.';
   if (tab === 'watch-decision') return '이 탭은 매수 확정판이 아니라 오늘 다시 볼 허용 후보와 막힌 후보를 분리해 두는 research queue입니다.';
-  return '리서치 요약, 검증 결과, 실행 우선순위를 한 번에 읽는 투자 브리프입니다.';
+  return '리서치 요약은 참고용이고, live path 최종 판단은 Layer E final action과 Risk Gate가 끝냅니다.';
 }
 
 interface ScorecardSignalCandidate {
@@ -158,7 +158,7 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
           <span className="report-hero-meta">브리프 생성 {formatDateTimeWithAge(view.generatedAt)}</span>
         </div>
         <div className="report-decision-title">오늘 결론: {modeLabel}</div>
-        <div className="report-hero-copy">시장 요약보다 먼저 연구 → 검증 → 실행 순서를 고정합니다. 지금은 {guardAllowed ? '허용된 진입만 선별 실행' : '신규 진입 중단과 보유 리스크 관리'}이 우선입니다. 이 투자 브리프는 quant 검증 결과와 AI·테마·뉴스 리서치를 함께 읽되, 둘을 교집합으로 묶진 않습니다.</div>
+        <div className="report-hero-copy">시장 요약보다 먼저 Layer B quant → Layer C research → Layer D risk → Layer E final action 순서를 고정합니다. 지금은 {guardAllowed ? '허용된 진입만 선별 실행' : '신규 진입 중단과 보유 리스크 관리'}이 우선입니다. 리서치는 참고 자료고, buy/sell/order 명령권은 없습니다.</div>
         <div className="report-decision-strip">
           <div className={`report-decision-chip ${guardAllowed ? 'is-good' : 'is-bad'}`}>
             진입 {guardAllowed ? '가능' : '제한'}
@@ -171,11 +171,11 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
       <div className="report-grid-2">
         <div className="page-section report-visual-card">
           <div className="section-title">Mode 01 · 퀀트 검증</div>
-          <div className="section-copy">백테스트/최적화에서 채택 여부를 판단한 전략 점수와 tail risk를 읽는 영역입니다. 실행 전 검증 레이어라고 보면 됩니다.</div>
+          <div className="section-copy">백테스트/최적화와 장중 스캐너가 만든 quant 후보와 tail risk를 읽는 영역입니다. live path의 실제 첫 판단 레이어입니다.</div>
         </div>
         <div className="page-section report-visual-card">
-          <div className="section-title">Mode 02 · AI/테마/뉴스 리서치</div>
-          <div className="section-copy">today picks / recommendations 기반 리서치를 읽는 영역입니다. downstream 후보는 둘 다 동시에 필요하지 않은 합집합 흐름으로 해석합니다.</div>
+          <div className="section-title">Mode 02 · Hanna Research</div>
+          <div className="section-copy">Hanna 같은 외부 scorer가 structured DTO로만 붙는 리서치 레이어입니다. research timeout이어도 live path는 멈추지 않습니다.</div>
         </div>
       </div>
 
@@ -203,7 +203,7 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
             <div className="section-head-row">
               <div>
                 <div className="section-title">오늘 quant 전략 점수판</div>
-                <div className="section-copy">EV만 보지 않고 quant 점수 구성과 꼬리손실까지 함께 확인하는 운영용 카드입니다. AI 추천 점수판과는 별도입니다.</div>
+                <div className="section-copy">EV만 보지 않고 quant 점수 구성과 꼬리손실까지 함께 확인하는 운영용 카드입니다. Layer C research score와는 별도 레이어로 읽습니다.</div>
               </div>
               <div className="inline-badge">상위 {formatCount(Math.min(scorecardCandidates.length, 3), '건')}</div>
             </div>
@@ -480,7 +480,7 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
           <span className="report-hero-meta">실행 리스크 우선 확인</span>
         </div>
         <div className="report-decision-title">지금 조치 필요: {alerts.filter((item) => item.severity >= 2).length}건</div>
-        <div className="report-hero-copy">단순 알림판이 아니라 paper/live 실행 전에 이상 징후를 잡는 리스크 보드입니다. 엔진 상태, 진입 차단, stale optimization, 실패 주문, 알림 이상부터 먼저 확인하면 됩니다. 여기서 보는 경고는 quant gate와 AI 추천 downstream 흐름 전체에 걸친 운영 경고입니다.</div>
+        <div className="report-hero-copy">단순 알림판이 아니라 paper/live 실행 전에 이상 징후를 잡는 리스크 보드입니다. 엔진 상태, 진입 차단, stale optimization, 실패 주문, 알림 이상부터 먼저 확인하면 됩니다. 여기서 보는 경고는 Risk Gate와 Layer E 최종 액션을 흔드는 운영 경고입니다.</div>
         <div className="report-decision-strip">
           <div className={`report-decision-chip ${isRunning ? 'is-good' : 'is-bad'}`}>엔진 {isRunning ? '실행 중' : '정지'}</div>
           <div className={`report-decision-chip ${guardBlocked ? 'is-bad' : 'is-good'}`}>진입 {guardBlocked ? '차단' : '허용'}</div>

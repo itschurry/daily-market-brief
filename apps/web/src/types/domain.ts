@@ -72,6 +72,73 @@ export interface SizeRecommendation {
   stop_distance_krw?: number;
 }
 
+export interface LayerASnapshot {
+  layer?: 'A' | string;
+  universe_rule?: string;
+  scan_time?: string;
+  market?: string;
+  inclusion_reason?: string;
+  source_context?: {
+    strategy_id?: string;
+    universe_symbol_count?: number;
+  };
+}
+
+export interface LayerBSnapshot {
+  layer?: 'B' | string;
+  strategy_id?: string;
+  quant_score?: number;
+  signal_state?: string;
+  quant_tags?: string[];
+  technical_snapshot?: {
+    current_price?: number;
+    volume_ratio?: number;
+    rsi14?: number;
+    atr14_pct?: number;
+  };
+}
+
+export interface LayerCSnapshot {
+  layer?: 'C' | string;
+  provider?: string;
+  provider_status?: string;
+  research_unavailable?: boolean;
+  research_score?: number | null;
+  components?: Record<string, number>;
+  warnings?: string[];
+  tags?: string[];
+  summary?: string;
+  ttl_minutes?: number;
+  generated_at?: string;
+}
+
+export interface LayerDSnapshot {
+  layer?: 'D' | string;
+  allowed?: boolean;
+  blocked?: boolean;
+  reason_codes?: string[];
+  final_allowed_size?: number;
+  execution_decision?: string;
+  position_cap_state?: string;
+  liquidity_state?: string;
+  spread_state?: string;
+  risk_guard_state?: Record<string, unknown>;
+}
+
+export interface LayerESnapshot {
+  layer?: 'E' | string;
+  final_action?: 'review_for_entry' | 'watch_only' | 'blocked' | 'do_not_touch' | string;
+  decision_reason?: string;
+  timestamp?: string;
+  source_context?: Record<string, unknown>;
+}
+
+export interface LayerEventSnapshot {
+  layer?: 'A' | 'B' | 'C' | 'D' | 'E' | string;
+  status?: string;
+  snapshot?: Record<string, unknown>;
+}
+
 export interface DomainSignal {
   code?: string;
   name?: string;
@@ -79,6 +146,7 @@ export interface DomainSignal {
   sector?: string;
   strategy_type?: string;
   score?: number;
+  quant_score?: number;
   entry_allowed?: boolean;
   reason_codes?: string[];
   candidate_source?: string;
@@ -88,6 +156,17 @@ export interface DomainSignal {
   candidate_source_priority?: number;
   candidate_runtime_source_mode?: string;
   candidate_research_source?: string;
+  research_status?: string;
+  research_unavailable?: boolean;
+  research_score?: number | null;
+  final_action?: 'review_for_entry' | 'watch_only' | 'blocked' | 'do_not_touch' | string;
+  final_action_snapshot?: LayerESnapshot;
+  layer_a?: LayerASnapshot;
+  layer_b?: LayerBSnapshot;
+  layer_c?: LayerCSnapshot;
+  layer_d?: LayerDSnapshot;
+  layer_e?: LayerESnapshot;
+  layer_events?: LayerEventSnapshot[];
   ev_metrics?: EVMetrics;
   size_recommendation?: SizeRecommendation;
   strategy_scorecard?: StrategyScorecardPayload;
@@ -121,6 +200,143 @@ export interface SignalsRankResponse {
     reasons?: string[];
     daily_loss_left?: number;
     cooldown_until?: string;
+  };
+}
+
+export interface StrategyRegistryItem {
+  strategy_id?: string;
+  name?: string;
+  version?: number;
+  enabled?: boolean;
+  approval_status?: string;
+  market?: string;
+  universe_rule?: string;
+  scan_cycle?: string;
+  approved_at?: string;
+  entry_rule?: string;
+  exit_rule?: string;
+  risk_limits?: {
+    max_positions?: number;
+    position_size_pct?: number;
+    daily_loss_limit_pct?: number;
+    min_liquidity?: number;
+    max_spread_pct?: number;
+  };
+  research_summary?: {
+    backtest_return_pct?: number;
+    max_drawdown_pct?: number;
+    win_rate_pct?: number;
+    sharpe?: number;
+    walk_forward_return_pct?: number;
+  };
+}
+
+export interface StrategiesResponse {
+  ok?: boolean;
+  items?: StrategyRegistryItem[];
+  count?: number;
+  summary?: {
+    total?: number;
+    enabled?: number;
+    counts?: Record<string, number>;
+  };
+}
+
+export interface ScannerCandidate extends DomainSignal {
+  signal_id?: string;
+  strategy_id?: string;
+  strategy_name?: string;
+  signal_state?: string;
+  candidate_rank?: number;
+  last_scanned_at?: string;
+  reasons?: string[];
+  risk_check?: {
+    passed?: boolean;
+    reason_code?: string;
+    message?: string;
+  };
+}
+
+export interface ScannerStatusItem {
+  strategy_id?: string;
+  strategy_name?: string;
+  approval_status?: string;
+  enabled?: boolean;
+  market?: string;
+  universe_rule?: string;
+  scan_cycle?: string;
+  last_scan_at?: string;
+  next_scan_at?: string;
+  candidate_count?: number;
+  scanned_symbol_count?: number;
+  universe_symbol_count?: number;
+  scan_duration_ms?: number;
+  status?: string;
+  top_candidates?: ScannerCandidate[];
+}
+
+export interface ScannerStatusResponse {
+  ok?: boolean;
+  items?: ScannerStatusItem[];
+  count?: number;
+}
+
+export interface UniverseSnapshot {
+  rule_name?: string;
+  market?: string;
+  created_at?: string;
+  updated_at?: string;
+  symbol_count?: number;
+  excluded_count?: number;
+  symbols?: Array<{
+    code?: string;
+    name?: string;
+    market?: string;
+    sector?: string;
+  }>;
+  excluded?: Array<{
+    code?: string;
+    name?: string;
+    market?: string;
+    sector?: string;
+    reason?: string;
+  }>;
+  recent_changes?: {
+    added?: string[];
+    removed?: string[];
+    added_count?: number;
+    removed_count?: number;
+  };
+}
+
+export interface UniverseResponse {
+  ok?: boolean;
+  items?: UniverseSnapshot[];
+  count?: number;
+}
+
+export interface PerformanceSummaryResponse {
+  ok?: boolean;
+  research?: Array<{
+    strategy_id?: string;
+    name?: string;
+    approval_status?: string;
+    enabled?: boolean;
+    backtest_return_pct?: number;
+    max_drawdown_pct?: number;
+    win_rate_pct?: number;
+    sharpe?: number;
+    walk_forward_return_pct?: number;
+  }>;
+  live?: {
+    today_signal_count?: number;
+    today_order_count?: number;
+    today_reject_count?: number;
+    today_screened_block_count?: number;
+    filled_count?: number;
+    realized_pnl_krw?: number;
+    unrealized_pnl_krw?: number;
+    positions?: number;
   };
 }
 

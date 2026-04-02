@@ -24,7 +24,7 @@ interface SignalRowView {
   winProbabilityLabel: string;
   evLabel: string;
   entryLabel: string;
-  entryTone: 'good' | 'bad';
+  entryTone: 'good' | 'neutral' | 'bad';
   sizeSummary: string;
   reliabilityLabel: string;
   liquidityLabel: string;
@@ -33,11 +33,27 @@ interface SignalRowView {
   primaryReason: string;
 }
 
+function finalActionLabel(action: string | undefined, entryAllowed: boolean | undefined) {
+  if (action === 'review_for_entry') return '검토 필요';
+  if (action === 'watch_only') return '관찰';
+  if (action === 'do_not_touch') return '제외';
+  if (action === 'blocked') return '차단';
+  return entryAllowed ? UI_TEXT.status.allowed : UI_TEXT.status.blocked;
+}
+
+function finalActionTone(action: string | undefined, entryAllowed: boolean | undefined): 'good' | 'neutral' | 'bad' {
+  if (action === 'review_for_entry') return 'good';
+  if (action === 'watch_only' || action === 'do_not_touch') return 'neutral';
+  if (action === 'blocked') return 'bad';
+  return entryAllowed ? 'good' : 'bad';
+}
+
 export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: SignalsPageProps) {
   const { entries, push, clear } = useConsoleLogs();
   const signals = (snapshot.signals.signals || []).slice(0, 80);
-  const allowedCount = signals.filter((row) => row.entry_allowed).length;
-  const blockedCount = signals.length - allowedCount;
+  const reviewCount = signals.filter((row) => (row.final_action || (row.entry_allowed ? 'review_for_entry' : 'blocked')) === 'review_for_entry').length;
+  const blockedCount = signals.filter((row) => (row.final_action || (row.entry_allowed ? 'review_for_entry' : 'blocked')) === 'blocked').length;
+  const parkedCount = Math.max(0, signals.length - reviewCount - blockedCount);
   const emptyMessage = errorMessage ? UI_TEXT.empty.signalsMissingData : UI_TEXT.empty.signalsNoMatches;
   const signalsAsOf = snapshot.signals.generated_at || snapshot.fetchedAt;
 
@@ -54,7 +70,9 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
     const liquidity = String(signal.execution_realism?.liquidity_gate_status || '-');
     const slippage = signal.execution_realism?.slippage_bps;
     const reasons = (signal.reason_codes || []).map((reason) => reasonCodeToKorean(reason));
-    const blocked = !signal.entry_allowed;
+    const finalAction = String(signal.final_action || (signal.entry_allowed ? 'review_for_entry' : 'blocked'));
+    const actionLabel = finalActionLabel(finalAction, signal.entry_allowed);
+    const actionTone = finalActionTone(finalAction, signal.entry_allowed);
 
     const sourceLabel = String(signal.candidate_source_label || signal.candidate_source || '-');
     const sourceTier = String(signal.candidate_source_tier || '').toLowerCase();
@@ -70,14 +88,14 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
       scoreLabel: formatNumber((signal as { score?: number }).score, 2),
       winProbabilityLabel: winProbability === undefined ? '-' : formatPercent(winProbability, 2, true),
       evLabel: signal.ev_metrics?.expected_value === undefined ? '-' : formatNumber(signal.ev_metrics?.expected_value, 2),
-      entryLabel: blocked ? UI_TEXT.status.blocked : UI_TEXT.status.allowed,
-      entryTone: blocked ? 'bad' : 'good',
+      entryLabel: actionLabel,
+      entryTone: actionTone,
       sizeSummary: size > 0 ? sizeSummary : (sizeSummary === '-' ? '0주' : `0주 (${sizeSummary})`),
       reliabilityLabel: reliability || '-',
       liquidityLabel: liquidity,
       slippageLabel: slippage === undefined ? '-' : `${formatNumber(slippage, 2)} bps`,
       reasons,
-      primaryReason: reasons[0] || (blocked ? '-' : '차단 사유 없음'),
+      primaryReason: reasons[0] || (actionTone === 'bad' ? '-' : '차단 사유 없음'),
     };
   }), [signals]);
 
@@ -88,8 +106,8 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
       tone: 'neutral' as const,
     },
     {
-      label: '진입 허용',
-      value: `${allowedCount}건`,
+      label: '검토 필요',
+      value: `${reviewCount}건`,
       tone: 'good' as const,
     },
     {
@@ -98,11 +116,11 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
       tone: blockedCount > 0 ? 'bad' as const : 'neutral' as const,
     },
     {
-      label: '장세/위험도',
-      value: `${snapshot.signals.regime || '-'} / ${snapshot.signals.risk_level || '-'}`,
+      label: '관찰/제외',
+      value: `${parkedCount}건`,
       tone: 'neutral' as const,
     },
-  ]), [allowedCount, blockedCount, signals.length, snapshot.signals.regime, snapshot.signals.risk_level]);
+  ]), [blockedCount, parkedCount, reviewCount, signals.length]);
 
   return (
     <div className="app-shell">
@@ -110,7 +128,7 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <ConsoleActionBar
             title="신호 관리"
-            subtitle="runtime 후보는 기본적으로 hybrid로 넓게 모으고, 최종 진입은 allocator·EV·risk guard·liquidity·sizing 게이트로만 막습니다. 좁은 화면에서는 카드형, 넓은 화면에서는 상세 테이블로 보면 됩니다."
+            subtitle="이 화면은 Layer B quant 후보와 Layer E final action을 같이 보는 운영 표입니다. 최종 진입 가능 여부는 Layer D risk veto와 Layer E snapshot 기준으로만 읽으면 됩니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage}
@@ -123,8 +141,8 @@ export function SignalsPage({ snapshot, loading, errorMessage, onRefresh }: Sign
                 <div>표시 최대 건수: 80건</div>
                 <div>정렬 기준: EV 내림차순</div>
                 <div>신호 기준 시각: {formatDateTimeWithAge(signalsAsOf)}</div>
-                <div>후보 소스는 quant / research / hybrid와 T1·T2로 같이 표시합니다. hybrid 기본 운영 기준으로 넓게 모읍니다.</div>
-                <div>최종 진입 허용은 후보 소스가 아니라 allocator·EV·risk guard·liquidity·sizing 게이트 기준입니다.</div>
+                <div>후보 생성은 Layer A/B, 리서치 보정은 Layer C(Hanna), 최종 거부권은 Layer D, 결론 상태는 Layer E가 맡습니다.</div>
+                <div>리서치 summary는 설명용이고, 최종 실행 판단은 risk gate와 final action만 사용합니다.</div>
                 <div>차단 사유는 요약 한 줄 + 전체 사유 리스트로 같이 표시합니다.</div>
               </div>
             )}

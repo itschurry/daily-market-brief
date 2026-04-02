@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { UI_TEXT } from './constants/uiText';
 import { useConsoleData } from './hooks/useConsoleData';
-import { useValidationSettingsStore } from './hooks/useValidationSettingsStore';
-import { BacktestValidationPage } from './pages/BacktestValidationPage';
-import { OverviewPage } from './pages/OverviewPage';
 import { PaperPortfolioPage } from './pages/PaperPortfolioPage';
+import { PerformancePage } from './pages/PerformancePage';
 import { ReportsPage } from './pages/ReportsPage';
-import { SignalsPage } from './pages/SignalsPage';
+import { ScannerPage } from './pages/ScannerPage';
+import { StrategiesPage } from './pages/StrategiesPage';
+import { UniversePage } from './pages/UniversePage';
 import { WealthPulseHomePage } from './pages/WealthPulseHomePage';
 import type { ConsoleTab, ReportTab, TopSection } from './types/navigation';
 
@@ -18,10 +18,11 @@ interface RouteState {
 }
 
 const CONSOLE_TABS: Array<{ id: ConsoleTab; label: string; path: string; hint: string }> = [
-  { id: 'overview', label: UI_TEXT.consoleTabs.overview, path: '/console/overview', hint: '운용 현황과 핵심 지표' },
-  { id: 'signals', label: UI_TEXT.consoleTabs.signals, path: '/console/signals', hint: '후보군 필터와 실행 판단' },
-  { id: 'paper', label: UI_TEXT.consoleTabs.paper, path: '/console/paper', hint: 'Paper 계좌와 주문 상태' },
-  { id: 'validation', label: UI_TEXT.consoleTabs.validation, path: '/console/validation', hint: '설정 저장, 백테스트, 재검증' },
+  { id: 'strategies', label: UI_TEXT.consoleTabs.strategies, path: '/console/strategies', hint: '승인 전략과 enable 상태' },
+  { id: 'scanner', label: UI_TEXT.consoleTabs.scanner, path: '/console/scanner', hint: '전략별 scan cycle과 후보군' },
+  { id: 'orders', label: UI_TEXT.consoleTabs.orders, path: '/console/orders', hint: '주문 상태와 리스크 거절 사유' },
+  { id: 'universe', label: UI_TEXT.consoleTabs.universe, path: '/console/universe', hint: '규칙별 종목군과 변경 내역' },
+  { id: 'performance', label: UI_TEXT.consoleTabs.performance, path: '/console/performance', hint: '연구 성과와 운용 성과 분리' },
 ];
 
 const REPORT_TABS: Array<{ id: ReportTab; label: string; path: string; hint: string }> = [
@@ -49,12 +50,12 @@ function toRouteState(pathname: string): RouteState {
   const legacyRedirects: Record<string, string> = {
     '/home': '/',
     '/dashboard': '/',
-    '/overview': '/console/overview',
-    '/signals': '/console/signals',
-    '/paper': '/console/paper',
-    '/backtest': '/console/validation',
+    '/overview': '/console/strategies',
+    '/signals': '/console/scanner',
+    '/paper': '/console/orders',
+    '/backtest': '/reports/today-report',
     '/reports': '/reports/today-report',
-    '/console/backtest': '/console/validation',
+    '/console/backtest': '/reports/today-report',
     '/reports/today': '/reports/today-report',
     '/reports/recommendations': '/reports/today-report',
     '/reports/today-recommendations': '/reports/today-report',
@@ -65,7 +66,7 @@ function toRouteState(pathname: string): RouteState {
   if (path === '/') {
     return {
       section: 'home',
-      consoleTab: 'overview',
+      consoleTab: 'strategies',
       reportTab: 'today-report',
       canonicalPath: '/',
     };
@@ -82,7 +83,7 @@ function toRouteState(pathname: string): RouteState {
         canonicalPath: found.path,
       };
     }
-    return normalize('/console/overview');
+    return normalize('/console/strategies');
   }
 
   if (path.startsWith('/reports/')) {
@@ -91,7 +92,7 @@ function toRouteState(pathname: string): RouteState {
     if (found) {
       return {
         section: 'reports',
-        consoleTab: 'overview',
+        consoleTab: 'strategies',
         reportTab: found.id,
         canonicalPath: found.path,
       };
@@ -114,7 +115,6 @@ export default function App() {
   const [route, setRoute] = useState<RouteState>(() => toRouteState(location.pathname));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { snapshot, loading, hasError, errorMessage, refresh } = useConsoleData(route);
-  const validationSettings = useValidationSettingsStore();
   const activeConsoleTab = CONSOLE_TABS.find((tab) => tab.id === route.consoleTab);
   const activeReportTab = REPORT_TABS.find((tab) => tab.id === route.reportTab);
   const notifications = snapshot.notifications || {};
@@ -123,7 +123,7 @@ export default function App() {
   const activeLabel = route.section === 'home'
     ? UI_TEXT.topTabs.home
     : route.section === 'console'
-      ? activeConsoleTab?.label || UI_TEXT.consoleTabs.overview
+      ? activeConsoleTab?.label || UI_TEXT.consoleTabs.strategies
       : activeReportTab?.label || UI_TEXT.reportTabs.todayReport;
 
   useEffect(() => {
@@ -149,7 +149,7 @@ export default function App() {
     const targetPath = section === 'home'
       ? '/'
       : section === 'console'
-        ? '/console/overview'
+        ? '/console/strategies'
         : '/reports/today-report';
     const next = toRouteState(targetPath);
     pushPath(next.canonicalPath);
@@ -263,9 +263,6 @@ export default function App() {
                 <span className="app-nav-label-wrap">
                   <span className="app-nav-label">
                     {tab.label}
-                    {tab.id === 'validation' && validationSettings.unsaved && (
-                      <span className="tab-dirty-badge" aria-label="저장 필요">저장 필요</span>
-                    )}
                   </span>
                   <span className="app-nav-help">{tab.hint}</span>
                 </span>
@@ -291,9 +288,6 @@ export default function App() {
         <div className="app-sidebar-foot">
           <span className={`app-chrome-pill ${loading ? 'is-live' : ''}`}>{loading ? 'Syncing' : 'Ready'}</span>
           <span className="app-chrome-pill">{SECTION_BADGE[route.section]}</span>
-          {route.section === 'console' && validationSettings.unsaved && (
-            <span className="app-chrome-pill is-warning">Validation draft</span>
-          )}
           {(alertingDisabled || alertingUnconfigured) && (
             <span className="app-chrome-pill is-warning">Alerting check</span>
           )}
@@ -328,10 +322,11 @@ export default function App() {
               onGoReports={() => moveToSection('reports')}
             />
           )}
-          {route.section === 'console' && route.consoleTab === 'overview' && <OverviewPage {...sharedProps} />}
-          {route.section === 'console' && route.consoleTab === 'signals' && <SignalsPage {...sharedProps} />}
-          {route.section === 'console' && route.consoleTab === 'paper' && <PaperPortfolioPage {...sharedProps} />}
-          {route.section === 'console' && route.consoleTab === 'validation' && <BacktestValidationPage {...sharedProps} />}
+          {route.section === 'console' && route.consoleTab === 'strategies' && <StrategiesPage {...sharedProps} />}
+          {route.section === 'console' && route.consoleTab === 'scanner' && <ScannerPage {...sharedProps} />}
+          {route.section === 'console' && route.consoleTab === 'orders' && <PaperPortfolioPage {...sharedProps} />}
+          {route.section === 'console' && route.consoleTab === 'universe' && <UniversePage {...sharedProps} />}
+          {route.section === 'console' && route.consoleTab === 'performance' && <PerformancePage {...sharedProps} />}
           {route.section === 'reports' && (
             <ReportsPage
               {...sharedProps}
