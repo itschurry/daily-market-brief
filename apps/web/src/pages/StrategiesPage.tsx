@@ -69,7 +69,7 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh }: S
           />
 
           <div className="page-section" style={{ padding: 0 }}>
-            <div style={{ overflow: 'auto' }}>
+            <div className="responsive-table-desktop" style={{ overflow: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
                 <thead>
                   <tr style={{ background: 'var(--bg-soft)', textAlign: 'left' }}>
@@ -125,6 +125,41 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh }: S
                   )}
                 </tbody>
               </table>
+            </div>
+
+            <div className="responsive-card-list">
+              {items.map((item) => {
+                const research = item.research_summary || {};
+                const strategyId = String(item.strategy_id || '');
+                const enabled = Boolean(item.enabled);
+                return (
+                  <article key={`${strategyId}-card`} className="responsive-card">
+                    <div className="responsive-card-head">
+                      <div>
+                        <div className="responsive-card-title">{item.name || strategyId}</div>
+                        <div className="signal-cell-copy">{strategyId} · v{item.version || 1}</div>
+                      </div>
+                      <div className={`inline-badge ${enabled ? 'is-success' : 'is-danger'}`}>{enabled ? 'enabled' : 'disabled'}</div>
+                    </div>
+                    <div className="responsive-card-grid">
+                      <div><div className="responsive-card-label">상태</div><div className="responsive-card-value">{item.approval_status || '-'}</div></div>
+                      <div><div className="responsive-card-label">시장</div><div className="responsive-card-value">{item.market || '-'}</div></div>
+                      <div><div className="responsive-card-label">유니버스</div><div className="responsive-card-value">{item.universe_rule || '-'}</div></div>
+                      <div><div className="responsive-card-label">스캔 주기</div><div className="responsive-card-value">{item.scan_cycle || '-'}</div></div>
+                      <div><div className="responsive-card-label">연구 성과</div><div className="responsive-card-value">수익률 {formatPercent(research.backtest_return_pct, 1, true)} · WF {formatPercent(research.walk_forward_return_pct, 1, true)}</div></div>
+                      <div><div className="responsive-card-label">최근 승인</div><div className="responsive-card-value">{formatDateTime(item.approved_at)}</div></div>
+                    </div>
+                    <button
+                      className="ghost-button"
+                      onClick={() => handleToggle(strategyId, !enabled)}
+                      disabled={!strategyId || pendingId === strategyId}
+                    >
+                      {pendingId === strategyId ? '처리 중...' : enabled ? '비활성화' : '활성화'}
+                    </button>
+                  </article>
+                );
+              })}
+              {items.length === 0 && <div style={{ padding: 14, fontSize: 12, color: 'var(--text-4)' }}>표시할 전략이 없습니다.</div>}
             </div>
           </div>
         </div>

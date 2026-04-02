@@ -81,7 +81,7 @@ export function PerformancePage({ snapshot, loading, errorMessage, onRefresh }: 
 
           <section className="page-section" style={{ padding: 0 }}>
             <div style={{ padding: 16, fontSize: 14, fontWeight: 700 }}>연구 성과</div>
-            <div style={{ overflow: 'auto' }}>
+            <div className="responsive-table-desktop" style={{ overflow: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
                 <thead>
                   <tr style={{ background: 'var(--bg-soft)', textAlign: 'left' }}>
@@ -116,6 +116,27 @@ export function PerformancePage({ snapshot, loading, errorMessage, onRefresh }: 
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className="responsive-card-list">
+              {research.map((item) => (
+                <article key={`${item.strategy_id}-card`} className="responsive-card">
+                  <div className="responsive-card-head">
+                    <div>
+                      <div className="responsive-card-title">{item.name || item.strategy_id}</div>
+                      <div className="signal-cell-copy">{item.strategy_id}</div>
+                    </div>
+                    <div className="inline-badge">{item.approval_status || '-'}</div>
+                  </div>
+                  <div className="responsive-card-grid">
+                    <div><div className="responsive-card-label">백테스트</div><div className="responsive-card-value">{formatPercent(item.backtest_return_pct, 1, true)}</div></div>
+                    <div><div className="responsive-card-label">워크포워드</div><div className="responsive-card-value">{formatPercent(item.walk_forward_return_pct, 1, true)}</div></div>
+                    <div><div className="responsive-card-label">MDD</div><div className="responsive-card-value">{formatPercent(item.max_drawdown_pct, 1, true)}</div></div>
+                    <div><div className="responsive-card-label">승률</div><div className="responsive-card-value">{formatPercent(item.win_rate_pct, 1, true)}</div></div>
+                    <div><div className="responsive-card-label">Sharpe</div><div className="responsive-card-value">{item.sharpe ?? '-'}</div></div>
+                  </div>
+                </article>
+              ))}
+              {research.length === 0 && <div style={{ padding: 14, fontSize: 12, color: 'var(--text-4)' }}>표시할 연구 성과가 없습니다.</div>}
             </div>
           </section>
         </div>

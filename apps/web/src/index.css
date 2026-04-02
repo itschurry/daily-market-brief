@@ -2897,6 +2897,61 @@ button:disabled {
   display: none;
 }
 
+.responsive-table-desktop {
+  display: block;
+}
+
+.responsive-card-list {
+  display: none;
+}
+
+.responsive-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.responsive-card:first-child {
+  border-top: 0;
+}
+
+.responsive-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.responsive-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--text-1);
+}
+
+.responsive-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.responsive-card-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.responsive-card-value {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.55;
+  color: var(--text-1);
+}
+
 .signal-card {
   display: grid;
   gap: 12px;
@@ -3075,6 +3130,15 @@ button:disabled {
   }
 
   .signal-card-list {
+    display: grid;
+    gap: 0;
+  }
+
+  .responsive-table-desktop {
+    display: none;
+  }
+
+  .responsive-card-list {
     display: grid;
     gap: 0;
   }
@@ -3409,7 +3473,8 @@ button:disabled {
     align-items: flex-start;
   }
 
-  .signal-kpi-grid {
+  .signal-kpi-grid,
+  .responsive-card-grid {
     grid-template-columns: 1fr;
   }
 

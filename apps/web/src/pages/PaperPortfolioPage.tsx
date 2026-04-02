@@ -793,69 +793,109 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
             </div>
           </div>
 
-          <div className="page-section" style={{ padding: 0, overflow: 'auto' }}>
+          <div className="page-section" style={{ padding: 0 }}>
             <div style={{ padding: '14px 16px 0', fontSize: 12, color: 'var(--text-4)' }}>가격은 현지통화 기준, 평가손익은 원화 환산 기준으로 표기합니다.</div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1260 }}>
-              <thead>
-                <tr style={{ background: 'var(--bg-soft)', textAlign: 'left' }}>
-                  <th style={{ padding: 12, fontSize: 12 }}>종목</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>시장 / 통화</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>수량</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>진입가(현지)</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>현재가(현지)</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>평가손익(KRW)</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>수익률</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>보유기간</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>손절가 / 손절률</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>익절가 / 익절률</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>전략 태그</th>
-                  <th style={{ padding: 12, fontSize: 12 }}>상태</th>
-                </tr>
-              </thead>
-              <tbody>
-                {positions.map((position) => {
-                  const positionRaw = position as unknown as Record<string, unknown>;
-                  const code = String(position.code || '');
-                  const name = String(position.name || '');
-                  const entryPrice = toNumber(position.avg_price_local, 0);
-                  const currentPrice = toNumber(position.last_price_local, 0);
-                  const pnlKrw = toNumber(position.unrealized_pnl_krw, 0);
-                  const pnlPct = toNumber(position.unrealized_pnl_pct, NaN);
-                  const stopLossPct = toNumber(positionRaw.stop_loss_pct, stopLossPctDefault);
-                  const takeProfitPct = toNumber(positionRaw.take_profit_pct, takeProfitPctDefault);
-                  const stopLossPrice = Number.isFinite(stopLossPct) ? entryPrice * (1 - stopLossPct / 100) : NaN;
-                  const takeProfitPrice = Number.isFinite(takeProfitPct) ? entryPrice * (1 + takeProfitPct / 100) : NaN;
-                  const strategyTag = String(positionRaw.strategy_type || positionRaw.strategy || '-');
-                  return (
-                    <tr key={`${position.market}:${code}`} style={{ borderTop: '1px solid var(--border)' }}>
-                      <td style={{ padding: 12, fontSize: 12 }}>{formatSymbol(code, name)}</td>
-                      <td style={{ padding: 12, fontSize: 12 }}>{formatMarketWithCurrency(position.market)}</td>
-                      <td style={{ padding: 12, fontSize: 12 }}>{formatCount(position.quantity, '주')}</td>
-                      <td style={{ padding: 12, fontSize: 12 }}>{formatLocalPrice(entryPrice, position.market)}</td>
-                      <td style={{ padding: 12, fontSize: 12 }}>{formatLocalPrice(currentPrice, position.market)}</td>
-                      <td style={{ padding: 12, fontSize: 12, color: pnlKrw >= 0 ? 'var(--up)' : 'var(--down)' }}>{formatKRW(pnlKrw, true)}</td>
-                      <td style={{ padding: 12, fontSize: 12, color: pnlPct >= 0 ? 'var(--up)' : 'var(--down)' }}>
-                        {formatPercent(pnlPct, 2)}
-                      </td>
-                      <td style={{ padding: 12, fontSize: 12 }}>{formatNumber(holdingDays(position.entry_ts), 0)}일</td>
-                      <td style={{ padding: 12, fontSize: 12 }}>
-                        {Number.isFinite(stopLossPrice) ? formatLocalPrice(stopLossPrice, position.market) : '-'} / {formatPercent(stopLossPct, 2)}
-                      </td>
-                      <td style={{ padding: 12, fontSize: 12 }}>
-                        {Number.isFinite(takeProfitPrice) ? formatLocalPrice(takeProfitPrice, position.market) : '-'} / {formatPercent(takeProfitPct, 2)}
-                      </td>
-                      <td style={{ padding: 12, fontSize: 12 }}>{strategyTag}</td>
-                      <td style={{ padding: 12, fontSize: 12, fontWeight: 700 }}>보유</td>
-                    </tr>
-                  );
-                })}
-                {positions.length === 0 && (
-                  <tr>
-                    <td colSpan={12} style={{ padding: 16, fontSize: 12, color: 'var(--text-4)' }}>{UI_TEXT.empty.noPositions}</td>
+            <div className="responsive-table-desktop" style={{ overflow: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1260 }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg-soft)', textAlign: 'left' }}>
+                    <th style={{ padding: 12, fontSize: 12 }}>종목</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>시장 / 통화</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>수량</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>진입가(현지)</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>현재가(현지)</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>평가손익(KRW)</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>수익률</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>보유기간</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>손절가 / 손절률</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>익절가 / 익절률</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>전략 태그</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>상태</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {positions.map((position) => {
+                    const positionRaw = position as unknown as Record<string, unknown>;
+                    const code = String(position.code || '');
+                    const name = String(position.name || '');
+                    const entryPrice = toNumber(position.avg_price_local, 0);
+                    const currentPrice = toNumber(position.last_price_local, 0);
+                    const pnlKrw = toNumber(position.unrealized_pnl_krw, 0);
+                    const pnlPct = toNumber(position.unrealized_pnl_pct, NaN);
+                    const stopLossPct = toNumber(positionRaw.stop_loss_pct, stopLossPctDefault);
+                    const takeProfitPct = toNumber(positionRaw.take_profit_pct, takeProfitPctDefault);
+                    const stopLossPrice = Number.isFinite(stopLossPct) ? entryPrice * (1 - stopLossPct / 100) : NaN;
+                    const takeProfitPrice = Number.isFinite(takeProfitPct) ? entryPrice * (1 + takeProfitPct / 100) : NaN;
+                    const strategyTag = String(positionRaw.strategy_type || positionRaw.strategy || '-');
+                    return (
+                      <tr key={`${position.market}:${code}`} style={{ borderTop: '1px solid var(--border)' }}>
+                        <td style={{ padding: 12, fontSize: 12 }}>{formatSymbol(code, name)}</td>
+                        <td style={{ padding: 12, fontSize: 12 }}>{formatMarketWithCurrency(position.market)}</td>
+                        <td style={{ padding: 12, fontSize: 12 }}>{formatCount(position.quantity, '주')}</td>
+                        <td style={{ padding: 12, fontSize: 12 }}>{formatLocalPrice(entryPrice, position.market)}</td>
+                        <td style={{ padding: 12, fontSize: 12 }}>{formatLocalPrice(currentPrice, position.market)}</td>
+                        <td style={{ padding: 12, fontSize: 12, color: pnlKrw >= 0 ? 'var(--up)' : 'var(--down)' }}>{formatKRW(pnlKrw, true)}</td>
+                        <td style={{ padding: 12, fontSize: 12, color: pnlPct >= 0 ? 'var(--up)' : 'var(--down)' }}>
+                          {formatPercent(pnlPct, 2)}
+                        </td>
+                        <td style={{ padding: 12, fontSize: 12 }}>{formatNumber(holdingDays(position.entry_ts), 0)}일</td>
+                        <td style={{ padding: 12, fontSize: 12 }}>
+                          {Number.isFinite(stopLossPrice) ? formatLocalPrice(stopLossPrice, position.market) : '-'} / {formatPercent(stopLossPct, 2)}
+                        </td>
+                        <td style={{ padding: 12, fontSize: 12 }}>
+                          {Number.isFinite(takeProfitPrice) ? formatLocalPrice(takeProfitPrice, position.market) : '-'} / {formatPercent(takeProfitPct, 2)}
+                        </td>
+                        <td style={{ padding: 12, fontSize: 12 }}>{strategyTag}</td>
+                        <td style={{ padding: 12, fontSize: 12, fontWeight: 700 }}>보유</td>
+                      </tr>
+                    );
+                  })}
+                  {positions.length === 0 && (
+                    <tr>
+                      <td colSpan={12} style={{ padding: 16, fontSize: 12, color: 'var(--text-4)' }}>{UI_TEXT.empty.noPositions}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="responsive-card-list">
+              {positions.map((position) => {
+                const positionRaw = position as unknown as Record<string, unknown>;
+                const code = String(position.code || '');
+                const name = String(position.name || '');
+                const entryPrice = toNumber(position.avg_price_local, 0);
+                const currentPrice = toNumber(position.last_price_local, 0);
+                const pnlKrw = toNumber(position.unrealized_pnl_krw, 0);
+                const pnlPct = toNumber(position.unrealized_pnl_pct, NaN);
+                const stopLossPct = toNumber(positionRaw.stop_loss_pct, stopLossPctDefault);
+                const takeProfitPct = toNumber(positionRaw.take_profit_pct, takeProfitPctDefault);
+                const stopLossPrice = Number.isFinite(stopLossPct) ? entryPrice * (1 - stopLossPct / 100) : NaN;
+                const takeProfitPrice = Number.isFinite(takeProfitPct) ? entryPrice * (1 + takeProfitPct / 100) : NaN;
+                const strategyTag = String(positionRaw.strategy_type || positionRaw.strategy || '-');
+                return (
+                  <article key={`${position.market}:${code}-card`} className="responsive-card">
+                    <div className="responsive-card-head">
+                      <div>
+                        <div className="responsive-card-title">{formatSymbol(code, name)}</div>
+                        <div className="signal-cell-copy">{formatMarketWithCurrency(position.market)}</div>
+                      </div>
+                      <div className="inline-badge">보유</div>
+                    </div>
+                    <div className="responsive-card-grid">
+                      <div><div className="responsive-card-label">수량</div><div className="responsive-card-value">{formatCount(position.quantity, '주')}</div></div>
+                      <div><div className="responsive-card-label">수익률</div><div className="responsive-card-value" style={{ color: pnlPct >= 0 ? 'var(--up)' : 'var(--down)' }}>{formatPercent(pnlPct, 2)}</div></div>
+                      <div><div className="responsive-card-label">평가손익</div><div className="responsive-card-value" style={{ color: pnlKrw >= 0 ? 'var(--up)' : 'var(--down)' }}>{formatKRW(pnlKrw, true)}</div></div>
+                      <div><div className="responsive-card-label">보유기간</div><div className="responsive-card-value">{formatNumber(holdingDays(position.entry_ts), 0)}일</div></div>
+                      <div><div className="responsive-card-label">진입가 / 현재가</div><div className="responsive-card-value">{formatLocalPrice(entryPrice, position.market)} / {formatLocalPrice(currentPrice, position.market)}</div></div>
+                      <div><div className="responsive-card-label">손절 / 익절</div><div className="responsive-card-value">{Number.isFinite(stopLossPrice) ? formatLocalPrice(stopLossPrice, position.market) : '-'} / {Number.isFinite(takeProfitPrice) ? formatLocalPrice(takeProfitPrice, position.market) : '-'}</div></div>
+                      <div><div className="responsive-card-label">전략 태그</div><div className="responsive-card-value">{strategyTag}</div></div>
+                      <div><div className="responsive-card-label">손절률 / 익절률</div><div className="responsive-card-value">{formatPercent(stopLossPct, 2)} / {formatPercent(takeProfitPct, 2)}</div></div>
+                    </div>
+                  </article>
+                );
+              })}
+              {positions.length === 0 && <div style={{ padding: 16, fontSize: 12, color: 'var(--text-4)' }}>{UI_TEXT.empty.noPositions}</div>}
+            </div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
@@ -977,7 +1017,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
               </div>
               <div className={hannaBadgeClass(currentHannaState)}>Hanna {currentHannaState}</div>
             </div>
-            <div style={{ overflow: 'auto', marginTop: 12 }}>
+            <div className="responsive-table-desktop" style={{ overflow: 'auto', marginTop: 12 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1120 }}>
                 <thead>
                   <tr style={{ background: 'var(--bg-soft)', textAlign: 'left' }}>
@@ -1029,6 +1069,27 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className="responsive-card-list" style={{ marginTop: 12 }}>
+              {signalRiskActionLogs.map((item) => (
+                <article key={`${item.key}-card`} className="responsive-card">
+                  <div className="responsive-card-head">
+                    <div>
+                      <div className="responsive-card-title">{item.symbol}</div>
+                      <div className="signal-cell-copy">{item.market} · {item.strategy}</div>
+                    </div>
+                    <div className={hannaBadgeClass(item.hannaState)}>{item.hannaState}</div>
+                  </div>
+                  <div className="responsive-card-grid">
+                    <div><div className="responsive-card-label">시각</div><div className="responsive-card-value">{formatDateTime(item.timestamp)}</div></div>
+                    <div><div className="responsive-card-label">Layer D</div><div className="responsive-card-value">{item.riskDecision} · {reasonCodeToKorean(item.riskReasonCode)}</div></div>
+                    <div><div className="responsive-card-label">Layer E</div><div className="responsive-card-value">{item.finalAction}</div></div>
+                    <div><div className="responsive-card-label">상세</div><div className="responsive-card-value">{item.riskMessage}</div></div>
+                    <div style={{ gridColumn: '1 / -1' }}><div className="responsive-card-label">reason code</div><div className="responsive-card-value">{item.translatedReasons.join(', ') || '-'}</div><div className="signal-cell-copy">{item.rawReasons.join(', ') || '-'}</div></div>
+                  </div>
+                </article>
+              ))}
+              {signalRiskActionLogs.length === 0 && <div style={{ padding: 16, fontSize: 12, color: 'var(--text-4)' }}>아직 기록된 signal snapshot이 없습니다. 엔진을 한 번 실행하면 Layer D/E 로그가 여기에 누적됩니다.</div>}
             </div>
           </div>
 
