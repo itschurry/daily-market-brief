@@ -12,7 +12,6 @@ ALLOWED_WARNING_CODES = {
     "policy_uncertainty",
     "liquidity_mismatch",
     "too_many_similar_news",
-    "research_unavailable",
 }
 
 
@@ -44,6 +43,22 @@ def normalize_warning_codes(value: Any) -> list[str]:
         if code and code in ALLOWED_WARNING_CODES:
             warnings.append(code)
     return list(dict.fromkeys(warnings))
+
+
+def normalize_and_validate_warning_codes(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("warnings_must_be_list")
+
+    normalized: list[str] = []
+    for item in value:
+        code = str(item).strip()
+        if not code:
+            raise ValueError("warning_code_empty")
+        if code not in ALLOWED_WARNING_CODES:
+            raise ValueError("warning_code_unsupported")
+        normalized.append(code)
+
+    return list(dict.fromkeys(normalized))
 
 
 def normalize_tags(value: Any) -> list[str]:

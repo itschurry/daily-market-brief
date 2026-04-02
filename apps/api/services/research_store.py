@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from config.settings import LOGS_DIR
-from services.research_contract import clamp_normalized_score, normalize_components, normalize_tags, normalize_warning_codes
+from services.research_contract import normalize_and_validate_warning_codes, normalize_tags
 
 
 RESEARCH_DIR = LOGS_DIR / "research_snapshots"
@@ -78,6 +78,122 @@ def _normalize_bucket_ts(value: str) -> str:
     return normalized.isoformat()
 
 
+def _parse_score(value: Any, *, field: str) -> float | None:
+    if value is None:
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field}_invalid")
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"{field}_out_of_range")
+    return score
+
+
+def _snapshot_history_key(item: dict[str, Any]) -> str:
+    return "|".join(
+        [
+            str(item.get("provider") or "").strip().lower(),
+            str(item.get("symbol") or "").strip().upper(),
+            str(item.get("market") or "").strip().upper(),
+            str(item.get("bucket_ts") or ""),
+        ]
+    )
+
+
+def _is_newer_snapshot(left: dict[str, Any], right: dict[str, Any] | None) -> bool:
+    if right is None:
+        return True
+    if not isinstance(right, dict):
+        return True
+    if not right.get("bucket_ts") and not right.get("generated_at") and not right.get("ingested_at"):
+        return True
+
+    left_bucket = _parse_datetime(left.get("bucket_ts"))
+    right_bucket = _parse_datetime(right.get("bucket_ts"))
+    if left_bucket is not None and right_bucket is not None:
+        if left_bucket > right_bucket:
+            return True
+        if left_bucket < right_bucket:
+            return False
+
+    left_generated = _parse_datetime(left.get("generated_at"))
+    right_generated = _parse_datetime(right.get("generated_at"))
+    if left_generated is not None and right_generated is not None:
+        if left_generated > right_generated:
+            return True
+        if left_generated < right_generated:
+            return False
+
+    left_ingested = _parse_datetime(left.get("ingested_at"))
+    right_ingested = _parse_datetime(right.get("ingested_at"))
+    if left_ingested is not None and right_ingested is not None:
+        if left_ingested > right_ingested:
+            return True
+        if left_ingested < right_ingested:
+            return False
+
+    return False
+
+
+def _iter_history_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as fp:
+        for line in fp:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict):
+                rows.append(item)
+    return rows
+
+
+def _write_history_rows(path: Path, rows: list[dict[str, Any]]) -> None:
+    _ensure_parent(path)
+    with path.open("w", encoding="utf-8") as fp:
+        for row in rows:
+            fp.write(f"{json.dumps(row, ensure_ascii=False, separators=(',', ':'))}\n")
+
+
+def _dedupe_history_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    newest_by_key: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = _snapshot_history_key(row)
+        if key in newest_by_key and _is_newer_snapshot(row, newest_by_key[key]):
+            newest_by_key[key] = row
+        elif key not in newest_by_key:
+            newest_by_key[key] = row
+    return list(newest_by_key.values())
+
+
+def _history_sort_key(item: dict[str, Any]) -> tuple[datetime.datetime, datetime.datetime, str]:
+    bucket_dt = _parse_datetime(item.get("bucket_ts")) or datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
+    ingested_dt = _parse_datetime(item.get("ingested_at")) or bucket_dt
+    return (bucket_dt, ingested_dt, str(item.get("run_id") or ""))
+
+
+def _normalize_components(value: Any) -> dict[str, float]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("components_must_be_object")
+
+    components: dict[str, float] = {}
+    for key, item in value.items():
+        score = _parse_score(item, field="component_score")
+        if score is None:
+            raise ValueError("component_score_invalid")
+        components[str(key)] = score
+    return components
+
+
 def _normalize_item(
     item: dict[str, Any],
     *,
@@ -96,18 +212,23 @@ def _normalize_item(
     if not generated_at:
         raise ValueError("generated_at_required")
 
-    bucket_ts = str(item.get("bucket_ts") or generated_at or "").strip()
-    if not generated_at or not bucket_ts:
+    bucket_ts = str(item.get("bucket_ts") or "").strip()
+    if not bucket_ts:
         raise ValueError("bucket_ts_required")
 
     generated_at = _normalize_bucket_ts(generated_at)
     bucket_ts = _normalize_bucket_ts(bucket_ts)
 
     ttl_raw = item.get("ttl_minutes")
-    try:
-        ttl_minutes = max(1, min(1440, int(ttl_raw if ttl_raw is not None else 120)))
-    except (TypeError, ValueError):
-        raise ValueError("ttl_minutes_invalid") from None
+    if ttl_raw is None:
+        ttl_minutes = 120
+    else:
+        try:
+            ttl_minutes = int(ttl_raw)
+        except (TypeError, ValueError):
+            raise ValueError("ttl_minutes_invalid") from None
+        if ttl_minutes <= 0:
+            raise ValueError("ttl_minutes_invalid")
 
     return {
         "provider": provider,
@@ -118,9 +239,9 @@ def _normalize_item(
         "bucket_ts": bucket_ts,
         "generated_at": generated_at,
         "ingested_at": ingested_at,
-        "research_score": clamp_normalized_score(item.get("research_score")),
-        "components": normalize_components(item.get("components")),
-        "warnings": normalize_warning_codes(item.get("warnings")),
+        "research_score": _parse_score(item.get("research_score"), field="research_score"),
+        "components": _normalize_components(item.get("components")),
+        "warnings": normalize_and_validate_warning_codes(item.get("warnings", [])),
         "tags": normalize_tags(item.get("tags")),
         "summary": str(item.get("summary") or "").strip(),
         "ttl_minutes": ttl_minutes,
@@ -130,6 +251,7 @@ def _normalize_item(
 def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
     provider = str(payload.get("provider") or OPENCLAW_PROVIDER).strip().lower() or OPENCLAW_PROVIDER
     schema_version = str(payload.get("schema_version") or OPENCLAW_SCHEMA_VERSION).strip() or OPENCLAW_SCHEMA_VERSION
+
     if provider != OPENCLAW_PROVIDER:
         return {
             "ok": False,
@@ -139,6 +261,7 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
             "rejected": 1,
             "errors": [{"index": -1, "error": "provider_mismatch"}],
         }
+
     if schema_version != OPENCLAW_SCHEMA_VERSION:
         return {
             "ok": False,
@@ -148,8 +271,19 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
             "rejected": 1,
             "errors": [{"index": -1, "error": "schema_version_unsupported"}],
         }
+
     run_id = str(payload.get("run_id") or "").strip() or f"{provider}-{_now_iso()}"
     generated_at = str(payload.get("generated_at") or _now_iso()).strip()
+    if not generated_at:
+        return {
+            "ok": False,
+            "provider": provider,
+            "run_id": run_id,
+            "accepted": 0,
+            "rejected": 1,
+            "errors": [{"index": -1, "error": "generated_at_required"}],
+        }
+
     items = payload.get("items")
     if not isinstance(items, list):
         return {
@@ -164,6 +298,7 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
     ingested_at = _now_iso()
     accepted_items: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    batch_unique_by_key: dict[str, dict[str, Any]] = {}
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             errors.append({"index": index, "error": "item_must_be_object"})
@@ -180,12 +315,41 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
         except ValueError as exc:
             errors.append({"index": index, "error": str(exc)})
             continue
-        accepted_items.append(normalized)
+
+        key = _snapshot_history_key(normalized)
+        if key in batch_unique_by_key and not _is_newer_snapshot(normalized, batch_unique_by_key[key]):
+            continue
+        batch_unique_by_key[key] = normalized
+
+    for item in batch_unique_by_key.values():
+        history_path = _history_snapshot_path(item["provider"], item["market"], item["symbol"])
+        accepted_items.append(item)
+
+    accepted_by_path: dict[Path, list[dict[str, Any]]] = {}
+    for item in accepted_items:
+        path = _history_snapshot_path(item["provider"], item["market"], item["symbol"])
+        accepted_by_path.setdefault(path, []).append(item)
+
+    persisted_count = 0
+    for path, items in accepted_by_path.items():
+        existing_rows = _iter_history_rows(path)
+        existing_by_key = {_snapshot_history_key(row): row for row in _dedupe_history_rows(existing_rows)}
+        for item in items:
+            key = _snapshot_history_key(item)
+            existing = existing_by_key.get(key)
+            if existing is None or _is_newer_snapshot(item, existing):
+                persisted_count += 1
+        merged_rows = _dedupe_history_rows(existing_rows + items)
+        merged_rows.sort(key=_history_sort_key, reverse=True)
+        _write_history_rows(path, merged_rows)
 
     for item in accepted_items:
         _append_jsonl(RESEARCH_INGEST_LOG_PATH, item)
-        _append_jsonl(_history_snapshot_path(item["provider"], item["market"], item["symbol"]), item)
-        _write_json(_latest_snapshot_path(provider, item["market"], item["symbol"]), item)
+
+        latest_path = _latest_snapshot_path(provider, item["market"], item["symbol"])
+        existing_latest = _read_json(latest_path, {})
+        if _is_newer_snapshot(item, existing_latest if isinstance(existing_latest, dict) else None):
+            _write_json(latest_path, item)
 
     provider_state_payload = _read_json(RESEARCH_PROVIDER_STATE_PATH, {"providers": {}})
     providers = provider_state_payload.get("providers") if isinstance(provider_state_payload.get("providers"), dict) else {}
@@ -198,35 +362,50 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
             fresh_until = (latest_dt + datetime.timedelta(minutes=max_ttl)).astimezone().isoformat(timespec="seconds")
     else:
         latest_generated_at = generated_at
+
     providers[provider] = {
         "provider": provider,
         "last_received_at": ingested_at,
         "last_generated_at": latest_generated_at,
         "last_run_id": run_id,
-        "accepted_last_run": len(accepted_items),
+        "accepted_last_run": persisted_count,
         "rejected_last_run": len(errors),
         "fresh_until": fresh_until,
     }
     _write_json(RESEARCH_PROVIDER_STATE_PATH, {"providers": providers})
 
     return {
-        "ok": len(accepted_items) > 0 and not errors,
+        "ok": persisted_count > 0 and not errors,
         "provider": provider,
         "run_id": run_id,
-        "accepted": len(accepted_items),
+        "accepted": persisted_count,
         "rejected": len(errors),
         "errors": errors,
     }
 
 
-def load_provider_status(provider: str = "openclaw") -> dict[str, Any]:
+def load_provider_status(provider: str = OPENCLAW_PROVIDER) -> dict[str, Any]:
+    provider_key = str(provider).strip().lower() or OPENCLAW_PROVIDER
     payload = _read_json(RESEARCH_PROVIDER_STATE_PATH, {"providers": {}})
     providers = payload.get("providers") if isinstance(payload.get("providers"), dict) else {}
-    state = providers.get(str(provider).strip().lower() or "openclaw")
-    if not isinstance(state, dict) or not state:
+    state = providers.get(provider_key)
+
+    latest_snapshots: list[dict[str, Any]] = []
+    for path in RESEARCH_LATEST_DIR.glob("*.json"):
+        payload = _read_json(path, {})
+        if str(payload.get("provider") or "").strip().lower() != provider_key:
+            continue
+        if str(payload.get("symbol") or "").strip() == "":
+            continue
+        if str(payload.get("market") or "").strip() == "":
+            continue
+        latest_snapshots.append(payload)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if not latest_snapshots:
         return {
             "ok": True,
-            "provider": str(provider).strip().lower() or "openclaw",
+            "provider": provider_key,
             "status": "missing",
             "freshness": "missing",
             "last_received_at": "",
@@ -234,28 +413,60 @@ def load_provider_status(provider: str = "openclaw") -> dict[str, Any]:
             "last_run_id": "",
             "accepted_last_run": 0,
             "rejected_last_run": 0,
+            "coverage_count": 0,
+            "fresh_symbol_count": 0,
+            "stale_symbol_count": 0,
+            "latest_bucket_ts": "",
+            "accept_ratio": 0.0,
         }
 
-    fresh_until = _parse_datetime(state.get("fresh_until"))
-    now = datetime.datetime.now(datetime.timezone.utc)
-    freshness = "fresh"
+    stale_symbol_count = 0
+    fresh_symbol_count = 0
+    latest_bucket_dt = None
+    for snapshot in latest_snapshots:
+        generated_at = _parse_datetime(snapshot.get("generated_at"))
+        ttl_minutes = int(snapshot.get("ttl_minutes") or 0)
+        bucket_dt = _parse_datetime(snapshot.get("bucket_ts"))
+
+        if generated_at is None or ttl_minutes <= 0:
+            stale_symbol_count += 1
+        else:
+            stale_at = generated_at + datetime.timedelta(minutes=ttl_minutes)
+            if now > stale_at:
+                stale_symbol_count += 1
+            else:
+                fresh_symbol_count += 1
+
+        if latest_bucket_dt is None or (bucket_dt is not None and bucket_dt > latest_bucket_dt):
+            latest_bucket_dt = bucket_dt
+
+    total_count = len(latest_snapshots)
+    accepted_last_run = int(state.get("accepted_last_run") or 0) if isinstance(state, dict) else 0
+    rejected_last_run = int(state.get("rejected_last_run") or 0) if isinstance(state, dict) else 0
+    total_run_count = accepted_last_run + rejected_last_run
+    accept_ratio = (accepted_last_run / total_run_count) if total_run_count > 0 else 0.0
+    freshness = "fresh" if (fresh_symbol_count > 0 and stale_symbol_count == 0) else "stale"
     status = "healthy"
-    if fresh_until is not None and now > fresh_until:
-        freshness = "stale"
+    if freshness == "stale":
         status = "stale_ingest"
-    elif int(state.get("rejected_last_run") or 0) > 0:
+    elif rejected_last_run > 0:
         status = "degraded"
 
     return {
         "ok": True,
-        "provider": str(state.get("provider") or provider),
+        "provider": provider_key,
         "status": status,
         "freshness": freshness,
         "last_received_at": str(state.get("last_received_at") or ""),
         "last_generated_at": str(state.get("last_generated_at") or ""),
         "last_run_id": str(state.get("last_run_id") or ""),
-        "accepted_last_run": int(state.get("accepted_last_run") or 0),
-        "rejected_last_run": int(state.get("rejected_last_run") or 0),
+        "accepted_last_run": accepted_last_run,
+        "rejected_last_run": rejected_last_run,
+        "coverage_count": total_count,
+        "fresh_symbol_count": fresh_symbol_count,
+        "stale_symbol_count": stale_symbol_count,
+        "latest_bucket_ts": latest_bucket_dt.isoformat() if latest_bucket_dt else "",
+        "accept_ratio": round(accept_ratio, 4),
     }
 
 
@@ -282,39 +493,33 @@ def load_research_snapshots(
     if start_dt is not None and end_dt is not None and end_dt < start_dt:
         return []
 
-    path = _history_snapshot_path(provider, market, symbol)
-    if not path.exists():
+    rows = _iter_history_rows(_history_snapshot_path(provider, market, symbol))
+    if not rows:
         return []
 
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(item, dict):
-                continue
+    normalized_provider = str(provider).strip().lower()
+    normalized_symbol = symbol.strip().upper()
+    normalized_market = market.strip().upper()
+    filtered_rows: list[dict[str, Any]] = []
+    for item in rows:
+        if str(item.get("provider") or provider).strip().lower() != normalized_provider:
+            continue
+        if str(item.get("symbol") or "").strip().upper() != normalized_symbol:
+            continue
+        if str(item.get("market") or "").strip().upper() != normalized_market:
+            continue
 
-            item_provider = str(item.get("provider") or provider).lower()
-            if item_provider != str(provider).lower():
-                continue
-            if str(item.get("symbol") or "").upper() != symbol.upper() or str(item.get("market") or "").upper() != market.upper():
-                continue
+        bucket_dt = _parse_datetime(item.get("bucket_ts"))
+        if bucket_dt is None:
+            continue
 
-            bucket_dt = _parse_datetime(item.get("bucket_ts"))
-            if bucket_dt is None:
-                continue
+        if start_dt is not None and bucket_dt < start_dt:
+            continue
+        if end_dt is not None and bucket_dt > end_dt:
+            continue
+        filtered_rows.append(item)
 
-            if start_dt is not None and bucket_dt < start_dt:
-                continue
-            if end_dt is not None and bucket_dt > end_dt:
-                continue
-
-            rows.append(item)
+    rows = _dedupe_history_rows(filtered_rows)
 
     def sort_key(item: dict[str, Any]) -> tuple[datetime.datetime, datetime.datetime, str]:
         bucket_dt = _parse_datetime(item.get("bucket_ts")) or datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
@@ -339,7 +544,14 @@ def load_research_snapshot_for_timestamp(
         return load_latest_research_snapshot(symbol, market, provider=provider)
 
     request_bucket = _normalize_bucket_ts(parsed.isoformat())
-    candidates = load_research_snapshots(symbol, market, provider=provider, bucket_end=request_bucket, descending=True, limit=1)
-    if candidates:
-        return candidates[0]
-    return None
+    candidates = load_research_snapshots(
+        symbol,
+        market,
+        provider=provider,
+        bucket_end=request_bucket,
+        descending=True,
+        limit=1,
+    )
+    if not candidates:
+        return None
+    return candidates[0]

@@ -5,6 +5,7 @@ import types
 import unittest
 from pathlib import Path
 import sys
+import datetime
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -198,3 +199,171 @@ class ResearchStoreTests(unittest.TestCase):
 
         self.assertIsNotNone(row)
         self.assertEqual(0.44, row["research_score"])
+
+    def test_ingest_rejects_research_unavailable_warning(self):
+        status_code, payload = handle_research_ingest_bulk({
+            "provider": "openclaw",
+            "schema_version": "v1",
+            "run_id": "cron-warning",
+            "generated_at": "2026-04-03T09:30:00+09:00",
+            "items": [
+                {
+                    "symbol": "005930",
+                    "market": "KR",
+                    "bucket_ts": "2026-04-03T09:30:00+09:00",
+                    "research_score": 0.4,
+                    "components": {"freshness_score": 0.7},
+                    "warnings": ["research_unavailable"],
+                    "tags": ["earnings"],
+                    "summary": "invalid warning",
+                    "ttl_minutes": 120,
+                }
+            ],
+        })
+
+        self.assertEqual(400, status_code)
+        self.assertEqual(0, payload["accepted"])
+        self.assertEqual(1, payload["rejected"])
+        self.assertEqual("warning_code_unsupported", payload["errors"][0]["error"])
+
+    def test_same_bucket_payload_is_deduped_in_history(self):
+        handle_research_ingest_bulk({
+            "provider": "openclaw",
+            "schema_version": "v1",
+            "run_id": "cron-dup-1",
+            "generated_at": "2026-04-03T10:00:00+09:00",
+            "items": [
+                {
+                    "symbol": "005930",
+                    "market": "KR",
+                    "bucket_ts": "2026-04-03T10:00:00+09:00",
+                    "research_score": 0.55,
+                    "components": {"freshness_score": 0.8},
+                    "warnings": ["already_extended_intraday"],
+                    "tags": ["news"],
+                    "summary": "first",
+                    "ttl_minutes": 120,
+                }
+            ],
+        })
+        status_code, payload = handle_research_ingest_bulk({
+            "provider": "openclaw",
+            "schema_version": "v1",
+            "run_id": "cron-dup-2",
+            "generated_at": "2026-04-03T10:00:01+09:00",
+            "items": [
+                {
+                    "symbol": "005930",
+                    "market": "KR",
+                    "bucket_ts": "2026-04-03T10:00:00+09:00",
+                    "research_score": 0.60,
+                    "components": {"freshness_score": 0.9},
+                    "warnings": ["already_extended_intraday"],
+                    "tags": ["news"],
+                    "summary": "duplicate",
+                    "ttl_minutes": 120,
+                }
+            ],
+        })
+
+        self.assertEqual(200, status_code)
+        rows = store.load_research_snapshots("005930", "KR", provider="openclaw", limit=20, descending=True)
+        self.assertEqual(1, len(rows))
+
+    def test_older_bucket_does_not_override_latest(self):
+        first_at = "2026-04-03T11:00:00+09:00"
+        first_generated_at = first_at
+        older_at = "2026-04-03T09:00:00+09:00"
+        older_generated_at = older_at
+        first_bucket_utc = "2026-04-03T02:00:00+00:00"
+        handle_research_ingest_bulk({
+            "provider": "openclaw",
+            "schema_version": "v1",
+            "run_id": "cron-recent",
+            "generated_at": "2026-04-03T11:00:00+09:00",
+            "items": [
+                {
+                    "symbol": "005930",
+                    "market": "KR",
+                    "bucket_ts": first_at,
+                    "generated_at": first_generated_at,
+                    "research_score": 0.72,
+                    "components": {"freshness_score": 0.6},
+                    "warnings": ["already_extended_intraday"],
+                    "tags": ["macro"],
+                    "summary": "recent",
+                    "ttl_minutes": 120,
+                }
+            ],
+        })
+        handle_research_ingest_bulk({
+            "provider": "openclaw",
+            "schema_version": "v1",
+            "run_id": "cron-older",
+            "generated_at": "2026-04-03T09:00:00+09:00",
+            "items": [
+                {
+                    "symbol": "005930",
+                    "market": "KR",
+                    "bucket_ts": older_at,
+                    "generated_at": older_generated_at,
+                    "research_score": 0.35,
+                    "components": {"freshness_score": 0.5},
+                    "warnings": ["already_extended_intraday"],
+                    "tags": ["macro"],
+                    "summary": "older",
+                    "ttl_minutes": 120,
+                }
+            ],
+        })
+        latest = store.load_latest_research_snapshot("005930", "KR", provider="openclaw")
+
+        self.assertIsNotNone(latest)
+        self.assertEqual(first_bucket_utc, latest["bucket_ts"])
+        self.assertEqual("recent", latest["summary"])
+
+        older = store.load_research_snapshot_for_timestamp("005930", "KR", "2026-04-03T09:30:00+09:00", provider="openclaw")
+        self.assertIsNotNone(older)
+        self.assertEqual("older", older["summary"])
+
+    def test_status_flags_stale_when_any_symbol_stale(self):
+        now = datetime.datetime.now(datetime.timezone.utc).astimezone()
+        stale_timestamp = (now - datetime.timedelta(hours=3)).astimezone().isoformat()
+        fresh_timestamp = (now - datetime.timedelta(minutes=5)).astimezone().isoformat()
+
+        handle_research_ingest_bulk({
+            "provider": "openclaw",
+            "schema_version": "v1",
+            "items": [
+                {
+                    "symbol": "005930",
+                    "market": "KR",
+                    "bucket_ts": stale_timestamp,
+                    "generated_at": stale_timestamp,
+                    "research_score": 0.2,
+                    "components": {"freshness_score": 0.3},
+                    "warnings": ["already_extended_intraday"],
+                    "summary": "stale",
+                    "ttl_minutes": 30,
+                },
+                {
+                    "symbol": "035420",
+                    "market": "KR",
+                    "bucket_ts": fresh_timestamp,
+                    "generated_at": fresh_timestamp,
+                    "research_score": 0.8,
+                    "components": {"freshness_score": 0.9},
+                    "warnings": ["already_extended_intraday"],
+                    "summary": "fresh",
+                    "ttl_minutes": 120,
+                },
+            ],
+        })
+
+        status_code, status_payload = handle_research_status({"provider": ["openclaw"]})
+        self.assertEqual(200, status_code)
+        self.assertEqual("stale_ingest", status_payload["status"])
+        self.assertEqual("stale", status_payload["freshness"])
+        self.assertEqual(2, status_payload["coverage_count"])
+        self.assertEqual(1, status_payload["stale_symbol_count"])
+        self.assertEqual(1, status_payload["fresh_symbol_count"])
