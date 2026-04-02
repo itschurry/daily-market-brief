@@ -18,6 +18,7 @@ def _install_server_route_stubs() -> list[str]:
             "handle_kospi_backtest": lambda: (200, {"ok": True}),
         },
         "routes.engine": {"handle_engine_status": lambda: (200, {"ok": True})},
+        "routes.hanna": {"handle_hanna_brief": lambda date=None: (200, {"date": date, "owner": "hanna"})},
         "routes.market": {
             "handle_live_market": lambda: (200, {"ok": True}),
             "handle_stock_price": lambda code, market: (200, {"code": code, "market": market}),
@@ -130,6 +131,13 @@ class ApiServerDispatchTests(unittest.TestCase):
 
         self.assertEqual((200, {"ok": True}), result)
         mock_handler.assert_called_once_with("2026-03-20")
+
+    def test_dispatch_get_routes_hanna_brief(self):
+        with patch("server.handle_hanna_brief", return_value=(200, {"owner": "hanna"})) as mock_handler:
+            result = dispatch_get("/api/hanna/brief", {"date": ["2026-04-02"]})
+
+        self.assertEqual((200, {"owner": "hanna"}), result)
+        mock_handler.assert_called_once_with("2026-04-02")
 
     def test_dispatch_get_extracts_stock_code_and_market(self):
         with patch("server.handle_stock_price", return_value=(200, {"price": 1})) as mock_handler:

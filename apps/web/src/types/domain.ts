@@ -874,7 +874,30 @@ export interface QuantOpsActionResponse {
 
 export interface ReportsExplainResponse {
   ok?: boolean;
+  owner?: string;
+  brief_type?: string;
   generated_at?: string;
+  summary_lines?: string[];
+  migration?: {
+    backend_owner?: string;
+    legacy_source_retained?: boolean;
+    stage?: string;
+  };
+  brief?: {
+    owner?: string;
+    brief_type?: string;
+    generated_at?: string;
+    summary_lines?: string[];
+    report_reasoning?: Record<string, unknown>;
+    migration?: {
+      backend_owner?: string;
+      legacy_source_retained?: boolean;
+      stage?: string;
+    };
+    analysis?: {
+      summary_lines?: string[];
+    };
+  };
   analysis?: {
     summary_lines?: string[];
   };

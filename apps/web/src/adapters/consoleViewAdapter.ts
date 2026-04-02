@@ -152,10 +152,16 @@ function classifyMode(snapshot: ConsoleSnapshot): Pick<WatchDecisionView, 'mode'
 }
 
 export function buildTodayReportView(snapshot: ConsoleSnapshot): TodayReportView {
-  const analysisLines = (snapshot.reports.analysis?.summary_lines || [])
+  const rawBriefLines = [
+    ...(snapshot.reports.summary_lines || []),
+    ...(snapshot.reports.brief?.summary_lines || []),
+    ...(snapshot.reports.analysis?.summary_lines || []),
+  ];
+  const analysisLines = rawBriefLines
     .map((line) => line.trim())
     .filter(Boolean);
-  const hasReportContent = analysisLines.length > 0 || Boolean(snapshot.reports.generated_at);
+  const reportGeneratedAt = snapshot.reports.brief?.generated_at || snapshot.reports.generated_at;
+  const hasReportContent = analysisLines.length > 0 || Boolean(reportGeneratedAt);
   const summaryFallback = [
     '거시/수급 지표 변화를 기준으로 시장 위험도를 점검합니다.',
     '리스크 가드 상태와 허용 신호 비율을 함께 확인합니다.',
@@ -207,13 +213,13 @@ export function buildTodayReportView(snapshot: ConsoleSnapshot): TodayReportView
     },
     {
       label: '확인 기준',
-      detail: `리포트 생성 시각 ${formatDateTime(snapshot.reports.generated_at || snapshot.fetchedAt)} / 데이터 기준 시각 ${formatDateTime(snapshot.fetchedAt)}`,
+      detail: `리포트 생성 시각 ${formatDateTime(reportGeneratedAt || snapshot.fetchedAt)} / 데이터 기준 시각 ${formatDateTime(snapshot.fetchedAt)}`,
       tone: 'neutral',
     },
   ];
 
   return {
-    generatedAt: snapshot.reports.generated_at || snapshot.fetchedAt,
+    generatedAt: reportGeneratedAt || snapshot.fetchedAt,
     dataAsOf: snapshot.fetchedAt,
     statusItems: [
       {

@@ -5,6 +5,7 @@ from typing import Callable
 
 from routes.backtest import handle_backtest_run, handle_kospi_backtest
 from routes.engine import handle_engine_status
+from routes.hanna import handle_hanna_brief
 from routes.market import handle_live_market, handle_stock_price, handle_stock_search
 from routes.optimization import (
     handle_get_optimization_status,
@@ -111,6 +112,7 @@ GET_ROUTES: tuple[Route, ...] = (
     Route("/api/quant-ops/policy", lambda _path, _query: handle_get_quant_ops_policy()),
     Route("/api/reports/explain", lambda _path, query: handle_reports_explain(_query_value(query, "date") or None)),
     Route("/api/reports/index", lambda _path, _query: handle_reports_index()),
+    Route("/api/hanna/brief", lambda _path, query: handle_hanna_brief(_query_value(query, "date") or None)),
     Route("/api/strategies", lambda _path, query: handle_strategies_list(query)),
     Route("/api/strategies/", lambda path, _query: handle_strategy_detail(path), prefix=True),
     Route("/api/scanner/status", lambda _path, query: handle_scanner_status(query)),

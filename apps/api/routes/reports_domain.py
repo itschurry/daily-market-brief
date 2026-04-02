@@ -1,19 +1,26 @@
 from __future__ import annotations
 
-from routes.reports import handle_analysis, handle_reports
+from routes.hanna import handle_hanna_brief
+from routes.reports import handle_reports
 from services.strategy_engine import build_signal_book
 
 
 def handle_reports_explain(date: str | None = None) -> tuple[int, dict]:
     try:
-        status, analysis = handle_analysis(date)
+        status, brief = handle_hanna_brief(date)
         if status != 200:
-            return status, analysis
+            return status, brief
 
+        analysis = brief.get("analysis") if isinstance(brief, dict) and isinstance(brief.get("analysis"), dict) else {}
         signal_book = build_signal_book(markets=["KOSPI", "NASDAQ"], cfg={})
         return 200, {
             "ok": True,
+            "owner": brief.get("owner") if isinstance(brief, dict) else "hanna",
+            "brief_type": brief.get("brief_type") if isinstance(brief, dict) else "hanna_operator_brief_v1",
+            "migration": brief.get("migration") if isinstance(brief, dict) else {"backend_owner": "hanna"},
+            "brief": brief,
             "analysis": analysis,
+            "summary_lines": brief.get("summary_lines") if isinstance(brief, dict) else [],
             "signal_reasoning": [
                 {
                     "code": item.get("code"),
@@ -24,8 +31,8 @@ def handle_reports_explain(date: str | None = None) -> tuple[int, dict]:
                 }
                 for item in signal_book.get("signals", [])[:30]
             ],
-            "report_reasoning": analysis.get("analysis_playbook") if isinstance(analysis, dict) else {},
-            "generated_at": signal_book.get("generated_at"),
+            "report_reasoning": brief.get("report_reasoning") if isinstance(brief, dict) else (analysis.get("analysis_playbook") if isinstance(analysis, dict) else {}),
+            "generated_at": (brief.get("generated_at") if isinstance(brief, dict) else None) or signal_book.get("generated_at"),
         }
     except Exception as exc:
         return 500, {"ok": False, "error": str(exc)}
