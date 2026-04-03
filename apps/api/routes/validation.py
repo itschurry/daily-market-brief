@@ -20,8 +20,10 @@ def handle_validation_backtest(query: dict[str, list[str]]) -> tuple[int, dict]:
 
 
 def handle_validation_walk_forward(query: dict[str, list[str]]) -> tuple[int, dict]:
+    refresh = (query.get("refresh", ["0"])[0] or "0").strip() == "1"
+    cache_only = (query.get("cache_only", ["0"])[0] or "0").strip() == "1"
     try:
-        return 200, run_walk_forward_validation(query)
+        return 200, run_walk_forward_validation(query, refresh=refresh, cache_only=cache_only)
     except Exception as exc:
         return 500, {"ok": False, "error": str(exc)}
 

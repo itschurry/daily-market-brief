@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from functools import lru_cache
 from math import floor, sqrt
+from threading import RLock
 from typing import Any
 
 from market_utils import lookup_company_listing, normalize_market
@@ -217,6 +219,86 @@ _EXIT_REASON_ALIAS_TO_KEY: dict[str, str] = {}
 for _exit_reason_key, _exit_reason_meta in _EXIT_REASON_DEFINITIONS.items():
     for _alias in _exit_reason_meta.get("aliases", set()):
         _EXIT_REASON_ALIAS_TO_KEY[str(_alias).strip().lower().replace("-", "_").replace(" ", "_")] = _exit_reason_key
+
+
+_WALK_FORWARD_CACHE: dict[str, dict[str, Any]] = {}
+_WALK_FORWARD_CACHE_LOCK = RLock()
+_WALK_FORWARD_CACHE_MAX_ENTRIES = 12
+
+
+def _normalize_cache_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, tuple):
+        return [_normalize_cache_value(item) for item in value]
+    if isinstance(value, list):
+        return [_normalize_cache_value(item) for item in value]
+    if isinstance(value, set):
+        return sorted(_normalize_cache_value(item) for item in value)
+    if isinstance(value, dict):
+        return {str(key): _normalize_cache_value(value[key]) for key in sorted(value.keys(), key=str)}
+    if hasattr(value, "__dict__"):
+        return _normalize_cache_value(vars(value))
+    return str(value)
+
+
+def _extract_backtest_cache_key(base_cfg: Any) -> str:
+    try:
+        cache_service = get_backtest_service()
+        config_key_fn = getattr(cache_service, "_config_cache_key", None)
+        if callable(config_key_fn):
+            return str(config_key_fn(base_cfg))
+    except Exception:
+        pass
+
+    return json.dumps(
+        {
+            "base_cfg": _normalize_cache_value(base_cfg),
+            "markets": list(getattr(base_cfg, "markets", ())),
+            "selected_symbols": list(getattr(base_cfg, "selected_symbols", ())),
+            "lookback_days": getattr(base_cfg, "lookback_days", None),
+            "initial_cash": getattr(base_cfg, "initial_cash", None),
+            "base_currency": getattr(base_cfg, "base_currency", None),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _build_walk_forward_cache_key(query: dict[str, list[str]], *, base_cfg) -> str:
+    payload_key = {
+        "base_cfg": _extract_backtest_cache_key(base_cfg),
+        "training_days": _query_int(query, "training_days", 180, 30, 3650),
+        "validation_days": _query_int(query, "validation_days", 60, 20, 3650),
+        "walk_forward": _query_bool(query, "walk_forward", True),
+        "validation_min_trades": _query_int(query, "validation_min_trades", 8, 1, 500),
+    }
+    return json.dumps(payload_key, ensure_ascii=False, sort_keys=True)
+
+
+def _load_cached_walk_forward(cache_key: str) -> dict[str, Any] | None:
+    with _WALK_FORWARD_CACHE_LOCK:
+        payload = _WALK_FORWARD_CACHE.get(cache_key)
+        if payload is None:
+            return None
+        return dict(payload)
+
+
+def _store_cached_walk_forward(cache_key: str, payload: dict[str, Any]) -> None:
+    cached = dict(payload)
+    with _WALK_FORWARD_CACHE_LOCK:
+        _WALK_FORWARD_CACHE.pop(cache_key, None)
+        _WALK_FORWARD_CACHE[cache_key] = cached
+        if len(_WALK_FORWARD_CACHE) > _WALK_FORWARD_CACHE_MAX_ENTRIES:
+            oldest_key = next(iter(_WALK_FORWARD_CACHE))
+            if oldest_key != cache_key:
+                _WALK_FORWARD_CACHE.pop(oldest_key, None)
+
+
+def _annotate_walk_forward_source(payload: dict[str, Any], *, source: str) -> dict[str, Any]:
+    response = dict(payload)
+    response["source"] = source
+    return response
 
 
 def _normalize_exit_reason(reason: Any) -> tuple[str, str, str]:
@@ -1218,8 +1300,7 @@ def run_validation_diagnostics(query: dict[str, list[str]]) -> dict[str, Any]:
     }
 
 
-def run_walk_forward_validation(query: dict[str, list[str]]) -> dict[str, Any]:
-    base_cfg = get_backtest_service().parse_config(query)
+def _compute_walk_forward_payload(base_cfg, query: dict[str, list[str]]) -> dict[str, Any]:
     base_result = get_backtest_service().run(base_cfg)
 
     equity_curve = base_result.get("equity_curve") if isinstance(base_result.get("equity_curve"), list) else []
@@ -1377,3 +1458,26 @@ def run_walk_forward_validation(query: dict[str, list[str]]) -> dict[str, Any]:
         },
         "scorecard": oos_scorecard,
     }
+
+
+def run_walk_forward_validation(query: dict[str, list[str]], refresh: bool = False, cache_only: bool = False) -> dict[str, Any]:
+    base_cfg = get_backtest_service().parse_config(query)
+    cache_key = _build_walk_forward_cache_key(query, base_cfg=base_cfg)
+    if not refresh and cache_only:
+        cached = _load_cached_walk_forward(cache_key)
+        if cached is not None:
+            return _annotate_walk_forward_source(cached, source="cache")
+        return {
+            "ok": False,
+            "error": "validation_cache_miss",
+            "source": "walk_forward_cache_miss",
+        }
+
+    if not refresh:
+        cached = _load_cached_walk_forward(cache_key)
+        if cached is not None:
+            return _annotate_walk_forward_source(cached, source="cache")
+
+    payload = _compute_walk_forward_payload(base_cfg, query)
+    _store_cached_walk_forward(cache_key, payload)
+    return _annotate_walk_forward_source(payload, source="live")

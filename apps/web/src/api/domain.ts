@@ -38,7 +38,7 @@ function serializeValidationSettings(settings: ValidationSettings) {
   };
 }
 
-function buildValidationQueryString(query?: BacktestQuery, settings?: ValidationSettings) {
+function buildValidationQueryParams(query?: BacktestQuery, settings?: ValidationSettings) {
   const params = new URLSearchParams();
   if (query) {
     params.set('market_scope', query.market_scope);
@@ -67,6 +67,11 @@ function buildValidationQueryString(query?: BacktestQuery, settings?: Validation
     params.set('objective', settings.objective);
     params.set('runtime_candidate_source_mode', settings.runtimeCandidateSourceMode);
   }
+  return params;
+}
+
+function buildValidationQueryString(query?: BacktestQuery, settings?: ValidationSettings) {
+  const params = buildValidationQueryParams(query, settings);
   const queryString = params.toString();
   return queryString ? `?${queryString}` : '';
 }
@@ -145,6 +150,18 @@ export function fetchValidationBacktest(query?: BacktestQuery, settings?: Valida
 
 export function fetchValidationWalkForward(query?: BacktestQuery, settings?: ValidationSettings) {
   return getJSON<ValidationResponse>(`/api/validation/walk-forward${buildValidationQueryString(query, settings)}`, { noStore: true });
+}
+
+export function fetchValidationWalkForwardWithOptions(
+  query: BacktestQuery | undefined,
+  settings: ValidationSettings | undefined,
+  options?: { cacheOnly?: boolean; refresh?: boolean },
+) {
+  const params = buildValidationQueryParams(query, settings);
+  if (options?.cacheOnly) params.set('cache_only', '1');
+  if (options?.refresh) params.set('refresh', '1');
+  const queryString = params.toString();
+  return getJSON<ValidationResponse>(`/api/validation/walk-forward${queryString ? `?${queryString}` : ''}`, { noStore: true });
 }
 
 export function fetchValidationDiagnostics(query?: BacktestQuery, settings?: ValidationSettings) {

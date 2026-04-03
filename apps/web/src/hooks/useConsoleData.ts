@@ -15,7 +15,7 @@ import {
   fetchStrategies,
   fetchTodayPicks,
   fetchUniverse,
-  fetchValidationWalkForward,
+  fetchValidationWalkForwardWithOptions,
 } from '../api/domain';
 import { UI_TEXT } from '../constants/uiText';
 import type { ConsoleDataState, ConsoleSnapshot } from '../types/consoleView';
@@ -191,7 +191,7 @@ export function useConsoleData(route: ConsoleDataRoute) {
       if (key === 'performance') return fetchPerformanceSummary();
       if (key === 'portfolio') return fetchPortfolioState();
       if (key === 'research') return fetchResearchStatus();
-      if (key === 'validation') return fetchValidationWalkForward();
+      if (key === 'validation') return fetchValidationWalkForwardWithOptions(undefined, undefined, { cacheOnly: true });
       if (key === 'reports') return fetchReportsExplain();
       if (key === 'liveMarket') return fetchLiveMarket();
       if (key === 'marketContext') return fetchMarketContext();
