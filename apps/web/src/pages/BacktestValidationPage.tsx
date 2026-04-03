@@ -505,6 +505,16 @@ function quantDecisionTone(status: string | undefined): 'neutral' | 'good' | 'ba
   return 'neutral';
 }
 
+function quantOpsContextModeLabel(source: QuantOpsContext['source']) {
+  return source === 'last_backtest' ? '백테스트 직후 기준' : '저장 기준';
+}
+
+function formatMarketScopeLabel(scope: BacktestQuery['market_scope']) {
+  if (scope === 'kospi') return 'KOSPI';
+  if (scope === 'nasdaq') return 'NASDAQ';
+  return 'KOSPI+NASDAQ';
+}
+
 function quantGuardrailReasonLabel(reason: string): string {
   if (reason === 'validation_min_trades_not_met') return '거래 표본 수 부족';
   if (reason === 'oos_reliability_low') return 'OOS 신뢰도 낮음';
@@ -724,6 +734,26 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       source: 'saved',
     };
   }, [executedRun, validationStore.savedQuery, validationStore.savedSettings]);
+
+  const activeContextSummaryLines = useMemo(
+    () => formatValidationSettingsLabel(backtestReadyContext.settings, backtestReadyContext.query),
+    [backtestReadyContext],
+  );
+  const activeContextSourceLabel = useMemo(
+    () => quantOpsContextModeLabel(backtestReadyContext.source),
+    [backtestReadyContext.source],
+  );
+  const activeContextTimestamp = useMemo(
+    () => (backtestReadyContext.source === 'last_backtest'
+      ? (executedRun?.executedAt || '')
+      : (validationStore.lastSavedAt || '')
+    ),
+    [backtestReadyContext.source, executedRun?.executedAt, validationStore.lastSavedAt],
+  );
+  const activeContextMarketLine = useMemo(
+    () => formatMarketScopeLabel(backtestReadyContext.query.market_scope),
+    [backtestReadyContext.query.market_scope],
+  );
 
   const segmentTrain = validationResult.segments?.train as Record<string, unknown> | undefined;
   const segmentValidation = validationResult.segments?.validation as Record<string, unknown> | undefined;
@@ -967,6 +997,11 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       tone: validationStore.unsaved ? 'bad' : 'good',
     },
     {
+      label: '후보 기준',
+      value: activeContextSourceLabel,
+      tone: activeContextSourceLabel === '저장 기준' ? 'neutral' : 'good',
+    },
+    {
       label: '운영 후보',
       value: latestValidatedCandidate?.decision?.label || '미검증',
       tone: quantDecisionTone(latestValidatedCandidate?.decision?.status),
@@ -986,7 +1021,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       value: viewModel.reliability || '-',
       tone: viewModel.reliability === '낮음' ? 'bad' : 'neutral',
     },
-  ]), [backtestPhase, latestValidatedCandidate?.decision?.label, latestValidatedCandidate?.decision?.status, optimizationPhase, runtimeApplyState?.status, validationStore.unsaved, viewModel.reliability, workflowPayload?.symbol_summary?.approved_count]);
+  ]), [activeContextSourceLabel, backtestPhase, latestValidatedCandidate?.decision?.label, latestValidatedCandidate?.decision?.status, optimizationPhase, runtimeApplyState?.status, validationStore.unsaved, viewModel.reliability, workflowPayload?.symbol_summary?.approved_count]);
 
   const adoptionDecision = useMemo(() => {
     const oosReturn = viewModel.oosReturnPct ?? null;
@@ -2543,6 +2578,15 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   <div className="summary-rail-item">{savedSettingsSummaryLines[1]}</div>
                   <div className="summary-rail-item">{savedSettingsSummaryLines[2]}</div>
                   <div className="summary-rail-item">마지막 서버 저장 · {validationStore.lastSavedAt ? formatDateTime(validationStore.lastSavedAt) : '없음'}</div>
+                </div>
+
+                <div className="summary-rail is-compact" style={{ marginTop: 8 }}>
+                  <div className="summary-rail-item"><strong>현재 후보 기준</strong> · {activeContextSourceLabel} · {activeContextTimestamp ? formatDateTime(activeContextTimestamp) : '기준 시각 없음'}</div>
+                  <div className="summary-rail-item">시장 {activeContextMarketLine} · 기간 {backtestReadyContext.query.lookback_days}일</div>
+                  <div className="summary-rail-item">{activeContextSummaryLines[0]}</div>
+                  <div className="summary-rail-item">{activeContextSummaryLines[1]}</div>
+                  <div className="summary-rail-item">{activeContextSummaryLines[2]}</div>
+                  <div className="summary-rail-item">{activeContextSummaryLines[3]}</div>
                 </div>
 
                 {executedRun && (
