@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchEngineStatus,
+  fetchHannaBrief,
+  fetchLiveMarket,
+  fetchMacroLatest,
+  fetchMarketContext,
   fetchPerformanceSummary,
+  fetchPortfolioState,
+  fetchRecommendations,
   fetchReportsExplain,
   fetchResearchStatus,
   fetchScannerStatus,
   fetchSignals,
   fetchStrategies,
+  fetchTodayPicks,
   fetchUniverse,
   fetchValidationWalkForward,
 } from '../api/domain';
@@ -47,6 +54,12 @@ function emptySnapshot(): ConsoleSnapshot {
     research: {},
     validation: {},
     reports: {},
+    liveMarket: {},
+    marketContext: {},
+    todayPicks: {},
+    recommendations: {},
+    macro: {},
+    hannaBrief: {},
     fetchedAt: nowIso,
   };
 }
@@ -55,29 +68,29 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
   if (route.section === 'home') {
     return {
       signalLimit: 40,
-      initialTargets: ['engine', 'signals', 'research'],
-      fastTargets: ['engine'],
-      midTargets: ['signals'],
-      slowTargets: ['research'],
+      initialTargets: ['engine', 'signals', 'research', 'portfolio', 'liveMarket'],
+      fastTargets: ['engine', 'liveMarket'],
+      midTargets: ['signals', 'portfolio'],
+      slowTargets: ['research', 'marketContext'],
     };
   }
 
   if (route.section === 'reports') {
     return {
       signalLimit: 80,
-      initialTargets: ['engine', 'signals', 'validation', 'reports', 'research'],
+      initialTargets: ['engine', 'signals', 'validation', 'reports', 'research', 'todayPicks', 'hannaBrief'],
       fastTargets: ['engine'],
       midTargets: ['signals'],
-      slowTargets: ['validation', 'reports', 'research'],
+      slowTargets: ['validation', 'reports', 'research', 'todayPicks', 'recommendations', 'macro', 'hannaBrief'],
     };
   }
 
   if (route.consoleTab === 'orders') {
     return {
       signalLimit: 0,
-      initialTargets: ['engine', 'research'],
+      initialTargets: ['engine', 'research', 'portfolio'],
       fastTargets: ['engine'],
-      midTargets: ['research'],
+      midTargets: ['research', 'portfolio'],
       slowTargets: [],
     };
   }
@@ -119,6 +132,16 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
       fastTargets: ['engine'],
       midTargets: ['performance'],
       slowTargets: ['research'],
+    };
+  }
+
+  if (route.consoleTab === 'watchlist' || route.consoleTab === 'research') {
+    return {
+      signalLimit: 0,
+      initialTargets: ['engine'],
+      fastTargets: ['engine'],
+      midTargets: [],
+      slowTargets: [],
     };
   }
 
@@ -166,9 +189,16 @@ export function useConsoleData(route: ConsoleDataRoute) {
       if (key === 'scanner') return fetchScannerStatus(scannerRefresh);
       if (key === 'universe') return fetchUniverse();
       if (key === 'performance') return fetchPerformanceSummary();
+      if (key === 'portfolio') return fetchPortfolioState();
       if (key === 'research') return fetchResearchStatus();
       if (key === 'validation') return fetchValidationWalkForward();
       if (key === 'reports') return fetchReportsExplain();
+      if (key === 'liveMarket') return fetchLiveMarket();
+      if (key === 'marketContext') return fetchMarketContext();
+      if (key === 'todayPicks') return fetchTodayPicks();
+      if (key === 'recommendations') return fetchRecommendations();
+      if (key === 'macro') return fetchMacroLatest();
+      if (key === 'hannaBrief') return fetchHannaBrief();
       return Promise.resolve({});
     });
     const results = await Promise.allSettled(tasks);

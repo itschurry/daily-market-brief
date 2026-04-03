@@ -1,13 +1,19 @@
 import type {
   DomainSignal,
   EngineStatusResponse,
+  HannaBriefResponse,
+  LiveMarketResponse,
+  MacroLatestResponse,
+  MarketContextResponse,
   PerformanceSummaryResponse,
   PortfolioStateResponse,
+  RecommendationsResponse,
   ResearchStatusResponse,
   ReportsExplainResponse,
   ScannerStatusResponse,
   SignalsRankResponse,
   StrategiesResponse,
+  TodayPicksResponse,
   UniverseResponse,
   ValidationResponse,
 } from './domain';
@@ -23,6 +29,12 @@ export interface ConsoleSnapshot {
   research: ResearchStatusResponse;
   validation: ValidationResponse;
   reports: ReportsExplainResponse;
+  liveMarket: LiveMarketResponse;
+  marketContext: MarketContextResponse;
+  todayPicks: TodayPicksResponse;
+  recommendations: RecommendationsResponse;
+  macro: MacroLatestResponse;
+  hannaBrief: HannaBriefResponse;
   fetchedAt: string;
 }
 

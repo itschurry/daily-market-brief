@@ -8,6 +8,8 @@ import { ReportsPage } from './pages/ReportsPage';
 import { ScannerPage } from './pages/ScannerPage';
 import { StrategiesPage } from './pages/StrategiesPage';
 import { UniversePage } from './pages/UniversePage';
+import { ResearchSnapshotsPage } from './pages/ResearchSnapshotsPage';
+import { WatchlistPage } from './pages/WatchlistPage';
 import { WealthPulseHomePage } from './pages/WealthPulseHomePage';
 import type { ConsoleTab, ReportTab, TopSection } from './types/navigation';
 
@@ -24,6 +26,8 @@ const CONSOLE_TABS: Array<{ id: Exclude<ConsoleTab, 'validation'>; label: string
   { id: 'orders', label: UI_TEXT.consoleTabs.orders, path: '/console/orders', hint: '주문 상태와 리스크 거절 사유' },
   { id: 'universe', label: UI_TEXT.consoleTabs.universe, path: '/console/universe', hint: '규칙별 종목군과 변경 내역' },
   { id: 'performance', label: UI_TEXT.consoleTabs.performance, path: '/console/performance', hint: '연구 성과와 운용 성과 분리' },
+  { id: 'watchlist', label: '관심 종목', path: '/console/watchlist', hint: '종목 추가·관리·분석' },
+  { id: 'research', label: '리서치 스냅샷', path: '/console/research', hint: 'Hanna 점수 이력 조회' },
 ];
 
 const REPORT_TABS: Array<{ id: ReportTab; label: string; path: string; hint: string }> = [
@@ -321,6 +325,8 @@ export default function App() {
           {route.section === 'console' && route.consoleTab === 'universe' && <UniversePage {...sharedProps} />}
           {route.section === 'console' && route.consoleTab === 'performance' && <PerformancePage {...sharedProps} />}
           {route.section === 'console' && route.consoleTab === 'validation' && <BacktestValidationPage {...sharedProps} />}
+          {route.section === 'console' && route.consoleTab === 'watchlist' && <WatchlistPage {...sharedProps} />}
+          {route.section === 'console' && route.consoleTab === 'research' && <ResearchSnapshotsPage {...sharedProps} />}
           {route.section === 'reports' && (
             <ReportsPage
               {...sharedProps}

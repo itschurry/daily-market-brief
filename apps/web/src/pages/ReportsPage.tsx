@@ -374,6 +374,79 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
           </div>
         </div>
       </div>
+
+      {(snapshot.todayPicks.picks || []).length > 0 && (
+        <div className="page-section" style={{ padding: 16 }}>
+          <div className="section-head-row">
+            <div>
+              <div className="section-title">오늘 추천 종목</div>
+              <div className="section-copy">장세 {snapshot.todayPicks.market_tone || '-'} · {formatDateTime(snapshot.todayPicks.generated_at)}</div>
+            </div>
+            <div className="inline-badge">{formatCount((snapshot.todayPicks.picks || []).length, '개')}</div>
+          </div>
+          <div className="operator-note-grid" style={{ marginTop: 10 }}>
+            {(snapshot.todayPicks.picks || []).slice(0, 6).map((pick, i) => (
+              <div key={`pick-${i}`} className="operator-note-card">
+                <div className="operator-note-label">{pick.name || pick.code || '-'} {pick.code ? `(${pick.code})` : ''}</div>
+                <div className="operator-note-copy">{pick.market || '-'} · {pick.signal_label || '-'}</div>
+                {pick.expected_value != null && <div className="operator-note-copy">EV {formatNumber(pick.expected_value, 2)} · 승률 {formatPercent((pick.win_probability || 0) * 100, 1)}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {snapshot.hannaBrief.summary_lines && snapshot.hannaBrief.summary_lines.length > 0 && (
+        <div className="page-section" style={{ padding: 16 }}>
+          <div className="section-head-row">
+            <div>
+              <div className="section-title">Hanna 브리프</div>
+              <div className="section-copy">{formatDateTime(snapshot.hannaBrief.generated_at)}</div>
+            </div>
+            {snapshot.hannaBrief.report_reasoning?.stance && (
+              <span className="inline-badge">{snapshot.hannaBrief.report_reasoning.stance}</span>
+            )}
+          </div>
+          <div className="report-brief-list is-compact" style={{ marginTop: 10 }}>
+            {renderIndexedBriefItems(snapshot.hannaBrief.summary_lines, 'hanna')}
+          </div>
+          {(snapshot.hannaBrief.report_reasoning?.guard_reasons || []).length > 0 && (
+            <div className="detail-list" style={{ marginTop: 10 }}>
+              {(snapshot.hannaBrief.report_reasoning?.guard_reasons || []).map((reason, i) => (
+                <div key={i} className="detail-row"><span className="detail-label">가드</span><span className="detail-value">{reason}</span></div>
+              ))}
+            </div>
+          )}
+          {(snapshot.hannaBrief.report_reasoning?.context_risks || []).length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              {(snapshot.hannaBrief.report_reasoning?.context_risks || []).map((risk, i) => (
+                <div key={i} className="wealth-list-copy" style={{ marginTop: 4 }}>· {risk}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {snapshot.macro && Object.keys(snapshot.macro).filter((k) => k !== 'generated_at' && k !== 'error').length > 0 && (
+        <div className="page-section" style={{ padding: 16 }}>
+          <div className="section-head-row">
+            <div>
+              <div className="section-title">거시지표</div>
+              <div className="section-copy">{formatDateTime(snapshot.macro.generated_at as string | undefined)}</div>
+            </div>
+          </div>
+          <div className="detail-list" style={{ marginTop: 10 }}>
+            {Object.entries(snapshot.macro)
+              .filter(([k, v]) => k !== 'generated_at' && k !== 'error' && (typeof v === 'string' || typeof v === 'number'))
+              .map(([k, v]) => (
+                <div key={k} className="detail-row">
+                  <span className="detail-label">{k}</span>
+                  <span className="detail-value">{String(v)}</span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

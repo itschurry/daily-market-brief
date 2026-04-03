@@ -1,21 +1,32 @@
 import { getJSON, postJSON } from './client';
 import type {
   EngineStatusResponse,
+  HannaBriefResponse,
+  LiveMarketResponse,
+  MacroLatestResponse,
+  MarketContextResponse,
   PerformanceSummaryResponse,
   PortfolioStateResponse,
   QuantOpsActionResponse,
   PersistedValidationSettingsResponse,
   QuantOpsGuardrailPolicyResponse,
   QuantOpsWorkflowResponse,
+  RecommendationsResponse,
+  ResearchSnapshotLatestResponse,
   ResearchSnapshotsResponse,
   ResearchStatusResponse,
   ReportsExplainResponse,
   ScannerStatusResponse,
   SignalsRankResponse,
   StrategiesResponse,
+  TodayPicksResponse,
   UniverseResponse,
   ValidationDiagnosticsResponse,
   ValidationResponse,
+  WatchlistActionsResponse,
+  WatchlistItem,
+  WatchlistResponse,
+  StockSearchResponse,
 } from '../types/domain';
 import type { BacktestQuery } from '../types';
 import type { ValidationSettings } from '../hooks/useValidationSettingsStore';
@@ -189,4 +200,56 @@ export function applyQuantOpsRuntime(candidateId?: string) {
 
 export function fetchReportsExplain() {
   return getJSON<ReportsExplainResponse>('/api/reports/explain', { noStore: true });
+}
+
+export function fetchLiveMarket() {
+  return getJSON<LiveMarketResponse>('/api/live-market', { noStore: true });
+}
+
+export function fetchMarketContext() {
+  return getJSON<MarketContextResponse>('/api/market-context/latest', { noStore: true });
+}
+
+export function fetchTodayPicks(date?: string) {
+  const qs = date ? `?date=${encodeURIComponent(date)}` : '';
+  return getJSON<TodayPicksResponse>(`/api/today-picks${qs}`, { noStore: true });
+}
+
+export function fetchRecommendations(date?: string) {
+  const qs = date ? `?date=${encodeURIComponent(date)}` : '';
+  return getJSON<RecommendationsResponse>(`/api/recommendations${qs}`, { noStore: true });
+}
+
+export function fetchMacroLatest() {
+  return getJSON<MacroLatestResponse>('/api/macro/latest', { noStore: true });
+}
+
+export function fetchHannaBrief(date?: string) {
+  const qs = date ? `?date=${encodeURIComponent(date)}` : '';
+  return getJSON<HannaBriefResponse>(`/api/hanna/brief${qs}`, { noStore: true });
+}
+
+export function fetchReportsIndex() {
+  return getJSON<{ dates?: string[] }>('/api/reports/index', { noStore: true });
+}
+
+export function fetchWatchlist() {
+  return getJSON<WatchlistResponse>('/api/watchlist', { noStore: true });
+}
+
+export function saveWatchlist(items: WatchlistItem[]) {
+  return postJSON<WatchlistResponse>('/api/watchlist/save', { items });
+}
+
+export function fetchWatchlistActions(items: WatchlistItem[]) {
+  return postJSON<WatchlistActionsResponse>('/api/watchlist-actions', { items });
+}
+
+export function searchStocks(query: string) {
+  return getJSON<StockSearchResponse>(`/api/stock-search?q=${encodeURIComponent(query)}`, { noStore: true });
+}
+
+export function fetchResearchSnapshotLatest(params: { symbol: string; market: string }) {
+  const query = new URLSearchParams({ symbol: params.symbol, market: params.market });
+  return getJSON<ResearchSnapshotLatestResponse>(`/api/research/snapshots/latest?${query.toString()}`, { noStore: true });
 }

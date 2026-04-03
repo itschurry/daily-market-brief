@@ -123,6 +123,19 @@ export function WealthPulseHomePage({
   const riskGuardAllowed = Boolean(riskGuard.entry_allowed);
   const riskReasons = riskGuard.reasons || [];
 
+  const liveMarket = snapshot.liveMarket || {};
+  const marketCtx = snapshot.marketContext || {};
+
+  function formatPct(value: number | undefined): string {
+    if (value == null) return '-';
+    const sign = value >= 0 ? '▲' : '▼';
+    return `${sign}${Math.abs(value).toFixed(2)}%`;
+  }
+  function pctTone(value: number | undefined): string {
+    if (value == null) return '';
+    return value >= 0 ? 'is-up' : 'is-down';
+  }
+
   return (
     <div className="app-shell">
       <div className="page-frame">
@@ -141,6 +154,31 @@ export function WealthPulseHomePage({
               <button className="ghost-button" onClick={onGoReports}>리포트 열기</button>
             </div>
             {!!errorMessage && <div className="wealth-home-error">{errorMessage}</div>}
+          </section>
+
+          <section className="page-section" style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', padding: '12px 16px' }}>
+            {[
+              { label: 'KOSPI', price: liveMarket.kospi, pct: liveMarket.kospi_pct },
+              { label: 'KOSDAQ', price: liveMarket.kosdaq, pct: liveMarket.kosdaq_pct },
+              { label: 'NASDAQ', price: liveMarket.nasdaq, pct: liveMarket.nasdaq_pct },
+              { label: 'S&P100', price: liveMarket.sp100, pct: liveMarket.sp100_pct },
+              { label: 'WTI', price: liveMarket.wti, pct: liveMarket.wti_pct },
+            ].map((item) => (
+              <div key={item.label} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 600 }}>{item.label}</span>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>{item.price != null ? formatNumber(item.price, 2) : '-'}</span>
+                <span className={pctTone(item.pct)} style={{ fontSize: 12 }}>{formatPct(item.pct)}</span>
+              </div>
+            ))}
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--text-3)', fontWeight: 600 }}>USD/KRW</span>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>{liveMarket.usd_krw != null ? formatNumber(liveMarket.usd_krw, 0) : '-'}</span>
+            </div>
+            {liveMarket.updated_at && (
+              <span className="wealth-home-muted" style={{ marginLeft: 'auto', fontSize: 11 }}>
+                시세 {liveMarket.updated_at}
+              </span>
+            )}
           </section>
 
           <section className="wealth-kpi-grid">
@@ -281,6 +319,34 @@ export function WealthPulseHomePage({
               </div>
             </article>
           </section>
+
+          {(marketCtx.regime || marketCtx.summary) && (
+            <section className="wealth-grid-2">
+              <article className="page-section">
+                <div className="section-title">시장 컨텍스트</div>
+                <div className="detail-list" style={{ marginTop: 8 }}>
+                  {marketCtx.regime && <div className="detail-row"><span className="detail-label">장세</span><span className="detail-value">{marketCtx.regime}</span></div>}
+                  {marketCtx.risk_level && <div className="detail-row"><span className="detail-label">위험도</span><span className="detail-value">{marketCtx.risk_level}</span></div>}
+                  {marketCtx.inflation_signal && <div className="detail-row"><span className="detail-label">인플레이션</span><span className="detail-value">{marketCtx.inflation_signal}</span></div>}
+                  {marketCtx.policy_signal && <div className="detail-row"><span className="detail-label">정책</span><span className="detail-value">{marketCtx.policy_signal}</span></div>}
+                  {marketCtx.dollar_signal && <div className="detail-row"><span className="detail-label">달러</span><span className="detail-value">{marketCtx.dollar_signal}</span></div>}
+                </div>
+              </article>
+              {marketCtx.summary && (
+                <article className="page-section">
+                  <div className="section-title">시장 요약</div>
+                  <div className="section-copy" style={{ marginTop: 8, lineHeight: 1.6 }}>{marketCtx.summary}</div>
+                  {(marketCtx.risks || []).length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      {(marketCtx.risks || []).map((risk, i) => (
+                        <div key={i} className="wealth-list-copy" style={{ marginTop: 4 }}>· {risk}</div>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              )}
+            </section>
+          )}
 
           {loading && <div className="wealth-home-muted">{UI_TEXT.common.loading}</div>}
         </div>

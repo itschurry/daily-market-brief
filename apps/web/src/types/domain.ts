@@ -944,10 +944,142 @@ export interface ReportsExplainResponse {
   analysis?: {
     summary_lines?: string[];
   };
-  signal_reasoning?: Array<{
-    code?: string;
-    strategy_type?: string;
-    entry_allowed?: boolean;
-    reason_codes?: string[];
-  }>;
+}
+
+export interface LiveMarketResponse {
+  kospi?: number;
+  kospi_pct?: number;
+  kosdaq?: number;
+  kosdaq_pct?: number;
+  usd_krw?: number;
+  nasdaq?: number;
+  nasdaq_pct?: number;
+  sp100?: number;
+  sp100_pct?: number;
+  wti?: number;
+  wti_pct?: number;
+  updated_at?: string;
+}
+
+export interface MarketContextResponse {
+  regime?: string;
+  risk_level?: string;
+  risks?: string[];
+  summary?: string;
+  inflation_signal?: string;
+  labor_signal?: string;
+  policy_signal?: string;
+  yield_curve_signal?: string;
+  dollar_signal?: string;
+}
+
+export interface TodayPickItem {
+  code?: string;
+  name?: string;
+  market?: string;
+  signal_label?: string;
+  expected_value?: number;
+  win_probability?: number;
+  score?: number;
+}
+
+export interface TodayPicksResponse {
+  generated_at?: string;
+  picks?: TodayPickItem[];
+  auto_candidates?: TodayPickItem[];
+  market_tone?: string;
+}
+
+export interface RecommendationItem {
+  code?: string;
+  name?: string;
+  market?: string;
+  sector?: string;
+  ev_label?: string;
+  signal_label?: string;
+  regime?: string;
+  risk_level?: string;
+  recommendation_reason?: string;
+  confidence?: string;
+}
+
+export interface RecommendationsResponse {
+  generated_at?: string;
+  recommendations?: RecommendationItem[];
+  rejected_candidates?: RecommendationItem[];
+  risk_guard_state?: Record<string, unknown>;
+  regime?: string;
+  risk_level?: string;
+}
+
+export interface MacroLatestResponse {
+  generated_at?: string;
+  [key: string]: unknown;
+}
+
+export interface HannaBriefResponse {
+  date?: string;
+  generated_at?: string;
+  summary_lines?: string[];
+  source?: string;
+  report_reasoning?: {
+    regime?: string;
+    risk_level?: string;
+    stance?: string;
+    guard_reasons?: string[];
+    context_risks?: string[];
+  };
+}
+
+export interface WatchlistItem {
+  code: string;
+  name: string;
+  market: string;
+  price?: number;
+  change_pct?: number;
+}
+
+export interface WatchlistResponse {
+  items?: WatchlistItem[];
+  ok?: boolean;
+  error?: string;
+}
+
+export interface StockSearchResult {
+  name: string;
+  code: string;
+  market: string;
+}
+
+export interface StockSearchResponse {
+  results?: StockSearchResult[];
+}
+
+export interface WatchlistActionItem extends WatchlistItem {
+  technicals?: Record<string, unknown>;
+  investor_flow?: Record<string, unknown>;
+}
+
+export interface WatchlistAction {
+  code?: string;
+  name?: string;
+  market?: string;
+  action?: string;
+  reason?: string;
+  confidence?: string;
+}
+
+export interface WatchlistActionsResponse {
+  items?: WatchlistActionItem[];
+  actions?: WatchlistAction[];
+  error?: string;
+}
+
+export interface ResearchSnapshotLatestResponse {
+  ok?: boolean;
+  provider?: string;
+  symbol?: string;
+  market?: string;
+  snapshot?: ResearchSnapshotItem;
+  error?: string;
 }
