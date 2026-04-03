@@ -748,10 +748,24 @@ def _candidate_decision(
             near_miss_metrics = [metric for metric, passed in threshold_checks if not passed]
             min_near_miss = _to_int(limited_thresholds.get("min_near_miss_count"), 1)
             max_near_miss = _to_int(limited_thresholds.get("max_near_miss_count"), 2)
+            medium_quality_override = (
+                limited_core_pass
+                and len(near_miss_metrics) == 0
+                and reliability == "medium"
+                and oos_return > 0.0
+                and profit_factor >= _to_float(limited_thresholds.get("min_profit_factor"), 1.0)
+                and abs(max_drawdown_pct) <= _to_float(limited_thresholds.get("max_drawdown_pct"), 25.0)
+                and expected_shortfall >= _to_float(limited_thresholds.get("min_expected_shortfall_5_pct"), -16.0)
+            )
             if limited_core_pass and min_near_miss <= len(near_miss_metrics) <= max_near_miss:
                 decision_status = "limited_adopt"
                 decision_label = "제한 채택 후보"
                 summary = "핵심 품질 게이트는 통과했지만 일부 위험 지표가 풀채택 기준에 근접 미달이라 제한 운영으로만 반영할 수 있습니다."
+                approval_level = "probationary"
+            elif medium_quality_override:
+                decision_status = "limited_adopt"
+                decision_label = "제한 채택 후보"
+                summary = "중간 신뢰도 후보지만 수익·표본·낙폭·테일리스크 조건이 충분히 양호해서 제한 운영 후보로 승격합니다."
                 approval_level = "probationary"
             else:
                 decision_status = "hold"

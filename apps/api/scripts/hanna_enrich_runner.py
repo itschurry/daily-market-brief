@@ -67,20 +67,7 @@ def _score_target(item: dict[str, Any]) -> tuple[float, dict[str, float], list[s
     research_score = round(max(0.05, min(0.95, weighted)), 2)
 
     warnings: list[str] = []
-    if not snapshot_exists:
-        warnings.append("snapshot_missing")
-    elif not snapshot_fresh:
-        warnings.append("snapshot_stale")
-    else:
-        warnings.append("snapshot_refresh_requested")
-
-    tags = [
-        f"market:{market.lower() or 'unknown'}",
-        f"strategy:{strategy_name.lower().replace(' ', '_')}",
-        f"action:{final_action or 'unknown'}",
-    ]
-    if rank <= 10:
-        tags.append("top_rank_candidate")
+    tags: list[str] = []
 
     summary = (
         f"{name}는 {_market_label(market)} scanner 후보야. "
@@ -115,7 +102,7 @@ def _build_ingest_payload(items: list[dict[str, Any]], provider: str) -> dict[st
                 "bucket_ts": bucket_ts,
                 "generated_at": generated_at,
                 "research_score": research_score,
-                "components": components,
+                "components": {"freshness_score": components.get("freshness_score", 0.5)},
                 "warnings": warnings,
                 "tags": tags,
                 "summary": summary,
