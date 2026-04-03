@@ -148,6 +148,94 @@ class RuntimeValidationGateTests(unittest.TestCase):
 
 
 class StrategyEngineRuntimePathTests(unittest.TestCase):
+    def test_build_signal_book_attaches_layer_c_metadata_for_runtime_candidates(self):
+        candidate = {
+            "code": "000810",
+            "name": "삼성화재",
+            "market": "KOSPI",
+            "sector": "보험",
+            "score": 33.02,
+            "confidence": 50.0,
+            "price": 445000.0,
+            "technical_snapshot": {
+                "current_price": 445000.0,
+                "volume_ratio": 1.0,
+                "atr14_pct": 0.8,
+            },
+            "reasons": ["volume_breakout"],
+            "gate_status": "passed",
+            "gate_reasons": [],
+            "ai_thesis": "runtime quant validated candidate",
+        }
+        optimized_payload = {
+            "validation_baseline": {
+                "trade_count": 61,
+                "validation_trades": 61,
+                "validation_sharpe": 0.4,
+                "max_drawdown_pct": -7.28,
+                "strategy_reliability": "high",
+                "reliability_reason": "validated_candidate",
+                "passes_minimum_gate": True,
+                "is_reliable": True,
+                "stop_loss_pct": 11.0,
+                "composite_score": 3.77,
+            },
+            "per_symbol": {},
+        }
+
+        with patch.object(strategy_svc, "collect_pick_candidates", return_value=[candidate]), \
+             patch.object(strategy_svc, "_context_snapshot", return_value=("neutral", "중간")), \
+             patch.object(strategy_svc, "_load_optimized_params", return_value=optimized_payload), \
+             patch.object(strategy_svc, "build_risk_guard_state", return_value={"entry_allowed": True, "reasons": []}), \
+             patch.object(strategy_svc, "determine_strategy_type", return_value="mean-reversion"), \
+             patch.object(strategy_svc, "allocator_weight", return_value={"enabled": True}), \
+             patch.object(
+                 strategy_svc,
+                 "compute_ev_metrics",
+                 return_value={
+                     "expected_value": 1.2023,
+                     "reliability": "high",
+                     "reliability_detail": {
+                         "label": "high",
+                         "reason": "validated_candidate",
+                         "passes_minimum_gate": True,
+                         "is_reliable": True,
+                     },
+                     "calibration": {},
+                 },
+             ), \
+             patch.object(strategy_svc, "recommend_position_size", return_value={"quantity": 1, "reason": "ok"}), \
+             patch.object(
+                 strategy_svc,
+                 "build_layer_c_snapshot",
+                 return_value={
+                     "layer": "C",
+                     "provider": "openclaw",
+                     "provider_status": "healthy",
+                     "research_unavailable": False,
+                     "research_score": 0.68,
+                     "components": {"freshness_score": 0.96},
+                     "warnings": ["already_extended_intraday"],
+                     "tags": ["insurance"],
+                     "summary": "layer c attached",
+                     "ttl_minutes": 120,
+                     "generated_at": "2026-04-03T10:31:00+09:00",
+                 },
+             ):
+            book = strategy_svc.build_signal_book(
+                markets=["KOSPI"],
+                cfg={},
+                account={"equity_krw": 25_223_000, "cash_krw": 10_000_000, "orders": [], "positions": [], "fx_rate": 1522.3},
+            )
+
+        signal = book["signals"][0]
+        self.assertEqual("openclaw", signal["candidate_research_source"])
+        self.assertEqual("healthy", signal["research_status"])
+        self.assertFalse(signal["research_unavailable"])
+        self.assertAlmostEqual(0.68, signal["research_score"])
+        self.assertIsInstance(signal["layer_events"], list)
+        self.assertTrue(any(item.get("layer") == "C" for item in signal["layer_events"]))
+
     def test_build_signal_book_falls_back_to_global_validation_when_symbol_overlay_is_unreliable(self):
         candidate = {
             "code": "000810",

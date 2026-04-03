@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from helpers import _now_iso
 from routes.reports import _get_market_context
+from services.live_layers import build_layer_c_snapshot, build_layer_d_snapshot, build_layer_e_snapshot, build_layer_events
 from services.live_signal_engine import build_live_signal_book
 from services.optimized_params_store import load_execution_optimized_params
 from services.reliability_policy import should_apply_symbol_overlay
@@ -136,30 +138,89 @@ def _build_signal_from_candidate(
     risk_inputs = _risk_inputs_for_candidate(candidate, optimized_payload, cfg)
     risk_guard_state = build_risk_guard_state(candidate=candidate, cfg=cfg, account=account)
     ev_metrics = compute_ev_metrics(candidate=candidate, validation_snapshot=validation_snapshot, cfg=cfg)
+    normalized_market = str(candidate.get("market") or market).upper()
+    technical_snapshot = candidate.get("technical_snapshot") if isinstance(candidate.get("technical_snapshot"), dict) else {}
+    reasons = [str(item) for item in (candidate.get("reasons") or []) if str(item)]
+    signal_state = str(candidate.get("signal_state") or "entry")
+    timestamp = _now_iso()
+
     size_recommendation = recommend_position_size(
         account=account,
-        market=str(candidate.get("market") or market),
+        market=normalized_market,
         unit_price_local=_to_float(
             candidate.get("price"),
-            _to_float((candidate.get("technical_snapshot") or {}).get("current_price"), 0.0),
+            _to_float(technical_snapshot.get("current_price"), 0.0),
         ),
         stop_loss_pct=_to_float(risk_inputs.get("stop_loss_pct"), 5.0),
         expected_value=_to_float(ev_metrics.get("expected_value"), 0.0),
         reliability=str(ev_metrics.get("reliability") or validation_snapshot.get("strategy_reliability") or "insufficient"),
         risk_guard_state=risk_guard_state,
         cfg=cfg,
-        symbol_key=f"{str(candidate.get('market') or market).upper()}:{str(candidate.get('code') or '').upper()}",
+        symbol_key=f"{normalized_market}:{str(candidate.get('code') or '').upper()}",
         sector=str(candidate.get("sector") or "미분류"),
     )
-    entry_allowed = bool(risk_guard_state.get("entry_allowed", True)) and str(candidate.get("gate_status") or "passed") == "passed"
+    gate_passed = str(candidate.get("gate_status") or "passed") == "passed"
+    entry_allowed = bool(risk_guard_state.get("entry_allowed", True)) and gate_passed
+    risk_check = {
+        "passed": gate_passed,
+        "reason_code": "OK" if gate_passed else str(candidate.get("gate_status") or "blocked"),
+        "message": ", ".join([str(item) for item in (candidate.get("gate_reasons") or []) if str(item)]) or "candidate_policy",
+        "checks": [],
+    }
+
+    layer_c = build_layer_c_snapshot(
+        symbol=str(candidate.get("code") or "").upper(),
+        market=normalized_market,
+        timestamp=timestamp,
+        strategy={
+            "strategy_id": determine_strategy_type(candidate),
+            "market": normalized_market,
+            "universe_rule": candidate.get("candidate_source_detail") or candidate.get("source") or "runtime_candidate_pool",
+        },
+        score=_to_float(candidate.get("score"), 0.0),
+        reasons=reasons,
+        technical_snapshot=technical_snapshot,
+    )
+    layer_d = build_layer_d_snapshot(
+        risk_check=risk_check,
+        size_recommendation=size_recommendation,
+        risk_guard_state=risk_guard_state,
+        research=layer_c,
+    )
+    layer_e = build_layer_e_snapshot(
+        signal_state=signal_state,
+        quant_score=_to_float(candidate.get("score"), 0.0),
+        research=layer_c,
+        risk=layer_d,
+        timestamp=timestamp,
+        source_context={"strategy_id": determine_strategy_type(candidate), "symbol": str(candidate.get("code") or "").upper(), "market": normalized_market},
+    )
+    layer_events = build_layer_events(
+        layer_a={"layer": "A", "market": normalized_market, "source": "strategy_engine_candidate_pool"},
+        layer_b={
+            "layer": "B",
+            "quant_score": round(_to_float(candidate.get("score"), 0.0) / 100.0, 4),
+            "signal_state": signal_state,
+            "quant_tags": reasons,
+            "technical_snapshot": {
+                "current_price": technical_snapshot.get("current_price") or technical_snapshot.get("close"),
+                "volume_ratio": technical_snapshot.get("volume_ratio"),
+                "rsi14": technical_snapshot.get("rsi14"),
+                "atr14_pct": technical_snapshot.get("atr14_pct"),
+            },
+        },
+        layer_c=layer_c,
+        layer_d=layer_d,
+        layer_e=layer_e,
+    )
 
     return {
         **candidate,
-        "market": str(candidate.get("market") or market).upper(),
-        "signal_state": str(candidate.get("signal_state") or "entry"),
+        "market": normalized_market,
+        "signal_state": signal_state,
         "entry_intent": True,
         "exit_intent": False,
-        "entry_allowed": entry_allowed,
+        "entry_allowed": entry_allowed and layer_e.get("final_action") == "review_for_entry",
         "validation_snapshot": validation_snapshot,
         "risk_inputs": risk_inputs,
         "risk_guard_state": risk_guard_state,
@@ -171,6 +232,18 @@ def _build_signal_from_candidate(
             "liquidity_gate_status": "ok" if entry_allowed else "blocked",
             **(candidate.get("execution_realism") if isinstance(candidate.get("execution_realism"), dict) else {}),
         },
+        "candidate_runtime_source_mode": str(candidate.get("candidate_runtime_source_mode") or cfg.get("runtime_candidate_source_mode") or "quant_only"),
+        "candidate_research_source": layer_c.get("provider"),
+        "research_status": layer_c.get("provider_status"),
+        "research_unavailable": layer_c.get("research_unavailable"),
+        "research_score": layer_c.get("research_score"),
+        "final_action": layer_e.get("final_action"),
+        "final_action_snapshot": layer_e,
+        "layer_c": layer_c,
+        "layer_d": layer_d,
+        "layer_e": layer_e,
+        "layer_events": layer_events,
+        "fetched_at": timestamp,
     }
 
 
