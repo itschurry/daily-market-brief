@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 import os
 import stat
+
+from services.json_utils import json_dump_text, read_json_file_cached
 
 
 
@@ -23,7 +24,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     try:
         if not path.exists():
             return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = read_json_file_cached(path)
         return payload if isinstance(payload, dict) else None
     except Exception:
         return None
@@ -111,7 +112,7 @@ def _normalize_owner_and_mode(path: Path, *, mode: int = 0o664) -> None:
 def write_runtime_optimized_params(payload: dict[str, Any]) -> Path:
     RUNTIME_OPTIMIZED_PARAMS_PATH.parent.mkdir(parents=True, exist_ok=True)
     RUNTIME_OPTIMIZED_PARAMS_PATH.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
+        json_dump_text(payload, indent=2),
         encoding="utf-8",
     )
     _normalize_owner_and_mode(RUNTIME_OPTIMIZED_PARAMS_PATH)

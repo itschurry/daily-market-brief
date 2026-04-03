@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
-import json
 import os
 import uuid
 from pathlib import Path
 from typing import Any
 
 from config.settings import LOGS_DIR
+from services.json_utils import json_dump_text, read_json_file_cached
 from services.backtest_params_store import (
     BACKTEST_VALIDATION_SETTINGS_PATH,
     _normalize_query as _normalize_saved_query,
@@ -67,7 +67,7 @@ def _now_iso() -> str:
 
 def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = read_json_file_cached(path)
         return payload if isinstance(payload, dict) else dict(default)
     except Exception:
         return dict(default)
@@ -75,7 +75,7 @@ def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json_dump_text(payload, indent=2), encoding="utf-8")
 
 
 def _normalize_state(raw_state: dict[str, Any] | None) -> tuple[dict[str, Any], bool]:

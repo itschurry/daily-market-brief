@@ -125,16 +125,39 @@ def _build_payload(rule: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     entries.sort(key=lambda item: str(item.get("code") or ""))
     return {
         "schema_version": 1,
+        "rule_name": rule,
         "as_of_date": _market_date(),
         "generated_at": _now_iso(),
+        "updated_at": _now_iso(),
         "source": "FinanceDataReader",
         "universe": rule,
         "market": target["market"],
-        "count": len(entries),
+        "symbol_count": len(entries),
+        "excluded_count": 0,
         "symbols": entries,
+        "excluded": [],
         "meta": {
             "listing_key": target["listing_key"],
         },
+    }
+
+
+def _build_summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": payload.get("schema_version", 1),
+        "rule_name": payload.get("rule_name") or payload.get("universe") or "",
+        "universe": payload.get("universe") or payload.get("rule_name") or "",
+        "market": payload.get("market") or "",
+        "as_of_date": payload.get("as_of_date") or "",
+        "generated_at": payload.get("generated_at") or "",
+        "updated_at": payload.get("updated_at") or payload.get("generated_at") or "",
+        "created_at": payload.get("created_at") or "",
+        "source": payload.get("source") or "",
+        "symbol_count": int(payload.get("symbol_count") or len(payload.get("symbols") or [])),
+        "excluded_count": int(payload.get("excluded_count") or len(payload.get("excluded") or [])),
+        "meta": payload.get("meta") if isinstance(payload.get("meta"), dict) else {},
+        "symbols": [],
+        "excluded": [],
     }
 
 
@@ -147,9 +170,9 @@ def _write_payload(path: Path, payload: dict[str, Any]) -> None:
     tmp_path.replace(path)
 
 
-def _snapshot_paths(rule: str, as_of_date: str) -> tuple[Path, Path]:
+def _snapshot_paths(rule: str, as_of_date: str) -> tuple[Path, Path, Path]:
     directory = _UNIVERSE_ROOT / rule
-    return directory / "latest.json", directory / f"{as_of_date}.json"
+    return directory / "latest.json", directory / "latest.summary.json", directory / f"{as_of_date}.json"
 
 
 def build_snapshot(rule: str, *, dry_run: bool = False) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -158,7 +181,7 @@ def build_snapshot(rule: str, *, dry_run: bool = False) -> tuple[dict[str, Any],
     payload = _build_payload(rule, rows)
     previous = None
     previous_payload: dict[str, Any] | None = None
-    latest_path, archive_path = _snapshot_paths(rule, payload["as_of_date"])
+    latest_path, summary_path, archive_path = _snapshot_paths(rule, payload["as_of_date"])
     if latest_path.exists():
         try:
             loaded = json.loads(latest_path.read_text(encoding="utf-8"))
@@ -189,6 +212,7 @@ def build_snapshot(rule: str, *, dry_run: bool = False) -> tuple[dict[str, Any],
 
     _write_payload(archive_path, payload)
     _write_payload(latest_path, payload)
+    _write_payload(summary_path, _build_summary_payload(payload))
     return payload, previous
 
 
@@ -209,8 +233,8 @@ def _main(argv: list[str] | None = None) -> int:
             payload, previous = build_snapshot(rule, dry_run=args.dry_run)
             prev_count = int(previous.get("count", 0)) if isinstance(previous, dict) else 0
             print(
-                f"[{rule}] symbols={payload['count']} generated_at={payload['generated_at']} "
-                f"previous={bool(previous)} prev_count={prev_count} delta={payload['count'] - prev_count}"
+                f"[{rule}] symbols={payload['symbol_count']} generated_at={payload['generated_at']} "
+                f"previous={bool(previous)} prev_count={prev_count} delta={payload['symbol_count'] - prev_count}"
             )
         except Exception as exc:
             print(f"[{rule}] failed: {exc}")

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from config.settings import LOGS_DIR
+from services.json_utils import json_dump_compact, json_dump_text, read_json_file_cached
 
 
 ENGINE_STATE_PATH = LOGS_DIR / "engine_state.json"
@@ -23,7 +24,7 @@ def _now_iso() -> str:
 
 
 def _json_serialize(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return json_dump_compact(value)
 
 
 def _ensure_parent(path: Path) -> None:
@@ -39,15 +40,17 @@ def _read_lines(path: Path) -> list[str]:
 
 def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = read_json_file_cached(path)
     except (OSError, json.JSONDecodeError):
+        return dict(default)
+    except Exception:
         return dict(default)
     return payload if isinstance(payload, dict) else dict(default)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     _ensure_parent(path)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json_dump_text(payload, indent=2), encoding="utf-8")
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import copy
 import datetime
-import json
 from pathlib import Path
 from typing import Any
 
 from config.settings import LOGS_DIR
 from market_utils import normalize_market
+from services.json_utils import read_json_file_cached
 
 UNIVERSE_RULE_ALIASES = {
     "top_liquidity_200": "kospi",
@@ -61,15 +61,21 @@ def _latest_snapshot_path(rule_name: str) -> Path:
     return _snapshot_dir(rule_name) / "latest.json"
 
 
+def _latest_summary_path(rule_name: str) -> Path:
+    return _snapshot_dir(rule_name) / "latest.summary.json"
+
+
 def _legacy_snapshot_path(rule_name: str) -> Path:
     return UNIVERSE_ROOT / f"{_safe_rule(rule_name)}.json"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = read_json_file_cached(path)
         return payload if isinstance(payload, dict) else {}
-    except (OSError, json.JSONDecodeError):
+    except OSError:
+        return {}
+    except Exception:
         return {}
 
 
@@ -157,35 +163,8 @@ def _normalize_snapshot(payload: dict[str, Any], *, market: str | None = None) -
     }
 
 
-def _read_snapshot_payload(rule_name: str) -> dict[str, Any]:
+def _empty_snapshot(rule_name: str) -> dict[str, Any]:
     normalized_rule = _normalize_rule(rule_name)
-    snapshot = _read_json(_latest_snapshot_path(normalized_rule))
-    if snapshot:
-        return snapshot
-
-    snapshot = _read_json(_legacy_snapshot_path(normalized_rule))
-    if snapshot:
-        return snapshot
-
-    legacy_candidates = _ALIASES_BY_RULE.get(normalized_rule, [])
-    legacy = {}
-    for candidate_rule in legacy_candidates:
-        legacy = _read_json(_legacy_snapshot_path(candidate_rule))
-        if legacy:
-            return legacy
-
-        candidate_snapshot = _read_json(_latest_snapshot_path(candidate_rule))
-        if candidate_snapshot:
-            legacy = candidate_snapshot
-            break
-
-    if legacy:
-        return legacy
-
-    legacy = _read_json(_latest_snapshot_path(UNIVERSE_RULE_ALIASES.get(normalized_rule, normalized_rule)))
-    if legacy:
-        return legacy
-
     return {
         "rule_name": normalized_rule,
         "universe": normalized_rule,
@@ -203,9 +182,77 @@ def _read_snapshot_payload(rule_name: str) -> dict[str, Any]:
     }
 
 
+def _read_snapshot_summary(rule_name: str) -> dict[str, Any]:
+    normalized_rule = _normalize_rule(rule_name)
+    summary = _read_json(_latest_summary_path(normalized_rule))
+    if summary:
+        return summary
+
+    latest_snapshot = _read_json(_latest_snapshot_path(normalized_rule))
+    if latest_snapshot:
+        return latest_snapshot
+
+    legacy_snapshot = _read_json(_legacy_snapshot_path(normalized_rule))
+    if legacy_snapshot:
+        return legacy_snapshot
+
+    for candidate_rule in _ALIASES_BY_RULE.get(normalized_rule, []):
+        legacy = _read_json(_latest_summary_path(candidate_rule))
+        if legacy:
+            return legacy
+        legacy = _read_json(_legacy_snapshot_path(candidate_rule))
+        if legacy:
+            return legacy
+        legacy = _read_json(_latest_snapshot_path(candidate_rule))
+        if legacy:
+            return legacy
+
+    legacy = _read_json(_latest_snapshot_path(UNIVERSE_RULE_ALIASES.get(normalized_rule, normalized_rule)))
+    if legacy:
+        return legacy
+
+    return _empty_snapshot(normalized_rule)
+
+
+def _read_snapshot_payload(rule_name: str) -> dict[str, Any]:
+    normalized_rule = _normalize_rule(rule_name)
+    snapshot = _read_json(_latest_snapshot_path(normalized_rule))
+    if snapshot:
+        return snapshot
+
+    snapshot = _read_json(_legacy_snapshot_path(normalized_rule))
+    if snapshot:
+        return snapshot
+
+    for candidate_rule in _ALIASES_BY_RULE.get(normalized_rule, []):
+        legacy = _read_json(_legacy_snapshot_path(candidate_rule))
+        if legacy:
+            return legacy
+        legacy = _read_json(_latest_snapshot_path(candidate_rule))
+        if legacy:
+            return legacy
+
+    legacy = _read_json(_latest_snapshot_path(UNIVERSE_RULE_ALIASES.get(normalized_rule, normalized_rule)))
+    if legacy:
+        return legacy
+
+    return _empty_snapshot(normalized_rule)
+
+
 def build_universe_snapshot(rule_name: str, *, market: str | None = None) -> dict[str, Any]:
     payload = _read_snapshot_payload(rule_name)
     return _normalize_snapshot(payload, market=market)
+
+
+def get_universe_snapshot_full(
+    rule_name: str,
+    *,
+    market: str | None = None,
+) -> dict[str, Any]:
+    normalized_rule = _normalize_rule(rule_name)
+    snapshot = _read_snapshot_payload(normalized_rule)
+    normalized_snapshot = _normalize_snapshot(snapshot, market=market)
+    return copy.deepcopy(normalized_snapshot)
 
 
 def get_universe_snapshot(
@@ -216,24 +263,24 @@ def get_universe_snapshot(
     max_age_minutes: int = _DEFAULT_MAX_AGE_MINUTES,
 ) -> dict[str, Any]:
     normalized_rule = _normalize_rule(rule_name)
-    snapshot = _read_snapshot_payload(normalized_rule)
-    normalized_snapshot = _normalize_snapshot(snapshot, market=market)
-    generated_at = str(normalized_snapshot.get("generated_at") or "")
+    summary = _read_snapshot_summary(normalized_rule)
+    normalized_summary = _normalize_snapshot(summary, market=market)
+    generated_at = str(normalized_summary.get("generated_at") or "")
     age_minutes = _minutes_since(generated_at)
+    if (
+        normalized_summary.get("source", "").lower() == "snapshot_missing"
+        and normalized_summary.get("symbol_count", 0) == 0
+    ):
+        return copy.deepcopy(normalized_summary)
+
     if (
         not refresh
         and age_minutes is not None
         and age_minutes <= max_age_minutes
     ):
-        return copy.deepcopy(normalized_snapshot)
+        return copy.deepcopy(normalized_summary)
 
-    if (
-        normalized_snapshot.get("source", "").lower() == "snapshot_missing"
-        and normalized_snapshot.get("symbol_count", 0) == 0
-    ):
-        return copy.deepcopy(normalized_snapshot)
-
-    return copy.deepcopy(normalized_snapshot)
+    return get_universe_snapshot_full(normalized_rule, market=market)
 
 
 def list_current_universes() -> list[dict[str, Any]]:
@@ -242,11 +289,15 @@ def list_current_universes() -> list[dict[str, Any]]:
         return rows
 
     for rule_dir in sorted((path for path in UNIVERSE_ROOT.iterdir() if path.is_dir())):
-        payload = _read_json(rule_dir / "latest.json")
+        payload = _read_json(rule_dir / "latest.summary.json")
+        if not payload:
+            payload = _read_json(rule_dir / "latest.json")
         if payload:
             rows.append(_normalize_snapshot({**payload, "rule_name": str(rule_dir.name)}))
 
     for path in sorted(UNIVERSE_ROOT.glob("*.json")):
+        if path.name.endswith(".summary.json"):
+            continue
         payload = _read_json(path)
         if payload:
             rows.append(_normalize_snapshot({**payload, "rule_name": path.stem}))

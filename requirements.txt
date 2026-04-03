@@ -18,3 +18,4 @@ markdown2>=2.5.0
 holidays>=0.66
 numpy>=1.26.0
 finance-datareader>=0.9.96
+orjson>=3.10.0

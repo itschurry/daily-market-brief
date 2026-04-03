@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import datetime
-import json
 from pathlib import Path
 from typing import Any
 
 from config.settings import LOGS_DIR
+from services.json_utils import json_dump_compact, json_dump_text, read_json_file_cached
 from services.research_contract import normalize_and_validate_warning_codes, normalize_tags
 from market_utils import normalize_market
 
@@ -28,21 +28,23 @@ def _ensure_parent(path: Path) -> None:
 
 def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        payload = read_json_file_cached(path)
+    except OSError:
+        return dict(default)
+    except Exception:
         return dict(default)
     return payload if isinstance(payload, dict) else dict(default)
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     _ensure_parent(path)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json_dump_text(payload, indent=2), encoding="utf-8")
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     _ensure_parent(path)
     with path.open("a", encoding="utf-8") as fp:
-        fp.write(f"{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n")
+        fp.write(f"{json_dump_compact(payload)}\n")
 
 
 def _safe_key(value: str) -> str:
