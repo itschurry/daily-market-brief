@@ -14,8 +14,8 @@ from services.optimized_params_store import load_execution_optimized_params
 
 DEFAULT_THEME_FOCUS = ["automotive", "robotics", "physical_ai"]
 _ALLOWED_THEME_FOCUS = set(DEFAULT_THEME_FOCUS)
-_RUNTIME_CANDIDATE_SOURCE_MODES = {"quant_only", "research_only", "hybrid"}
-RuntimeCandidateSourceMode = Literal["quant_only", "research_only", "hybrid"]
+_RUNTIME_CANDIDATE_SOURCE_MODES = {"quant_only", "hybrid"}
+RuntimeCandidateSourceMode = Literal["quant_only", "hybrid"]
 
 
 try:
@@ -288,8 +288,6 @@ def collect_runtime_candidates(market: str, cfg: dict | None = None) -> list[dic
     mode = normalize_runtime_candidate_source_mode(payload.get("runtime_candidate_source_mode"))
     if mode == "quant_only":
         return collect_quant_runtime_candidates(market, payload)
-    if mode == "research_only":
-        return collect_research_candidates(market, payload)
 
     quant_candidates = collect_quant_runtime_candidates(market, payload)
     research_candidates = collect_research_candidates(market, payload)

@@ -121,6 +121,7 @@ export interface ActionBarAction {
   onClick: () => void;
   tone?: 'default' | 'primary' | 'danger';
   disabled?: boolean;
+  disabledReason?: string;
   busy?: boolean;
   busyLabel?: string;
   confirmTitle?: string;

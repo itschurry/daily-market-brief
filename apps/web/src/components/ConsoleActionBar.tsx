@@ -18,6 +18,7 @@ interface ConsoleActionBarProps {
   settingsPanel?: ReactNode;
   settingsDirty?: boolean;
   settingsSavedAt?: string;
+  sticky?: boolean;
 }
 
 function levelText(level: ConsoleLogEntry['level']): string {
@@ -179,7 +180,31 @@ export function ConsoleActionBar({
   settingsPanel,
   settingsDirty = false,
   settingsSavedAt = '',
+  sticky = false,
 }: ConsoleActionBarProps) {
+  function renderActionButton(action: ActionBarAction) {
+    return (
+      <div key={action.label} className="console-actionbar-action-wrap">
+        <button
+          className={actionClass(action.tone)}
+          onClick={() => {
+            if (action.disabled || action.busy) return;
+            if (action.confirmTitle || action.confirmMessage || action.tone === 'danger') {
+              openActionConfirm(action);
+              return;
+            }
+            action.onClick();
+          }}
+          disabled={Boolean(action.disabled) || Boolean(action.busy)}
+          title={action.disabled && action.disabledReason ? `${action.label} · ${action.disabledReason}` : action.label}
+        >
+          {renderButtonLabel(action.label, action.busy, action.busyLabel)}
+        </button>
+        {action.disabled && action.disabledReason && <div className="console-actionbar-action-reason">{action.disabledReason}</div>}
+      </div>
+    );
+  }
+
   const [logOpen, setLogOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -247,7 +272,7 @@ export function ConsoleActionBar({
 
   return (
     <>
-      <div className="page-section console-actionbar-shell">
+      <div className={`page-section console-actionbar-shell ${sticky ? 'is-sticky' : ''}`.trim()}>
         <div className="console-actionbar-head">
           <div>
             <div className="console-actionbar-title">{title}</div>
@@ -269,22 +294,7 @@ export function ConsoleActionBar({
                 </span>
               </button>
             )}
-            {safeActions.map((action) => (
-              <button
-                key={action.label}
-                className={actionClass(action.tone)}
-                onClick={() => {
-                  if (action.confirmTitle || action.confirmMessage || action.tone === 'danger') {
-                    openActionConfirm(action);
-                    return;
-                  }
-                  action.onClick();
-                }}
-                disabled={Boolean(action.disabled) || Boolean(action.busy)}
-              >
-                {renderButtonLabel(action.label, action.busy, action.busyLabel)}
-              </button>
-            ))}
+            {safeActions.map(renderActionButton)}
           </div>
         </div>
 
@@ -292,16 +302,7 @@ export function ConsoleActionBar({
           <div className="console-actionbar-danger-row">
             <div className="console-actionbar-danger-copy">위험 작업은 실행계·계좌 상태를 직접 바꾸니 아래 빨간 버튼에서만 처리하세요.</div>
             <div className="console-actionbar-danger-buttons">
-              {dangerActions.map((action) => (
-                <button
-                  key={action.label}
-                  className={actionClass(action.tone)}
-                  onClick={() => openActionConfirm(action)}
-                  disabled={Boolean(action.disabled) || Boolean(action.busy)}
-                >
-                  {renderButtonLabel(action.label, action.busy, action.busyLabel)}
-                </button>
-              ))}
+              {dangerActions.map(renderActionButton)}
             </div>
           </div>
         )}

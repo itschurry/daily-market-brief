@@ -603,6 +603,15 @@ button:disabled {
   padding: 18px;
 }
 
+.console-actionbar-shell.is-sticky {
+  position: sticky;
+  top: 8px;
+  z-index: 170;
+  backdrop-filter: blur(12px);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-panel) 90%, white 10%), color-mix(in srgb, var(--surface-panel-strong) 86%, white 14%));
+  border: 1px solid rgba(255, 255, 255, 0.72);
+}
+
 .console-actionbar-head {
   display: flex;
   justify-content: space-between;
@@ -633,6 +642,18 @@ button:disabled {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.console-actionbar-action-wrap {
+  display: grid;
+  gap: 4px;
+}
+
+.console-actionbar-action-reason {
+  max-width: 18rem;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--tone-warning-fg);
 }
 
 
