@@ -77,6 +77,20 @@ interface ExecutedRunState {
   validation: ValidationResponse;
 }
 
+interface QuantOpsContext {
+  query: BacktestQuery;
+  settings: ValidationStoreSnapshot['savedSettings'];
+  source: 'last_backtest' | 'saved';
+}
+
+function jsonStableEqual(left: unknown, right: unknown): boolean {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -691,6 +705,25 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     () => executedRun ? formatValidationSettingsLabel(executedRun.settings, executedRun.query) : [],
     [executedRun],
   );
+  const backtestReadyContext = useMemo<QuantOpsContext>(() => {
+    if (
+      executedRun
+      && jsonStableEqual(executedRun.query, validationStore.savedQuery)
+      && jsonStableEqual(executedRun.settings, validationStore.savedSettings)
+    ) {
+      return {
+        query: executedRun.query,
+        settings: executedRun.settings,
+        source: 'last_backtest',
+      };
+    }
+
+    return {
+      query: validationStore.savedQuery,
+      settings: validationStore.savedSettings,
+      source: 'saved',
+    };
+  }, [executedRun, validationStore.savedQuery, validationStore.savedSettings]);
 
   const segmentTrain = validationResult.segments?.train as Record<string, unknown> | undefined;
   const segmentValidation = validationResult.segments?.validation as Record<string, unknown> | undefined;
@@ -1169,7 +1202,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       return;
     }
     try {
-      const payload = await fetchValidationDiagnostics(validationStore.savedQuery, validationStore.savedSettings);
+      const payload = await fetchValidationDiagnostics(backtestReadyContext.query, backtestReadyContext.settings);
       setDiagnosticsResult(payload);
       if (payload.ok) {
         push('success', 'baseline 진단을 다시 계산했습니다.', (payload.diagnosis?.summary_lines || []).join(' · ') || '차단 요인과 개선 경로를 갱신했습니다.', 'diagnosis');
@@ -1182,7 +1215,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       push('error', '진단 계산 요청에 실패했습니다.', '네트워크 또는 서버 상태를 확인하세요.', 'diagnosis');
       pushToast({ tone: 'error', title: '진단 요청 실패', description: '네트워크 또는 서버 상태를 확인하세요.' });
     }
-  }, [push, pushToast, validationStore.savedQuery, validationStore.savedSettings, validationStore.unsaved]);
+  }, [backtestReadyContext.query, backtestReadyContext.settings, push, pushToast, validationStore.unsaved]);
 
   const handleRevalidateCandidate = useCallback(async () => {
     if (validationStore.unsaved) {
@@ -1190,7 +1223,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       pushToast({ tone: 'warning', title: '먼저 설정 저장', description: '후보 재검증도 저장된 설정 기준으로만 실행합니다.' });
       return;
     }
-    const payload = await quantWorkflow.revalidate(validationStore.savedQuery, validationStore.savedSettings);
+    const payload = await quantWorkflow.revalidate(backtestReadyContext.query, backtestReadyContext.settings);
     if (payload?.ok) {
       push('success', 'optimizer 후보 재검증이 완료되었습니다.', payload.candidate?.decision?.summary || '최신 후보와 저장 가능 여부를 갱신했습니다.', 'quant-workflow');
       pushToast({ tone: 'success', title: '재검증 완료', description: payload.candidate?.decision?.label || '운영 후보 상태를 갱신했습니다.' });
@@ -1198,7 +1231,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     }
     push('error', 'optimizer 후보 재검증이 실패했습니다.', payload?.error || quantWorkflow.lastError || 'workflow 상태를 확인하세요.', 'quant-workflow');
     pushToast({ tone: 'error', title: '재검증 실패', description: payload?.error || quantWorkflow.lastError || 'workflow 상태를 확인하세요.' });
-  }, [push, pushToast, quantWorkflow, validationStore.savedQuery, validationStore.savedSettings, validationStore.unsaved]);
+  }, [backtestReadyContext.query, backtestReadyContext.settings, push, pushToast, quantWorkflow, validationStore.unsaved]);
 
   const handleSaveGuardrailPolicy = useCallback(async () => {
     const payload = await quantWorkflow.savePolicy({
@@ -1275,7 +1308,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       pushToast({ tone: 'warning', title: '먼저 설정 저장', description: '종목 후보 재검증도 저장된 설정 기준으로만 실행합니다.' });
       return;
     }
-    const payload = await quantWorkflow.revalidateSymbol(symbol, validationStore.savedQuery, validationStore.savedSettings);
+    const payload = await quantWorkflow.revalidateSymbol(symbol, backtestReadyContext.query, backtestReadyContext.settings);
     if (payload?.ok) {
       push('success', `${symbol} 종목 후보 재검증이 완료되었습니다.`, payload.candidate?.decision?.summary || '종목별 저장 가능 여부를 갱신했습니다.', 'quant-workflow');
       pushToast({ tone: 'success', title: '종목 재검증 완료', description: `${symbol} 승인/저장 가드가 갱신되었습니다.` });
@@ -1283,7 +1316,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     }
     push('error', `${symbol} 종목 후보 재검증이 실패했습니다.`, payload?.error || quantWorkflow.lastError || 'workflow 상태를 확인하세요.', 'quant-workflow');
     pushToast({ tone: 'error', title: '종목 재검증 실패', description: payload?.error || quantWorkflow.lastError || 'workflow 상태를 확인하세요.' });
-  }, [push, pushToast, quantWorkflow, validationStore.savedQuery, validationStore.savedSettings, validationStore.unsaved]);
+  }, [backtestReadyContext.query, backtestReadyContext.settings, push, pushToast, quantWorkflow, validationStore.unsaved]);
 
   const handleSetSymbolApproval = useCallback(async (symbol: string, status: 'approved' | 'rejected' | 'hold') => {
     const payload = await quantWorkflow.setSymbolApproval(symbol, status);
@@ -1456,8 +1489,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
 
     try {
       const response = await postJSON<{ status?: string; error?: string }>('/api/run-optimization', {
-        query: validationStore.savedQuery,
-        settings: validationStore.savedSettings,
+        query: backtestReadyContext.query,
+        settings: backtestReadyContext.settings,
       });
       const payload = response.data;
 
@@ -1492,7 +1525,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       push('error', '최적화 요청 중 오류가 발생했습니다.', '네트워크 또는 서버 상태를 확인하세요.', 'optimization');
       pushToast({ tone: 'error', title: '최적화 요청 실패', description: '요청 전송 중 오류가 발생했습니다.' });
     }
-  }, [optimizationHistory, optimizationPhase, optimizationRunning, push, pushToast, updateOptimizationHistory, validationStore.savedQuery, validationStore.savedSettings, validationStore.unsaved]);
+  }, [backtestReadyContext.query, backtestReadyContext.settings, optimizationHistory, optimizationPhase, optimizationRunning, push, pushToast, updateOptimizationHistory, validationStore.unsaved]);
 
   const handleSaveSettings = useCallback(async () => {
     if (settingsSyncBusy) return;
