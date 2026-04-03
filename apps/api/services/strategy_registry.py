@@ -116,14 +116,15 @@ _DEFAULT_STRATEGIES: list[dict[str, Any]] = [
 ]
 
 
-def _read_registry() -> list[dict[str, Any]]:
+def _read_registry() -> tuple[list[dict[str, Any]], bool]:
+    """Returns (rows, file_exists)."""
     try:
         payload = json.loads(STRATEGY_REGISTRY_PATH.read_text(encoding="utf-8"))
+        return (payload if isinstance(payload, list) else [], True)
     except FileNotFoundError:
-        return []
+        return [], False
     except (OSError, json.JSONDecodeError):
-        return []
-    return payload if isinstance(payload, list) else []
+        return [], True
 
 
 def _write_registry(rows: list[dict[str, Any]]) -> None:
@@ -168,25 +169,24 @@ def _normalize_strategy(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def ensure_registry_seeded() -> list[dict[str, Any]]:
-    rows = _read_registry()
-    if rows:
-        normalized_rows = []
-        seen: set[str] = set()
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            normalized = _normalize_strategy(row)
-            if normalized["strategy_id"] in seen:
-                continue
-            seen.add(normalized["strategy_id"])
-            normalized_rows.append(normalized)
-        if normalized_rows != rows:
-            _write_registry(normalized_rows)
-        return normalized_rows
-
-    seeded = [_normalize_strategy(item) for item in _DEFAULT_STRATEGIES]
-    _write_registry(seeded)
-    return seeded
+    rows, file_exists = _read_registry()
+    if not file_exists:
+        seeded = [_normalize_strategy(item) for item in _DEFAULT_STRATEGIES]
+        _write_registry(seeded)
+        return seeded
+    normalized_rows = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        normalized = _normalize_strategy(row)
+        if normalized["strategy_id"] in seen:
+            continue
+        seen.add(normalized["strategy_id"])
+        normalized_rows.append(normalized)
+    if normalized_rows != rows:
+        _write_registry(normalized_rows)
+    return normalized_rows
 
 
 def list_strategies(*, live_only: bool = False, market: str | None = None) -> list[dict[str, Any]]:
