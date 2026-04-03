@@ -62,15 +62,15 @@
 
 ## 2. 실제 화면과 레이어의 대응
 
-### Home
-- portfolio
+### `내 대시보드`
+- 포트폴리오
 - signals
 - live market
 - market context
 
 즉 운영 현황을 빠르게 보는 요약 화면이다.
 
-### Console -> strategies / validation / orders
+### `운영 콘솔 -> 전략 관리 / 전략 검증 랩 / 주문/리스크`
 Runtime 쪽과 가장 가깝다.
 - validation
 - optimizer
@@ -78,24 +78,24 @@ Runtime 쪽과 가장 가깝다.
 - runtime apply
 - engine 상태
 
-### Console -> scanner
+### `운영 콘솔 -> 장중 스캐너`
 Scanner 레이어와 가장 가깝다.
 - strategy scan
 - top candidates
 - Layer A/B/C/D/E 읽기
 
-### Console -> research
+### `운영 콘솔 -> 리서치 스냅샷`
 Layer C 저장소를 직접 보는 화면이다.
 - latest snapshot
 - history
 - components
 - warnings / tags / summary
 
-### Reports
+### `리서치 리포트`
 사람이 읽는 설명 레이어다.
-- today-report
-- alerts
-- watch-decision
+- 투자 브리프
+- 리스크 알림
+- 관심 시나리오
 - hanna brief
 
 ---
@@ -166,13 +166,13 @@ Hanna는 종목을 왜 봐야 하는지 설명하는 데 유용하다.
 
 ## 7. 운영자가 UI를 읽는 법
 
-### 장중 스캐너에서 봐야 할 것
+### `장중 스캐너`에서 봐야 할 것
 - Layer B: quant_score
 - Layer C: research_score / warnings / summary
 - Layer D: blocked 여부
 - Layer E: final_action
 
-### research 화면에서 봐야 할 것
+### `리서치 스냅샷`에서 봐야 할 것
 - latest snapshot 존재 여부
 - market key
 - generated_at / ttl_minutes

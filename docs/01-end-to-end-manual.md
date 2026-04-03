@@ -47,7 +47,7 @@
 
 ## 2. 현재 UI 구조
 
-### 01 Home
+### 01 `내 대시보드`
 빠르게 전체 상태를 보는 화면이다.
 
 보는 것:
@@ -56,26 +56,26 @@
 - live market
 - market context
 
-### 02 Console
+### 02 `운영 콘솔`
 실제 운영 화면이다.
 
 현재 탭:
-- strategies
-- scanner
-- orders
-- universe
-- performance
-- validation
-- watchlist
-- research
+- 전략 관리
+- 장중 스캐너
+- 주문/리스크
+- 유니버스
+- 성과
+- 전략 검증 랩
+- 관심 종목
+- 리서치 스냅샷
 
-### 03 Reports
+### 03 `리서치 리포트`
 설명/브리프 화면이다.
 
 현재 탭:
-- today-report
-- alerts
-- watch-decision
+- 투자 브리프
+- 리스크 알림
+- 관심 시나리오
 
 ---
 
@@ -122,26 +122,26 @@ optimizer 결과를 바로 쓰지 말고 revalidate 한다.
 paper engine을 시작한다.
 현재 운영 기준으로는 이 단계를 우선 기준으로 본다.
 
-### Step 9. Scanner 후보 확인
-`02 Console -> scanner` 에서 현재 전략별 후보를 확인한다.
+### Step 9. 장중 스캐너 후보 확인
+`운영 콘솔 -> 장중 스캐너` 에서 현재 전략별 후보를 확인한다.
 이 단계는 runtime과 별도로 존재할 수 있다.
 
 ### Step 10. Hanna research ingest
-현재 scanner 후보 종목 기준으로 research snapshot을 생성하고 bulk ingest 한다.
-필요하면 `02 Console -> research` 에서 특정 종목 snapshot latest/history도 직접 확인한다.
+현재 장중 스캐너 후보 종목 기준으로 research snapshot을 생성하고 bulk ingest 한다.
+필요하면 `운영 콘솔 -> 리서치 스냅샷` 에서 특정 종목 snapshot latest/history도 직접 확인한다.
 
 ### Step 11. UI 확인
 아래를 확인한다.
-- scanner 후보 존재 여부
+- 장중 스캐너 후보 존재 여부
 - Layer C 상태
 - research_score / warnings / summary
 - final_action
 - blocked / do_not_touch 이유
-- reports / hanna brief / today picks 쪽 설명 일치 여부
+- `리서치 리포트 -> 투자 브리프` 쪽 설명 일치 여부
 
 ---
 
-## 3. 중요한 원칙
+## 4. 중요한 원칙
 
 ### 원칙 1. scanner 후보는 runtime apply 전에도 생긴다
 scanner는 탐색 레이어다.
@@ -165,12 +165,12 @@ Layer C가 붙어 있어도 최종 액션은 Layer D/E가 정한다.
 ## 4. 화면별 추천 사용 순서
 
 ### 가장 기본 루프
-1. `Home` 에서 전체 상태 확인
-2. `Console -> validation` 에서 baseline / 백테스트 / walk-forward / optimizer 상태 확인
-3. `Console -> strategies` 에서 승인 전략 확인
-4. `Console -> scanner` 에서 장중 후보 확인
-5. `Console -> research` 에서 특정 종목 snapshot 확인
-6. `Reports -> today-report` 에서 사람이 읽는 브리프 확인
+1. `내 대시보드` 에서 전체 상태 확인
+2. `운영 콘솔 -> 전략 검증 랩` 에서 baseline / 백테스트 / walk-forward / optimizer 상태 확인
+3. `운영 콘솔 -> 전략 관리` 에서 승인 전략 확인
+4. `운영 콘솔 -> 장중 스캐너` 에서 장중 후보 확인
+5. `운영 콘솔 -> 리서치 스냅샷` 에서 특정 종목 snapshot 확인
+6. `리서치 리포트 -> 투자 브리프` 에서 사람이 읽는 브리프 확인
 
 ---
 
@@ -183,9 +183,9 @@ Layer C가 붙어 있어도 최종 액션은 Layer D/E가 정한다.
 4. engine 상태 확인
 
 ### 장중
-1. scanner 후보 확인
-2. scanner 후보 종목 기준 Hanna snapshot ingest
-3. scanner UI에서 Layer C / final_action 확인
+1. 장중 스캐너 후보 확인
+2. 장중 스캐너 후보 종목 기준 Hanna snapshot ingest
+3. 장중 스캐너 화면에서 Layer C / final_action 확인
 4. blocked / do_not_touch 이유 확인
 
 ### 장 마감 후
@@ -197,16 +197,16 @@ Layer C가 붙어 있어도 최종 액션은 Layer D/E가 정한다.
 
 ## 6. 새로 추가된 화면의 역할
 
-### watchlist
+### 관심 종목
 관심 종목을 추가/관리하는 화면이다.
 실행 엔진보다 사람이 보는 관심 종목 관리에 가깝다.
 
-### research
+### 리서치 스냅샷
 특정 심볼의 research snapshot latest/history를 직접 확인하는 화면이다.
 Layer C 디버깅에 가장 유용하다.
 
-### reports
-시장 설명, today picks, hanna brief, alerts, watch decision을 사람이 읽는 화면이다.
+### 리서치 리포트
+시장 설명, 투자 브리프, 리스크 알림, 관심 시나리오를 사람이 읽는 화면이다.
 실행 레이어와 동일하지 않다.
 
 ---
