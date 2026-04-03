@@ -552,6 +552,42 @@ def load_latest_research_snapshot(symbol: str, market: str, *, provider: str = "
     return selected
 
 
+def list_latest_research_snapshots(
+    *,
+    provider: str = OPENCLAW_PROVIDER,
+    market: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    provider_key = str(provider or "").strip().lower() or OPENCLAW_PROVIDER
+    normalized_market = _normalize_market_input(market or "") if market else ""
+    newest_by_symbol_market: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for path in RESEARCH_LATEST_DIR.glob("*.json"):
+        payload = _read_json(path, {})
+        if not payload:
+            continue
+        payload_provider = str(payload.get("provider") or "").strip().lower()
+        payload_symbol = str(payload.get("symbol") or "").strip().upper()
+        payload_market = _normalize_market_input(str(payload.get("market") or ""))
+        if payload_provider != provider_key:
+            continue
+        if not payload_symbol or not payload_market:
+            continue
+        if normalized_market and payload_market != normalized_market:
+            continue
+        dedupe_key = (payload_provider, payload_symbol, payload_market)
+        existing = newest_by_symbol_market.get(dedupe_key)
+        if existing is None or _is_newer_snapshot(payload, existing):
+            normalized_payload = dict(payload)
+            normalized_payload["market"] = payload_market
+            newest_by_symbol_market[dedupe_key] = normalized_payload
+
+    rows = list(newest_by_symbol_market.values())
+    rows.sort(key=_history_sort_key, reverse=True)
+    if limit > 0:
+        rows = rows[:limit]
+    return rows
+
+
 def load_research_snapshots(
     symbol: str,
     market: str,

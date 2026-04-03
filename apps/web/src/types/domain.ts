@@ -323,6 +323,7 @@ export interface ResearchSnapshotItem {
   schema_version?: string;
   run_id?: string;
   symbol?: string;
+  name?: string;
   market?: string;
   bucket_ts?: string;
   generated_at?: string;
@@ -746,6 +747,23 @@ export interface QuantOpsGuardrailsPayload {
   reasons?: string[];
 }
 
+export interface QuantOpsStrategyCandidatePayload {
+  key?: string;
+  label?: string;
+  summary?: string;
+  source?: string;
+  reliability?: string;
+  is_reliable?: boolean;
+  reliability_reason?: string;
+  composite_score?: number;
+  profit_factor?: number;
+  validation_sharpe?: number;
+  trade_count?: number;
+  max_drawdown_pct?: number;
+  patch?: Record<string, unknown>;
+  patch_lines?: string[];
+}
+
 export interface QuantOpsSearchResultPayload {
   available?: boolean;
   version?: string;
@@ -754,10 +772,14 @@ export interface QuantOpsSearchResultPayload {
   global_params?: Record<string, unknown>;
   param_count?: number;
   per_symbol_count?: number;
+  strategy_candidate_count?: number;
+  strategy_candidates_ready?: boolean;
+  strategy_candidate_payload_missing?: boolean;
   n_symbols_optimized?: number;
   n_reliable?: number;
   n_medium?: number;
   global_overlay_source?: string;
+  strategy_candidate_source?: string;
   context?: {
     market?: string;
     top_n?: number;
@@ -766,6 +788,9 @@ export interface QuantOpsSearchResultPayload {
     validation_days?: number;
   };
   source?: string;
+  candidate_count?: number;
+  candidates?: QuantOpsStrategyCandidatePayload[];
+  strategy_candidates?: QuantOpsStrategyCandidatePayload[];
 }
 
 export interface QuantOpsCandidatePayload {
@@ -805,6 +830,10 @@ export interface QuantOpsCandidatePayload {
   validation?: ValidationResponse;
   save_note?: string;
   runtime_candidate_source_mode?: string;
+  search_candidate_key?: string;
+  search_candidate_label?: string;
+  search_candidate_summary?: string;
+  search_candidate_source?: string;
 }
 
 export interface QuantOpsCandidateStatePayload {
@@ -834,39 +863,6 @@ export interface QuantOpsRuntimeApplyPayload {
   guardrail_policy?: QuantOpsGuardrailPolicyResponse["policy"] & { saved_at?: string; source?: string };
 }
 
-export interface QuantOpsSymbolApprovalPayload {
-  status?: string;
-  note?: string;
-  reason?: string;
-  updated_at?: string;
-  candidate_id?: string;
-}
-
-export interface QuantOpsSymbolSearchPayload {
-  symbol?: string;
-  search_version?: string;
-  search_optimized_at?: string;
-  search_is_stale?: boolean;
-  patch?: Record<string, unknown>;
-  patch_lines?: string[];
-  snapshot?: Record<string, unknown>;
-}
-
-export interface QuantOpsSymbolWorkflowItemPayload {
-  symbol?: string;
-  search_candidate?: QuantOpsSymbolSearchPayload;
-  latest_candidate?: QuantOpsCandidatePayload;
-  approval?: QuantOpsSymbolApprovalPayload;
-  saved_candidate?: QuantOpsCandidatePayload;
-  latest_guardrails?: QuantOpsGuardrailsPayload;
-  saved_guardrails?: QuantOpsGuardrailsPayload;
-  runtime?: {
-    applied?: boolean;
-    candidate_id?: string;
-    applied_at?: string;
-  };
-}
-
 export interface QuantOpsWorkflowResponse {
   ok?: boolean;
   guardrail_policy?: QuantOpsGuardrailPolicyResponse["policy"] & { saved_at?: string; source?: string };
@@ -887,16 +883,6 @@ export interface QuantOpsWorkflowResponse {
   latest_candidate_state?: QuantOpsCandidateStatePayload;
   saved_candidate?: QuantOpsCandidatePayload;
   saved_candidate_state?: QuantOpsCandidateStatePayload;
-  symbol_candidates?: QuantOpsSymbolWorkflowItemPayload[];
-  symbol_summary?: {
-    search_count?: number;
-    validated_count?: number;
-    approved_count?: number;
-    saved_count?: number;
-    runtime_applied_count?: number;
-  };
-  latest_symbol_candidates?: Record<string, QuantOpsCandidatePayload>;
-  saved_symbol_candidates?: Record<string, QuantOpsCandidatePayload>;
   runtime_apply?: QuantOpsRuntimeApplyPayload;
   stage_status?: Record<string, string>;
   notes?: string[];
@@ -905,15 +891,13 @@ export interface QuantOpsWorkflowResponse {
 
 export interface QuantOpsActionResponse {
   ok?: boolean;
-  symbol?: string;
   candidate?: QuantOpsCandidatePayload;
-  approval?: QuantOpsSymbolApprovalPayload;
   guardrails?: QuantOpsGuardrailsPayload;
-  symbol_apply?: Record<string, unknown>;
   runtime_apply?: QuantOpsRuntimeApplyPayload;
   workflow?: QuantOpsWorkflowResponse;
   engine?: EngineStatusResponse;
   error?: string;
+  message?: string;
   details?: Record<string, unknown>;
 }
 

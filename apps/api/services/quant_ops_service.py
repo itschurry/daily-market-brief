@@ -47,7 +47,6 @@ _OPTIMIZABLE_KEYS = {
 }
 _OPTIMIZED_PARAMS_MAX_AGE_DAYS = 30
 _OPTIMIZER_MAX_RUNTIME_SECONDS = 3900
-_SYMBOL_APPROVAL_STATUSES = {"approved", "rejected", "hold"}
 
 
 def _default_state() -> dict[str, Any]:
@@ -59,12 +58,6 @@ def _default_state() -> dict[str, Any]:
         "runtime_apply": None,
         "pending_search_handoff": None,
         "last_search_handoff": None,
-        "latest_symbol_candidates": {},
-        "symbol_candidate_history": {},
-        "symbol_approvals": {},
-        "saved_symbol_candidates": {},
-        "saved_symbol_history": {},
-        "runtime_symbol_apply": {},
     }
 
 
@@ -242,15 +235,100 @@ def _optimizer_job_active() -> bool:
     return True
 
 
+def _strategy_candidate_rank(reliability: str) -> int:
+    normalized = str(reliability or "").strip().lower()
+    if normalized == "high":
+        return 0
+    if normalized == "medium":
+        return 1
+    return 2
+
+
+def _strategy_candidate_patch(item: dict[str, Any]) -> dict[str, Any]:
+    raw_patch = item.get("patch") if isinstance(item.get("patch"), dict) else {}
+    if raw_patch:
+        return {
+            key: value
+            for key, value in raw_patch.items()
+            if key in _OPTIMIZABLE_KEYS and value not in (None, "")
+        }
+    return {
+        key: value
+        for key, value in item.items()
+        if key in _OPTIMIZABLE_KEYS and value not in (None, "")
+    }
+
+
+def _normalize_strategy_candidates(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    payload = payload if isinstance(payload, dict) else {}
+    raw_candidates = payload.get("strategy_candidates")
+    if not isinstance(raw_candidates, list):
+        return []
+
+    rows: list[dict[str, Any]] = []
+    for index, raw_item in enumerate(raw_candidates, start=1):
+        item = raw_item if isinstance(raw_item, dict) else {}
+        metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else item
+        patch = _strategy_candidate_patch(item)
+        patch_lines = item.get("patch_lines") if isinstance(item.get("patch_lines"), list) else []
+        key = str(
+            item.get("key")
+            or item.get("candidate_key")
+            or item.get("id")
+            or f"strategy-candidate-{index}"
+        ).strip()
+        reliability = str(
+            item.get("reliability")
+            or metrics.get("reliability")
+            or metrics.get("strategy_reliability")
+            or ""
+        ).strip()
+        rows.append({
+            "key": key,
+            "label": str(item.get("label") or item.get("name") or key),
+            "summary": str(item.get("summary") or metrics.get("summary") or ""),
+            "source": str(item.get("source") or item.get("selection_source") or ""),
+            "reliability": reliability,
+            "is_reliable": bool(item.get("is_reliable")),
+            "reliability_reason": str(item.get("reliability_reason") or metrics.get("reliability_reason") or ""),
+            "composite_score": _to_float(metrics.get("composite_score")),
+            "profit_factor": _to_float(metrics.get("profit_factor")),
+            "validation_sharpe": _to_float(metrics.get("validation_sharpe")),
+            "trade_count": _to_int(metrics.get("trade_count"), 0),
+            "max_drawdown_pct": _to_float(metrics.get("max_drawdown_pct")),
+            "patch": patch,
+            "patch_lines": [str(line) for line in patch_lines if str(line).strip()] or [f"{param}: {value}" for param, value in sorted(patch.items())],
+            "_rank": _strategy_candidate_rank(reliability),
+            "_order": _to_int(item.get("rank"), index),
+        })
+    rows.sort(
+        key=lambda row: (
+            row.get("_rank", 9),
+            row.get("_order", 999999),
+            -(row.get("composite_score") or -999999),
+            str(row.get("key") or ""),
+        )
+    )
+    for row in rows:
+        row.pop("_rank", None)
+        row.pop("_order", None)
+    return rows
+
+
 def _search_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
     payload, artifact_present = _recover_search_payload(payload)
     meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
     global_params = payload.get("global_params") if isinstance(payload.get("global_params"), dict) else {}
     per_symbol = payload.get("per_symbol") if isinstance(payload.get("per_symbol"), dict) else {}
+    strategy_candidates = _normalize_strategy_candidates(payload)
     optimized_at = str(payload.get("optimized_at") or "")
     search_context = meta.get("search_context") if isinstance(meta.get("search_context"), dict) else {}
-    has_materialized_payload = bool(payload) or bool(global_params) or bool(per_symbol) or bool(meta) or bool(optimized_at)
+    has_materialized_payload = bool(payload) or bool(global_params) or bool(strategy_candidates) or bool(per_symbol) or bool(meta) or bool(optimized_at)
     version = str(payload.get("version") or optimized_at or "")
+    reliable_count = sum(1 for item in strategy_candidates if str(item.get("reliability") or "").strip().lower() == "high")
+    medium_count = sum(1 for item in strategy_candidates if str(item.get("reliability") or "").strip().lower() == "medium")
+    strategy_candidates_ready = len(strategy_candidates) > 0
+    strategy_candidate_payload_missing = bool(artifact_present) and bool(has_materialized_payload) and not strategy_candidates_ready
     return {
         "available": bool(artifact_present),
         "has_materialized_payload": bool(has_materialized_payload),
@@ -261,12 +339,19 @@ def _search_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
         "global_params": global_params,
         "param_count": len(global_params),
         "per_symbol_count": len(per_symbol),
+        "strategy_candidate_count": len(strategy_candidates),
+        "strategy_candidates_ready": strategy_candidates_ready,
+        "strategy_candidate_payload_missing": strategy_candidate_payload_missing,
         "n_symbols_optimized": _to_int(meta.get("n_symbols_optimized"), len(per_symbol)),
-        "n_reliable": _to_int(meta.get("n_reliable"), 0),
-        "n_medium": _to_int(meta.get("n_medium"), 0),
+        "n_reliable": reliable_count,
+        "n_medium": medium_count,
         "global_overlay_source": meta.get("global_overlay_source"),
         "context": search_context,
         "source": str(SEARCH_OPTIMIZED_PARAMS_PATH),
+        "strategy_candidates": strategy_candidates,
+        "strategy_candidate_source": "strategy_candidates" if strategy_candidates_ready else "missing",
+        "candidates": strategy_candidates,
+        "candidate_count": len(strategy_candidates),
     }
 
 
@@ -289,27 +374,6 @@ def _reconstructed_runtime_apply_state(runtime_payload: dict[str, Any] | None) -
     }
 
 
-def _reconstructed_runtime_symbol_apply_state(runtime_payload: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not isinstance(runtime_payload, dict) or not runtime_payload:
-        return None
-    per_symbol = runtime_payload.get("per_symbol") if isinstance(runtime_payload.get("per_symbol"), dict) else {}
-    if not per_symbol:
-        return None
-    candidate_ids: dict[str, str] = {}
-    for raw_symbol, raw_payload in per_symbol.items():
-        symbol = _symbol_code(raw_symbol)
-        payload = raw_payload if isinstance(raw_payload, dict) else {}
-        candidate_id = str(payload.get("approved_candidate_id") or "")
-        if symbol and candidate_id:
-            candidate_ids[symbol] = candidate_id
-    return {
-        "applied_at": str(runtime_payload.get("applied_at") or ""),
-        "candidate_ids": candidate_ids,
-        "symbol_count": len(candidate_ids),
-        "skipped_symbols": {},
-    }
-
-
 def _self_heal_state(runtime_payload: dict[str, Any] | None = None) -> dict[str, Any]:
     state_exists = _QUANT_OPS_STATE_PATH.exists()
     raw_state = _read_json(_QUANT_OPS_STATE_PATH, _default_state()) if state_exists else _default_state()
@@ -318,16 +382,6 @@ def _self_heal_state(runtime_payload: dict[str, Any] | None = None) -> dict[str,
     reconstructed_runtime_apply = _reconstructed_runtime_apply_state(runtime_payload)
     if reconstructed_runtime_apply and not isinstance(state.get("runtime_apply"), dict):
         state["runtime_apply"] = reconstructed_runtime_apply
-        changed = True
-
-    reconstructed_runtime_symbol_apply = _reconstructed_runtime_symbol_apply_state(runtime_payload)
-    current_runtime_symbol_apply = state.get("runtime_symbol_apply")
-    if reconstructed_runtime_symbol_apply and (
-        not isinstance(current_runtime_symbol_apply, dict)
-        or not isinstance(current_runtime_symbol_apply.get("candidate_ids"), dict)
-        or not current_runtime_symbol_apply.get("candidate_ids")
-    ):
-        state["runtime_symbol_apply"] = reconstructed_runtime_symbol_apply
         changed = True
 
     if (not state_exists) or changed:
@@ -815,268 +869,6 @@ def _history_push(items: list[dict[str, Any]], candidate: dict[str, Any], limit:
     return [candidate, *deduped][:limit]
 
 
-def _symbol_code(value: Any) -> str:
-    return str(value or "").strip().upper()
-
-
-def _extract_symbol_patch(symbol_payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in (symbol_payload or {}).items()
-        if key in _OPTIMIZABLE_KEYS and value not in (None, "")
-    }
-
-
-def _extract_symbol_snapshot(symbol_payload: dict[str, Any]) -> dict[str, Any]:
-    keys = (
-        "is_reliable",
-        "strategy_reliability",
-        "reliability_reason",
-        "trade_count",
-        "validation_trades",
-        "validation_sharpe",
-        "max_drawdown_pct",
-        "composite_score",
-        "expected_shortfall_5_pct",
-        "return_p05_pct",
-    )
-    return {key: symbol_payload.get(key) for key in keys if key in symbol_payload}
-
-
-def _symbol_search_candidates(search_payload: dict[str, Any] | None, search: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    search_payload = search_payload or {}
-    per_symbol = search_payload.get("per_symbol") if isinstance(search_payload.get("per_symbol"), dict) else {}
-    items: dict[str, dict[str, Any]] = {}
-    for raw_symbol, raw_payload in per_symbol.items():
-        symbol = _symbol_code(raw_symbol)
-        payload = raw_payload if isinstance(raw_payload, dict) else {}
-        patch = _extract_symbol_patch(payload)
-        items[symbol] = {
-            "symbol": symbol,
-            "market": str(payload.get("market") or "").strip().upper(),
-            "search_version": str(search.get("version") or ""),
-            "search_optimized_at": str(search.get("optimized_at") or ""),
-            "search_is_stale": bool(search.get("is_stale")),
-            "patch": patch,
-            "patch_lines": [f"{key}: {value}" for key, value in sorted(patch.items())],
-            "snapshot": _extract_symbol_snapshot(payload),
-            "raw": payload,
-        }
-    return items
-
-
-def _read_symbol_approval(state: dict[str, Any], symbol: str) -> dict[str, Any]:
-    approvals = state.get("symbol_approvals") if isinstance(state.get("symbol_approvals"), dict) else {}
-    payload = approvals.get(symbol) if isinstance(approvals.get(symbol), dict) else {}
-    status = str(payload.get("status") or "hold")
-    if status not in _SYMBOL_APPROVAL_STATUSES:
-        status = "hold"
-    return {
-        "status": status,
-        "note": str(payload.get("note") or ""),
-        "reason": str(payload.get("reason") or ""),
-        "updated_at": str(payload.get("updated_at") or ""),
-        "candidate_id": str(payload.get("candidate_id") or ""),
-    }
-
-
-def _symbol_save_guardrails(
-    candidate: dict[str, Any] | None,
-    approval: dict[str, Any],
-    *,
-    search: dict[str, Any],
-    search_item: dict[str, Any] | None,
-) -> dict[str, Any]:
-    reasons: list[str] = []
-    can_save = False
-    can_apply = False
-    if not isinstance(candidate, dict):
-        reasons.append("symbol_candidate_missing")
-    else:
-        if str(candidate.get("validation_status") or "failed") != "passed":
-            reasons.append("symbol_validation_failed")
-        guardrails = candidate.get("guardrails") if isinstance(candidate.get("guardrails"), dict) else {}
-        if not bool(guardrails.get("can_save")):
-            reasons.append("symbol_validation_guardrail_blocked")
-        if approval.get("status") != "approved":
-            reasons.append("operator_approval_required")
-        if approval.get("candidate_id") and str(approval.get("candidate_id") or "") != str(candidate.get("id") or ""):
-            reasons.append("operator_approval_stale")
-        candidate_search_version = str(candidate.get("search_version") or "")
-        if search.get("available") and candidate_search_version != str(search.get("version") or ""):
-            reasons.append("optimizer_search_version_changed")
-        if search.get("is_stale"):
-            reasons.append("optimizer_search_stale")
-        if isinstance(search_item, dict) and not (search_item.get("patch") or {}):
-            reasons.append("symbol_overlay_patch_missing")
-    can_save = len(reasons) == 0
-    can_apply = can_save
-    return {
-        "can_save": can_save,
-        "can_apply": can_apply,
-        "reasons": _blocked_guardrail_reasons(
-            decision_status=str((candidate or {}).get("decision", {}).get("status") or "hold"),
-            can_save=can_save,
-            can_apply=can_apply,
-            reasons=reasons,
-            fallback="symbol_save_guardrail_blocked",
-        ),
-    }
-
-
-def _refresh_symbol_candidate(
-    candidate: dict[str, Any] | None,
-    search: dict[str, Any],
-    search_item: dict[str, Any] | None = None,
-) -> dict[str, Any] | None:
-    refreshed = _refresh_candidate(candidate, search)
-    if not isinstance(refreshed, dict):
-        return None
-    if isinstance(search_item, dict):
-        refreshed["search_symbol_snapshot"] = search_item.get("snapshot") or {}
-        refreshed["search_symbol_patch"] = search_item.get("patch") or {}
-        if not refreshed.get("patch") and isinstance(search_item.get("patch"), dict):
-            refreshed["patch"] = dict(search_item.get("patch") or {})
-    refreshed["validation_status"] = str(refreshed.get("validation_status") or "passed")
-    return refreshed
-
-
-def _build_symbol_candidate(
-    *,
-    symbol: str,
-    search: dict[str, Any],
-    search_item: dict[str, Any],
-    base_query: dict[str, Any],
-    mutated_query: dict[str, Any],
-    settings: dict[str, Any],
-    diagnostics: dict[str, Any],
-) -> dict[str, Any]:
-    base = _build_candidate(
-        search=search,
-        base_query=base_query,
-        mutated_query=mutated_query,
-        settings=settings,
-        diagnostics=diagnostics,
-    )
-    patch = dict(search_item.get("patch") or {})
-    return {
-        **base,
-        "id": f"symcand-{symbol.lower()}-{uuid.uuid4().hex[:10]}",
-        "runtime_candidate_source_mode": base.get("runtime_candidate_source_mode", "quant_only"),
-        "symbol": symbol,
-        "source": "optimizer_symbol_overlay",
-        "patch": patch,
-        "patch_lines": _patch_lines(base_query, mutated_query, patch),
-        "search_symbol_patch": patch,
-        "search_symbol_snapshot": dict(search_item.get("snapshot") or {}),
-        "validation_status": "passed",
-    }
-
-
-def _symbol_runtime_overlay(saved_candidate: dict[str, Any]) -> dict[str, Any]:
-    patch = saved_candidate.get("patch") if isinstance(saved_candidate.get("patch"), dict) else {}
-    snapshot = saved_candidate.get("search_symbol_snapshot") if isinstance(saved_candidate.get("search_symbol_snapshot"), dict) else {}
-    metrics = saved_candidate.get("metrics") if isinstance(saved_candidate.get("metrics"), dict) else {}
-    payload = dict(snapshot)
-    payload.update({
-        key: value
-        for key, value in patch.items()
-        if key in _OPTIMIZABLE_KEYS and value not in (None, "")
-    })
-    if "trade_count" not in payload and metrics.get("trade_count") is not None:
-        payload["trade_count"] = metrics.get("trade_count")
-    if "strategy_reliability" not in payload and metrics.get("reliability"):
-        payload["strategy_reliability"] = metrics.get("reliability")
-    payload["is_reliable"] = bool(payload.get("is_reliable", False)) or str(metrics.get("reliability") or "") == "high"
-    payload["approved_candidate_id"] = saved_candidate.get("id")
-    payload["approved_saved_at"] = saved_candidate.get("saved_at")
-    payload["approved_by_quant_ops"] = True
-    return payload
-
-
-def _refresh_symbol_states(
-    state: dict[str, Any],
-    search: dict[str, Any],
-    search_items: dict[str, dict[str, Any]],
-    baseline: dict[str, Any],
-) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], dict[str, Any]]:
-    latest_map = state.get("latest_symbol_candidates") if isinstance(state.get("latest_symbol_candidates"), dict) else {}
-    saved_map = state.get("saved_symbol_candidates") if isinstance(state.get("saved_symbol_candidates"), dict) else {}
-    runtime_map = state.get("runtime_symbol_apply") if isinstance(state.get("runtime_symbol_apply"), dict) else {}
-    runtime_candidates = runtime_map.get("candidate_ids") if isinstance(runtime_map.get("candidate_ids"), dict) else {}
-
-    symbols = sorted(set(search_items.keys()) | set(latest_map.keys()) | set(saved_map.keys()) | set(runtime_candidates.keys()))
-    refreshed_latest: dict[str, Any] = {}
-    refreshed_saved: dict[str, Any] = {}
-    rows: list[dict[str, Any]] = []
-    approved_count = 0
-    saved_count = 0
-    runtime_count = 0
-    for symbol in symbols:
-        search_item = search_items.get(symbol)
-        latest_candidate_raw = _refresh_symbol_candidate(
-            latest_map.get(symbol) if isinstance(latest_map.get(symbol), dict) else None,
-            search,
-            search_item,
-        )
-        latest_candidate_state = _candidate_activity_state(latest_candidate_raw, search, baseline)
-        latest_candidate = latest_candidate_raw if latest_candidate_state.get("active") else None
-        if latest_candidate:
-            refreshed_latest[symbol] = latest_candidate
-        approval = _read_symbol_approval(state, symbol)
-        if latest_candidate and approval.get("status") == "approved":
-            approved_count += 1
-        latest_guardrails = _symbol_save_guardrails(latest_candidate, approval, search=search, search_item=search_item)
-
-        saved_candidate_raw = _refresh_symbol_candidate(
-            saved_map.get(symbol) if isinstance(saved_map.get(symbol), dict) else None,
-            search,
-            search_item,
-        )
-        saved_candidate_state = _candidate_activity_state(saved_candidate_raw, search, baseline)
-        saved_candidate = saved_candidate_raw if saved_candidate_state.get("active") else None
-        if saved_candidate:
-            refreshed_saved[symbol] = saved_candidate
-            saved_count += 1
-        saved_guardrails = _symbol_save_guardrails(saved_candidate, approval, search=search, search_item=search_item)
-
-        runtime_candidate_id = str(runtime_candidates.get(symbol) or "")
-        runtime_applied_at = str(runtime_map.get("applied_at") or "")
-        runtime_applied = bool(runtime_candidate_id and (not saved_candidate or str(saved_candidate.get("id") or "") == runtime_candidate_id))
-        if runtime_applied:
-            runtime_count += 1
-
-        should_include_row = bool(search_item or latest_candidate or saved_candidate or runtime_candidate_id or approval.get("status") != "hold")
-        if not should_include_row:
-            continue
-
-        rows.append({
-            "symbol": symbol,
-            "search_candidate": search_item,
-            "latest_candidate": latest_candidate,
-            "latest_candidate_state": latest_candidate_state,
-            "approval": approval,
-            "saved_candidate": saved_candidate,
-            "saved_candidate_state": saved_candidate_state,
-            "latest_guardrails": latest_guardrails,
-            "saved_guardrails": saved_guardrails,
-            "runtime": {
-                "applied": runtime_applied,
-                "candidate_id": runtime_candidate_id,
-                "applied_at": runtime_applied_at,
-            },
-        })
-
-    summary = {
-        "search_count": len(search_items),
-        "validated_count": len(refreshed_latest),
-        "approved_count": approved_count,
-        "saved_count": saved_count,
-        "runtime_applied_count": runtime_count,
-    }
-    return rows, refreshed_latest, refreshed_saved, summary
-
-
 def _runtime_summary(runtime_payload: dict[str, Any] | None, state_runtime: dict[str, Any] | None) -> dict[str, Any]:
     runtime_payload = runtime_payload or {}
     state_runtime = state_runtime if isinstance(state_runtime, dict) else {}
@@ -1107,7 +899,6 @@ def get_quant_ops_workflow() -> dict[str, Any]:
     search = _search_summary(search_payload)
     if _recover_pending_search_handoff(search, baseline) is not None:
         state = _self_heal_state(runtime_payload)
-    search_items = _symbol_search_candidates(search_payload, search)
 
     latest_candidate_raw = _refresh_candidate(state.get("latest_candidate"), search)
     latest_candidate_state = _candidate_activity_state(latest_candidate_raw, search, baseline)
@@ -1117,12 +908,6 @@ def get_quant_ops_workflow() -> dict[str, Any]:
     saved_candidate_state = _candidate_activity_state(saved_candidate_raw, search, baseline)
     saved_candidate = saved_candidate_raw if saved_candidate_state.get("active") else None
 
-    symbol_rows, refreshed_latest_symbols, refreshed_saved_symbols, symbol_summary = _refresh_symbol_states(
-        state,
-        search,
-        search_items,
-        baseline,
-    )
     runtime_apply = _canonicalize_runtime_summary(
         _runtime_summary(runtime_payload, state.get("runtime_apply")),
         saved_candidate,
@@ -1141,10 +926,6 @@ def get_quant_ops_workflow() -> dict[str, Any]:
         "revalidation": str(((latest_candidate or {}).get("decision") or {}).get("status") or "missing"),
         "save": "saved" if saved_candidate else "missing",
         "runtime_apply": str(runtime_apply.get("status") or "missing"),
-        "symbol_revalidation": "ready" if symbol_summary.get("validated_count", 0) > 0 else "missing",
-        "symbol_approval": "approved" if symbol_summary.get("approved_count", 0) > 0 else "missing",
-        "symbol_save": "saved" if symbol_summary.get("saved_count", 0) > 0 else "missing",
-        "symbol_runtime_apply": "applied" if symbol_summary.get("runtime_applied_count", 0) > 0 else "missing",
     }
 
     return {
@@ -1157,18 +938,14 @@ def get_quant_ops_workflow() -> dict[str, Any]:
         "latest_candidate_state": latest_candidate_state,
         "saved_candidate": saved_candidate,
         "saved_candidate_state": saved_candidate_state,
-        "symbol_candidates": symbol_rows,
-        "symbol_summary": symbol_summary,
-        "latest_symbol_candidates": refreshed_latest_symbols,
-        "saved_symbol_candidates": refreshed_saved_symbols,
         "runtime_apply": runtime_apply,
         "search_handoff": search_handoff,
         "validation_baseline": baseline,
         "stage_status": stage_status,
         "notes": [
-            "optimizer 결과는 후보 탐색용이고, latest_candidate는 재검증이 끝난 운영 후보입니다.",
-            "saved_candidate는 재검증 통과 후 저장된 스냅샷이고, runtime_apply는 실제 런타임에 적용된 상태입니다.",
-            "symbol_candidates는 종목별 탐색/재검증/승인/저장/반영 상태를 분리해서 보여줍니다.",
+            "전략 설정 탐색 결과는 strategy_candidates 목록으로 제공되고, latest_candidate는 선택된 전략 후보를 재검증한 운영 후보입니다.",
+            "saved_candidate는 재검증 통과 후 저장된 전략 후보 스냅샷이고, runtime_apply는 저장된 운영 후보만 실제 런타임에 반영한 상태입니다.",
+            "strategy_candidates가 비어 있으면 OpenClaw payload가 아직 전략 후보 셋을 보내지 않은 상태로 간주합니다.",
         ],
     }
 
@@ -1230,12 +1007,15 @@ def _finalize_search_handoff_record(
     return finalized
 
 
-def _revalidate_optimizer_candidate_impl(query: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
+def _revalidate_optimizer_candidate_impl(
+    query: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    candidate_key: str | None = None,
+) -> dict[str, Any]:
     search = _search_summary(load_search_optimized_params())
     if not search.get("available"):
         return {"ok": False, "error": "optimizer_search_missing"}
-    if not search.get("global_params"):
-        return {"ok": False, "error": "optimizer_global_params_missing"}
 
     raw_query = query if isinstance(query, dict) else {}
     _, resolved_query, resolved_settings = _resolve_validation_context(raw_query, settings)
@@ -1243,9 +1023,27 @@ def _revalidate_optimizer_candidate_impl(query: dict[str, Any], settings: dict[s
         str(key) for key in raw_query.keys()
         if str(key) in _OPTIMIZABLE_KEYS
     }
+    strategy_candidates = search.get("strategy_candidates") if isinstance(search.get("strategy_candidates"), list) else []
+    selected_search_candidate = None
+    patch_source = search.get("global_params") or {}
+    candidate_key = str(candidate_key or "").strip() or None
+    if candidate_key:
+        selected_search_candidate = next(
+            (
+                item for item in strategy_candidates
+                if str(item.get("key") or "").strip() == candidate_key
+            ),
+            None,
+        )
+        if not isinstance(selected_search_candidate, dict):
+            return {"ok": False, "error": "search_candidate_missing"}
+        patch_source = selected_search_candidate.get("patch") or {}
+    elif not patch_source:
+        return {"ok": False, "error": "optimizer_global_params_missing"}
+
     mutated_query = _merge_query_patch(
         resolved_query,
-        search.get("global_params") or {},
+        patch_source,
         preserve_keys=explicit_override_keys,
     )
     diagnostics = run_validation_diagnostics(_build_service_query(mutated_query, resolved_settings))
@@ -1263,6 +1061,14 @@ def _revalidate_optimizer_candidate_impl(query: dict[str, Any], settings: dict[s
         settings=resolved_settings,
         diagnostics=diagnostics,
     )
+    if isinstance(selected_search_candidate, dict):
+        candidate["source"] = "optimizer_search_candidate"
+        candidate["search_candidate_key"] = str(selected_search_candidate.get("key") or "")
+        candidate["search_candidate_label"] = str(selected_search_candidate.get("label") or "")
+        candidate["search_candidate_summary"] = str(selected_search_candidate.get("summary") or "")
+        candidate["search_candidate_source"] = str(selected_search_candidate.get("source") or "")
+        candidate["patch"] = dict(selected_search_candidate.get("patch") or {})
+        candidate["patch_lines"] = list(selected_search_candidate.get("patch_lines") or [])
     candidate["runtime_candidate_source_mode"] = normalize_runtime_candidate_source_mode(
         settings.get("runtime_candidate_source_mode")
     )
@@ -1406,7 +1212,8 @@ def finalize_optimizer_search_handoff(*, success: bool, error: str = "") -> dict
 def revalidate_optimizer_candidate(payload: dict[str, Any]) -> dict[str, Any]:
     query = payload.get("query") if isinstance(payload.get("query"), dict) else {}
     settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
-    result = _revalidate_optimizer_candidate_impl(query, settings)
+    candidate_key = str(payload.get("candidate_key") or "").strip() or None
+    result = _revalidate_optimizer_candidate_impl(query, settings, candidate_key=candidate_key)
     result["workflow"] = get_quant_ops_workflow()
     return result
 
@@ -1455,175 +1262,6 @@ def save_validated_candidate(payload: dict[str, Any]) -> dict[str, Any]:
     _save_state(state)
     return {
         "ok": True,
-        "candidate": saved_candidate,
-        "workflow": get_quant_ops_workflow(),
-    }
-
-
-def revalidate_symbol_candidate(payload: dict[str, Any]) -> dict[str, Any]:
-    symbol = _symbol_code(payload.get("symbol"))
-    query = payload.get("query") if isinstance(payload.get("query"), dict) else {}
-    settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
-    _, resolved_query, resolved_settings = _resolve_validation_context(query, settings)
-    search_payload = load_search_optimized_params()
-    search = _search_summary(search_payload)
-    search_items = _symbol_search_candidates(search_payload, search)
-    if not symbol:
-        return {"ok": False, "error": "symbol_required", "workflow": get_quant_ops_workflow()}
-    search_item = search_items.get(symbol)
-    if not search_item:
-        return {
-            "ok": False,
-            "error": "symbol_search_candidate_missing",
-            "symbol": symbol,
-            "workflow": get_quant_ops_workflow(),
-        }
-    patch = search_item.get("patch") if isinstance(search_item.get("patch"), dict) else {}
-    if not patch:
-        return {
-            "ok": False,
-            "error": "symbol_overlay_patch_missing",
-            "symbol": symbol,
-            "workflow": get_quant_ops_workflow(),
-        }
-
-    mutated_query = _merge_query_patch(resolved_query, patch)
-    symbol_query = dict(mutated_query)
-    symbol_query["symbols"] = symbol
-    search_market = str(search_item.get("market") or "").strip().lower()
-    if search_market in {"kospi", "nasdaq", "all"}:
-        symbol_query["market_scope"] = search_market
-    diagnostics = run_validation_diagnostics(_build_service_query(symbol_query, resolved_settings))
-    if not isinstance(diagnostics, dict) or diagnostics.get("error") or not diagnostics.get("ok"):
-        return {
-            "ok": False,
-            "error": str((diagnostics or {}).get("error") or "symbol_candidate_revalidation_failed"),
-            "symbol": symbol,
-            "details": diagnostics,
-            "workflow": get_quant_ops_workflow(),
-        }
-    candidate = _build_symbol_candidate(
-        symbol=symbol,
-        search=search,
-        search_item=search_item,
-        base_query=resolved_query,
-        mutated_query=symbol_query,
-        settings=resolved_settings,
-        diagnostics=diagnostics,
-    )
-    candidate["runtime_candidate_source_mode"] = normalize_runtime_candidate_source_mode(
-        settings.get("runtime_candidate_source_mode")
-    )
-    state = _load_state()
-    latest_symbol_candidates = state.get("latest_symbol_candidates") if isinstance(state.get("latest_symbol_candidates"), dict) else {}
-    latest_symbol_candidates[symbol] = candidate
-    state["latest_symbol_candidates"] = latest_symbol_candidates
-    history_map = state.get("symbol_candidate_history") if isinstance(state.get("symbol_candidate_history"), dict) else {}
-    history = history_map.get(symbol) if isinstance(history_map.get(symbol), list) else []
-    history_map[symbol] = _history_push(history, candidate)
-    state["symbol_candidate_history"] = history_map
-    approvals = state.get("symbol_approvals") if isinstance(state.get("symbol_approvals"), dict) else {}
-    approvals[symbol] = {
-        "status": "hold",
-        "note": "",
-        "reason": "awaiting_operator_review",
-        "updated_at": _now_iso(),
-        "candidate_id": candidate.get("id"),
-    }
-    state["symbol_approvals"] = approvals
-    _save_state(state)
-    return {
-        "ok": True,
-        "symbol": symbol,
-        "candidate": candidate,
-        "workflow": get_quant_ops_workflow(),
-    }
-
-
-def set_symbol_candidate_approval(payload: dict[str, Any]) -> dict[str, Any]:
-    symbol = _symbol_code(payload.get("symbol"))
-    status = str(payload.get("status") or "hold").strip().lower()
-    if status not in _SYMBOL_APPROVAL_STATUSES:
-        return {"ok": False, "error": "symbol_approval_status_invalid", "workflow": get_quant_ops_workflow()}
-    state = _load_state()
-    latest_map = state.get("latest_symbol_candidates") if isinstance(state.get("latest_symbol_candidates"), dict) else {}
-    latest_candidate = latest_map.get(symbol) if isinstance(latest_map.get(symbol), dict) else None
-    if not latest_candidate:
-        return {
-            "ok": False,
-            "error": "symbol_validated_candidate_missing",
-            "symbol": symbol,
-            "workflow": get_quant_ops_workflow(),
-        }
-    note = str(payload.get("note") or "").strip()
-    reason = str(payload.get("reason") or "").strip() or (
-        "operator_approved" if status == "approved" else "operator_rejected" if status == "rejected" else "operator_hold"
-    )
-    approvals = state.get("symbol_approvals") if isinstance(state.get("symbol_approvals"), dict) else {}
-    approvals[symbol] = {
-        "status": status,
-        "note": note,
-        "reason": reason,
-        "updated_at": _now_iso(),
-        "candidate_id": latest_candidate.get("id"),
-    }
-    state["symbol_approvals"] = approvals
-    _save_state(state)
-    return {
-        "ok": True,
-        "symbol": symbol,
-        "approval": approvals[symbol],
-        "workflow": get_quant_ops_workflow(),
-    }
-
-
-def save_symbol_candidate(payload: dict[str, Any]) -> dict[str, Any]:
-    symbol = _symbol_code(payload.get("symbol"))
-    if not symbol:
-        return {"ok": False, "error": "symbol_required", "workflow": get_quant_ops_workflow()}
-    state = _load_state()
-    latest_map = state.get("latest_symbol_candidates") if isinstance(state.get("latest_symbol_candidates"), dict) else {}
-    latest_candidate = latest_map.get(symbol) if isinstance(latest_map.get(symbol), dict) else None
-    search_payload = load_search_optimized_params()
-    search = _search_summary(search_payload)
-    search_items = _symbol_search_candidates(search_payload, search)
-    search_item = search_items.get(symbol)
-    latest_candidate = _refresh_symbol_candidate(latest_candidate, search, search_item)
-    approval = _read_symbol_approval(state, symbol)
-    guardrails = _symbol_save_guardrails(latest_candidate, approval, search=search, search_item=search_item)
-    if not latest_candidate:
-        return {
-            "ok": False,
-            "error": "symbol_validated_candidate_missing",
-            "symbol": symbol,
-            "workflow": get_quant_ops_workflow(),
-        }
-    if not bool(guardrails.get("can_save")):
-        return {
-            "ok": False,
-            "error": "symbol_save_guardrail_blocked",
-            "symbol": symbol,
-            "candidate": latest_candidate,
-            "guardrails": guardrails,
-            "workflow": get_quant_ops_workflow(),
-        }
-    saved_candidate = {
-        **latest_candidate,
-        "saved_at": _now_iso(),
-        "save_note": str(payload.get("note") or "").strip(),
-        "approval": approval,
-    }
-    saved_map = state.get("saved_symbol_candidates") if isinstance(state.get("saved_symbol_candidates"), dict) else {}
-    saved_map[symbol] = saved_candidate
-    state["saved_symbol_candidates"] = saved_map
-    history_map = state.get("saved_symbol_history") if isinstance(state.get("saved_symbol_history"), dict) else {}
-    history = history_map.get(symbol) if isinstance(history_map.get(symbol), list) else []
-    history_map[symbol] = _history_push(history, saved_candidate)
-    state["saved_symbol_history"] = history_map
-    _save_state(state)
-    return {
-        "ok": True,
-        "symbol": symbol,
         "candidate": saved_candidate,
         "workflow": get_quant_ops_workflow(),
     }
@@ -1702,17 +1340,10 @@ def _runtime_restrictions_for_candidate(candidate: dict[str, Any]) -> dict[str, 
 def _build_runtime_payload(
     candidate: dict[str, Any],
     search_payload: dict[str, Any] | None,
-    saved_symbol_candidates: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     search_payload = search_payload or {}
     meta = search_payload.get("meta") if isinstance(search_payload.get("meta"), dict) else {}
     applied_at = _now_iso()
-    symbol_candidates = saved_symbol_candidates if isinstance(saved_symbol_candidates, dict) else {}
-    per_symbol_overlay = {
-        symbol: _symbol_runtime_overlay(item)
-        for symbol, item in symbol_candidates.items()
-        if isinstance(item, dict)
-    }
     runtime_candidate_source_mode = normalize_runtime_candidate_source_mode(candidate.get("runtime_candidate_source_mode"))
     decision = candidate.get("decision") if isinstance(candidate.get("decision"), dict) else {}
     runtime_restrictions = _runtime_restrictions_for_candidate(candidate)
@@ -1726,7 +1357,7 @@ def _build_runtime_payload(
         "runtime_restrictions": runtime_restrictions,
         "validation_baseline": _global_runtime_validation_baseline(candidate),
         "guardrail_policy": copy.deepcopy(guardrail_policy),
-        "per_symbol": per_symbol_overlay,
+        "per_symbol": {},
         "meta": {
             **meta,
             "applied_candidate_id": candidate.get("id"),
@@ -1743,8 +1374,8 @@ def _build_runtime_payload(
             "guardrail_policy_version": guardrail_policy.get("version"),
             "guardrail_policy_saved_at": guardrail_policy.get("saved_at"),
             "guardrail_policy": copy.deepcopy(guardrail_policy),
-            "approved_symbol_count": len(per_symbol_overlay),
-            "approved_symbols": sorted(per_symbol_overlay.keys()),
+            "approved_symbol_count": 0,
+            "approved_symbols": [],
         },
     }
 
@@ -1770,47 +1401,7 @@ def apply_saved_candidate_to_runtime(payload: dict[str, Any]) -> dict[str, Any]:
         }
 
     search_payload = load_search_optimized_params()
-    search = _search_summary(search_payload)
-    search_items = _symbol_search_candidates(search_payload, search)
-    approvals = state.get("symbol_approvals") if isinstance(state.get("symbol_approvals"), dict) else {}
-    saved_symbol_map = state.get("saved_symbol_candidates") if isinstance(state.get("saved_symbol_candidates"), dict) else {}
-    approved_saved_symbols: dict[str, dict[str, Any]] = {}
-    skipped_symbols: dict[str, list[str]] = {}
-    for raw_symbol, raw_candidate in saved_symbol_map.items():
-        symbol = _symbol_code(raw_symbol)
-        candidate_item = _refresh_symbol_candidate(
-            raw_candidate if isinstance(raw_candidate, dict) else None,
-            search,
-            search_items.get(symbol),
-        )
-        approval = {
-            **_read_symbol_approval(state, symbol),
-            "status": str((approvals.get(symbol) or {}).get("status") or "hold"),
-        }
-        symbol_guardrails = _symbol_save_guardrails(
-            candidate_item,
-            approval,
-            search=search,
-            search_item=search_items.get(symbol),
-        )
-        if candidate_item and symbol_guardrails.get("can_apply"):
-            approved_saved_symbols[symbol] = candidate_item
-        else:
-            skipped_symbols[symbol] = list(symbol_guardrails.get("reasons") or ["symbol_runtime_apply_guardrail_blocked"])
-
-    runtime_candidate_source_mode = normalize_runtime_candidate_source_mode(
-        saved_candidate.get("runtime_candidate_source_mode")
-    )
-    if runtime_candidate_source_mode == "quant_only" and not approved_saved_symbols:
-        return {
-            "ok": False,
-            "error": "runtime_apply_requires_symbol_candidates",
-            "candidate": saved_candidate,
-            "runtime_candidate_source_mode": runtime_candidate_source_mode,
-            "workflow": get_quant_ops_workflow(),
-        }
-
-    runtime_payload = _build_runtime_payload(saved_candidate, search_payload, approved_saved_symbols)
+    runtime_payload = _build_runtime_payload(saved_candidate, search_payload)
     write_runtime_optimized_params(runtime_payload)
 
     engine_state_payload: dict[str, Any] = {}
@@ -1826,8 +1417,8 @@ def apply_saved_candidate_to_runtime(payload: dict[str, Any]) -> dict[str, Any]:
         "applied_at": runtime_payload.get("applied_at"),
         "engine_state": ((engine_state_payload.get("state") or {}).get("engine_state") if isinstance(engine_state_payload.get("state"), dict) else None),
         "next_run_at": ((engine_state_payload.get("state") or {}).get("next_run_at") if isinstance(engine_state_payload.get("state"), dict) else None),
-        "applied_symbol_count": len(approved_saved_symbols),
-        "skipped_symbols": skipped_symbols,
+        "applied_symbol_count": 0,
+        "skipped_symbols": {},
     }
     saved_candidate = {
         **saved_candidate,
@@ -1835,22 +1426,36 @@ def apply_saved_candidate_to_runtime(payload: dict[str, Any]) -> dict[str, Any]:
     }
     state["saved_candidate"] = saved_candidate
     state["runtime_apply"] = runtime_apply
-    state["runtime_symbol_apply"] = {
-        "applied_at": runtime_payload.get("applied_at"),
-        "candidate_ids": {
-            symbol: str(item.get("id") or "")
-            for symbol, item in approved_saved_symbols.items()
-            if isinstance(item, dict)
-        },
-        "symbol_count": len(approved_saved_symbols),
-        "skipped_symbols": skipped_symbols,
-    }
     _save_state(state)
     return {
         "ok": True,
         "candidate": saved_candidate,
         "runtime_apply": runtime_apply,
-        "symbol_apply": state.get("runtime_symbol_apply"),
         "engine": engine_state_payload,
         "workflow": get_quant_ops_workflow(),
+    }
+
+
+def reset_quant_ops_workflow_results(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = payload if isinstance(payload, dict) else {}
+    clear_search = bool(payload.get("clear_search", True))
+
+    state = _default_state()
+    _save_state(state)
+
+    if clear_search:
+        try:
+            SEARCH_OPTIMIZED_PARAMS_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    return {
+        "ok": True,
+        "message": "전략 검증 결과를 초기화했어요. 운영 중인 runtime 반영값은 건드리지 않았습니다.",
+        "workflow": get_quant_ops_workflow(),
+        "cleared": {
+            "quant_ops_state": True,
+            "search_result": clear_search,
+            "runtime_payload": False,
+        },
     }

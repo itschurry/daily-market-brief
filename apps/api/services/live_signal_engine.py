@@ -19,6 +19,7 @@ from services.paper_runtime_store import load_strategy_scan, save_strategy_scan
 from services.sizing_service import recommend_position_size
 from services.strategy_registry import list_strategies
 from services.universe_builder import get_universe_snapshot
+from market_utils import normalize_market
 
 
 _SIGNAL_STATE_PRIORITY = {"exit": 3, "entry": 2, "watch": 1}
@@ -171,7 +172,15 @@ def scan_strategy(
         return snapshot
 
     started = datetime.datetime.now(datetime.timezone.utc)
-    universe = get_universe_snapshot(str(strategy.get("universe_rule") or "top_liquidity_200"), market=market, refresh=refresh)
+    market = normalize_market(market)
+    if not market:
+        market = "KOSPI"
+
+    universe = get_universe_snapshot(
+        str(strategy.get("universe_rule") or "kospi"),
+        market=market,
+        refresh=refresh,
+    )
     profile = _profile(strategy)
     account_payload = account or {"positions": [], "orders": [], "equity_krw": 0.0, "fx_rate": 1300.0, "cash_krw": 0.0, "cash_usd": 0.0}
     positions = account_payload.get("positions", []) if isinstance(account_payload.get("positions"), list) else []

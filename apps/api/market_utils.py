@@ -144,7 +144,7 @@ def resolve_market(
     scope: str = "live",
 ) -> str:
     normalized_market = normalize_market(market)
-    catalog_match = lookup_company_listing(code=code, name=name, ticker=ticker, scope=scope)
+    catalog_match = lookup_company_listing(code=code, name=name, market=normalized_market, ticker=ticker, scope=scope)
     if catalog_match:
         catalog_market = str(catalog_match.get("market") or "")
         if not normalized_market:

@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { fetchResearchSnapshotLatest, fetchResearchSnapshots } from '../api/domain';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import type { ConsoleSnapshot } from '../types/consoleView';
 import type { ResearchSnapshotItem } from '../types/domain';
-import { formatDateTime, formatNumber } from '../utils/format';
+import { formatDateTime, formatNumber, formatSymbol } from '../utils/format';
 
 interface ResearchSnapshotsPageProps {
   snapshot: ConsoleSnapshot;
@@ -45,7 +45,7 @@ function SnapshotCard({ item }: { item: ResearchSnapshotItem }) {
     <div className="page-section" style={{ padding: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
         <div>
-          <div className="section-title">{item.symbol} <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{item.market}</span></div>
+          <div className="section-title">{formatSymbol(item.symbol, item.name)} <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{item.market}</span></div>
           <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>{formatDateTime(item.generated_at || item.bucket_ts)}</div>
         </div>
         <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
@@ -97,9 +97,32 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
   const [market, setMarket] = useState('KOSPI');
   const [latestSnapshot, setLatestSnapshot] = useState<ResearchSnapshotItem | null>(null);
   const [history, setHistory] = useState<ResearchSnapshotItem[]>([]);
+  const [recentSnapshots, setRecentSnapshots] = useState<ResearchSnapshotItem[]>([]);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [queryLoading, setQueryLoading] = useState(false);
+  const [recentLoading, setRecentLoading] = useState(false);
   const [queried, setQueried] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRecent() {
+      setRecentLoading(true);
+      try {
+        const response = await fetchResearchSnapshots({ limit: 30, descending: true });
+        if (!cancelled && Array.isArray(response?.snapshots)) {
+          setRecentSnapshots(response.snapshots);
+        }
+      } catch {
+        if (!cancelled) setRecentSnapshots([]);
+      } finally {
+        if (!cancelled) setRecentLoading(false);
+      }
+    }
+    void loadRecent();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleQuery = async () => {
     if (!symbol.trim()) {
@@ -140,8 +163,9 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
   };
 
   const statusItems = [
+    { label: '최근 스냅샷', value: `${recentSnapshots.length}개`, tone: recentSnapshots.length > 0 ? 'good' as const : 'neutral' as const },
     { label: '종목', value: latestSnapshot ? `${latestSnapshot.symbol} · ${latestSnapshot.market}` : '-', tone: 'neutral' as const },
-    { label: '스냅샷 수', value: `${history.length}개`, tone: history.length > 0 ? 'good' as const : 'neutral' as const },
+    { label: '조회 이력', value: `${history.length}개`, tone: history.length > 0 ? 'good' as const : 'neutral' as const },
   ];
 
   return (
@@ -160,6 +184,52 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
             onClearLogs={clear}
             actions={[]}
           />
+
+          <section className="page-section" style={{ padding: 16 }}>
+            <div className="section-head-row" style={{ marginBottom: 10 }}>
+              <div>
+                <div className="section-title">최신 스냅샷 목록</div>
+                <div className="section-copy">지금 저장소에 있는 최신 Hanna snapshot을 먼저 보여줍니다.</div>
+              </div>
+              <div className="inline-badge">{recentLoading ? '불러오는 중...' : `${recentSnapshots.length}개`}</div>
+            </div>
+            {recentSnapshots.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>표시할 최신 snapshot이 없습니다.</div>
+            ) : (
+              <div style={{ overflow: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg-soft)', textAlign: 'left' }}>
+                      <th style={{ padding: 10, fontSize: 12 }}>종목</th>
+                      <th style={{ padding: 10, fontSize: 12 }}>시장</th>
+                      <th style={{ padding: 10, fontSize: 12 }}>생성 시각</th>
+                      <th style={{ padding: 10, fontSize: 12 }}>점수</th>
+                      <th style={{ padding: 10, fontSize: 12 }}>요약</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentSnapshots.map((item, idx) => (
+                      <tr
+                        key={`${item.market}-${item.symbol}-${item.bucket_ts || idx}`}
+                        style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}
+                        onClick={() => {
+                          setSymbol(item.symbol || '');
+                          setMarket(item.market || 'KOSPI');
+                          setLatestSnapshot(item);
+                        }}
+                      >
+                        <td style={{ padding: 10, fontSize: 12, fontWeight: 600 }}>{formatSymbol(item.symbol, item.name)}</td>
+                        <td style={{ padding: 10, fontSize: 12 }}>{item.market || '-'}</td>
+                        <td style={{ padding: 10, fontSize: 12, whiteSpace: 'nowrap' }}>{formatDateTime(item.generated_at || item.bucket_ts)}</td>
+                        <td style={{ padding: 10, fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>{item.research_score != null ? formatNumber(item.research_score, 1) : '-'}</td>
+                        <td style={{ padding: 10, fontSize: 12, color: 'var(--text-3)' }}>{item.summary ? (item.summary.length > 70 ? `${item.summary.slice(0, 70)}…` : item.summary) : '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
 
           <section className="page-section" style={{ padding: 16 }}>
             <div className="section-title" style={{ marginBottom: 10 }}>종목 조회</div>

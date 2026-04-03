@@ -993,16 +993,12 @@ button:disabled {
 }
 
 .tab-shell {
-  position: relative;
-  top: auto;
-  z-index: 1;
   margin-top: 0;
-  padding: 8px;
-  border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.52);
-  background: linear-gradient(180deg, rgba(255,255,255,0.78), rgba(242,247,252,0.7));
-  box-shadow: 0 16px 40px rgba(16, 32, 51, 0.08);
-  backdrop-filter: blur(16px) saturate(1.12);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .tab-shell-secondary {
@@ -1024,7 +1020,7 @@ button:disabled {
 
 .tab-button {
   position: relative;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   display: grid;
   flex: 1 1 132px;
   grid-template-columns: auto 1fr;
@@ -1033,7 +1029,7 @@ button:disabled {
   min-width: 0;
   min-height: 60px;
   border-radius: 14px;
-  background: rgba(255,255,255,0.36);
+  background: color-mix(in srgb, var(--surface-panel) 94%, white 6%);
   color: var(--text-3);
   padding: 11px 12px;
   cursor: pointer;
@@ -1043,17 +1039,17 @@ button:disabled {
 }
 
 .tab-button:hover {
-  background: rgba(29, 79, 145, 0.08);
-  border-color: rgba(29, 79, 145, 0.1);
+  background: color-mix(in srgb, var(--surface-panel-strong) 90%, white 10%);
+  border-color: var(--accent-border);
   color: var(--accent);
-  box-shadow: 0 14px 28px rgba(29, 79, 145, 0.08);
+  box-shadow: 0 10px 20px rgba(16, 32, 51, 0.06);
 }
 
 .tab-button.active {
-  background: linear-gradient(135deg, rgba(29, 79, 145, 0.16), rgba(255,255,255,0.66));
-  border-color: rgba(29, 79, 145, 0.14);
+  background: color-mix(in srgb, var(--surface-panel-strong) 92%, white 8%);
+  border-color: rgba(29, 79, 145, 0.22);
   color: var(--accent);
-  box-shadow: 0 16px 32px rgba(29, 79, 145, 0.12), inset 0 0 0 1px rgba(255,255,255,0.28);
+  box-shadow: 0 10px 18px rgba(16, 32, 51, 0.05), inset 0 0 0 1px rgba(255,255,255,0.3);
 }
 
 .tab-button.active::after {
@@ -1064,7 +1060,7 @@ button:disabled {
   bottom: 8px;
   height: 3px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(31, 77, 95, 0.28), rgba(31, 77, 95, 0.92));
+  background: linear-gradient(90deg, rgba(29, 79, 145, 0.24), rgba(29, 79, 145, 0.88));
 }
 
 .tab-step {
@@ -1075,7 +1071,7 @@ button:disabled {
   height: 28px;
   border-radius: 50%;
   border: 1px solid var(--border);
-  background: rgba(255,255,255,0.72);
+  background: rgba(255,255,255,0.82);
   font-size: 11px;
   font-weight: 700;
 }
@@ -1565,6 +1561,14 @@ button:disabled {
   gap: 10px;
 }
 
+.advanced-policy-shell {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+}
+
 .summary-metric-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -1575,7 +1579,7 @@ button:disabled {
   padding: 18px;
   border-radius: 22px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.78);
+  background: linear-gradient(180deg, rgba(255,255,255,0.82), rgba(246,249,252,0.78));
 }
 
 .summary-metric-card.is-good {

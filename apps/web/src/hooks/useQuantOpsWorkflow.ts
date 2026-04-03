@@ -3,12 +3,10 @@ import {
   applyQuantOpsRuntime,
   fetchQuantOpsWorkflow,
   revalidateQuantOpsCandidate,
-  revalidateQuantOpsSymbolCandidate,
   resetQuantOpsPolicy,
+  resetQuantOpsWorkflow,
   saveQuantOpsPolicy,
-  saveQuantOpsSymbolCandidate,
   saveQuantOpsCandidate,
-  setQuantOpsSymbolApproval,
 } from '../api/domain';
 import type { QuantOpsActionResponse, QuantOpsWorkflowResponse } from '../types/domain';
 import type { BacktestQuery } from '../types';
@@ -17,13 +15,11 @@ import type { ValidationSettings } from './useValidationSettingsStore';
 export type QuantOpsBusyAction =
   | 'refresh'
   | 'revalidate'
-  | 'revalidate_symbol'
-  | 'approve_symbol'
-  | 'save_symbol'
   | 'save'
   | 'apply'
   | 'save_policy'
   | 'reset_policy'
+  | 'reset_workflow'
   | null;
 
 export function useQuantOpsWorkflow() {
@@ -57,47 +53,17 @@ export function useQuantOpsWorkflow() {
       setWorkflow(response.data.workflow);
     }
     if (!response.ok || !response.data.ok) {
-      setLastError(response.data.error || 'quant ops workflow 작업이 실패했습니다.');
+      setLastError(response.data.message || response.data.error || 'quant ops workflow 작업이 실패했습니다.');
     } else {
       setLastError('');
     }
     return response.data;
   }, []);
 
-  const revalidate = useCallback(async (query: BacktestQuery, settings: ValidationSettings) => {
+  const revalidate = useCallback(async (query: BacktestQuery, settings: ValidationSettings, candidateKey?: string) => {
     setBusyAction('revalidate');
     try {
-      const response = await revalidateQuantOpsCandidate(query, settings);
-      return handleActionResponse(response);
-    } finally {
-      setBusyAction(null);
-    }
-  }, [handleActionResponse]);
-
-  const revalidateSymbol = useCallback(async (symbol: string, query: BacktestQuery, settings: ValidationSettings) => {
-    setBusyAction('revalidate_symbol');
-    try {
-      const response = await revalidateQuantOpsSymbolCandidate(symbol, query, settings);
-      return handleActionResponse(response);
-    } finally {
-      setBusyAction(null);
-    }
-  }, [handleActionResponse]);
-
-  const setSymbolApproval = useCallback(async (symbol: string, status: 'approved' | 'rejected' | 'hold', note?: string) => {
-    setBusyAction('approve_symbol');
-    try {
-      const response = await setQuantOpsSymbolApproval(symbol, status, note);
-      return handleActionResponse(response);
-    } finally {
-      setBusyAction(null);
-    }
-  }, [handleActionResponse]);
-
-  const saveSymbolCandidate = useCallback(async (symbol: string, note?: string) => {
-    setBusyAction('save_symbol');
-    try {
-      const response = await saveQuantOpsSymbolCandidate(symbol, note);
+      const response = await revalidateQuantOpsCandidate(query, settings, candidateKey);
       return handleActionResponse(response);
     } finally {
       setBusyAction(null);
@@ -165,6 +131,16 @@ export function useQuantOpsWorkflow() {
     }
   }, [handleActionResponse]);
 
+  const resetWorkflow = useCallback(async (clearSearch = true) => {
+    setBusyAction('reset_workflow');
+    try {
+      const response = await resetQuantOpsWorkflow(clearSearch);
+      return handleActionResponse(response);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [handleActionResponse]);
+
   return {
     workflow,
     loading,
@@ -172,11 +148,9 @@ export function useQuantOpsWorkflow() {
     lastError,
     refresh,
     revalidate,
-    revalidateSymbol,
-    setSymbolApproval,
-    saveSymbolCandidate,
     saveCandidate,
     applyRuntime,
+    resetWorkflow,
     savePolicy,
     resetPolicy,
   };

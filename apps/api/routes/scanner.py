@@ -6,6 +6,7 @@ from typing import Any
 from services.execution_service import get_execution_service
 from services.live_signal_engine import scan_live_strategies
 from services.paper_runtime_store import list_strategy_scans
+from services.strategy_registry import list_strategies
 
 _REFRESH_LOCK = threading.Lock()
 _REFRESH_RUNNING = False
@@ -25,6 +26,16 @@ def _filter_rows(rows: list[dict[str, Any]], markets: list[str]) -> list[dict[st
 def _load_cached_rows(markets: list[str]) -> list[dict[str, Any]]:
     rows = list_strategy_scans()
     safe_rows = [item for item in rows if isinstance(item, dict)]
+    current_strategy_ids = {
+        str(item.get("strategy_id") or "").strip()
+        for item in list_strategies()
+        if isinstance(item, dict) and str(item.get("strategy_id") or "").strip()
+    }
+    if current_strategy_ids:
+        safe_rows = [
+            item for item in safe_rows
+            if str(item.get("strategy_id") or "").strip() in current_strategy_ids
+        ]
     return _filter_rows(safe_rows, markets)
 
 

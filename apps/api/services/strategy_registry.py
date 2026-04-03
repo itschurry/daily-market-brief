@@ -13,6 +13,12 @@ from market_utils import normalize_market
 STRATEGY_REGISTRY_PATH = LOGS_DIR / "strategy_registry.json"
 _ALLOWED_APPROVAL_STATUS = {"draft", "testing", "approved", "paused", "retired"}
 _ALLOWED_MARKETS = {"KOSPI", "NASDAQ"}
+_UNIVERSE_RULE_ALIASES = {
+    "top_liquidity_200": "kospi",
+    "us_mega_cap": "sp500",
+    "volatility_breakout_pool": "sp500",
+    "kr_core_bluechips": "kospi",
+}
 
 
 def _now_iso() -> str:
@@ -41,7 +47,7 @@ _DEFAULT_STRATEGIES: list[dict[str, Any]] = [
         "enabled": True,
         "approval_status": "approved",
         "market": "KOSPI",
-        "universe_rule": "top_liquidity_200",
+        "universe_rule": "kospi",
         "scan_cycle": "5m",
         "entry_rule": "close > sma20 > sma60 and volume_ratio >= 1.0 and 38 <= rsi14 <= 62",
         "exit_rule": "close < sma20 or stop_loss_pct or max_holding_days",
@@ -67,7 +73,7 @@ _DEFAULT_STRATEGIES: list[dict[str, Any]] = [
         "enabled": True,
         "approval_status": "approved",
         "market": "NASDAQ",
-        "universe_rule": "us_mega_cap",
+        "universe_rule": "sp500",
         "scan_cycle": "10m",
         "entry_rule": "close > sma20 > sma60 and macd_hist > 0 and volume_ratio >= 1.2",
         "exit_rule": "close < sma20 or stop_loss_pct or max_holding_days",
@@ -93,7 +99,7 @@ _DEFAULT_STRATEGIES: list[dict[str, Any]] = [
         "enabled": False,
         "approval_status": "testing",
         "market": "KOSPI",
-        "universe_rule": "volatility_breakout_pool",
+        "universe_rule": "kospi",
         "scan_cycle": "15m",
         "entry_rule": "event-sensitive leaders with breakout confirmation",
         "exit_rule": "event fade or close < sma20",
@@ -151,7 +157,10 @@ def _normalize_strategy(payload: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(payload.get("enabled", False)),
         "approval_status": approval_status,
         "market": market,
-        "universe_rule": str(payload.get("universe_rule") or "top_liquidity_200").strip() or "top_liquidity_200",
+        "universe_rule": _UNIVERSE_RULE_ALIASES.get(
+            str(payload.get("universe_rule") or "kospi").strip().lower(),
+            str(payload.get("universe_rule") or "kospi").strip() or "kospi",
+        ),
         "scan_cycle": str(payload.get("scan_cycle") or "5m").strip() or "5m",
         "entry_rule": str(payload.get("entry_rule") or "").strip(),
         "exit_rule": str(payload.get("exit_rule") or "").strip(),

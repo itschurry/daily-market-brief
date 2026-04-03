@@ -123,9 +123,9 @@ export function fetchResearchStatus(provider = 'openclaw') {
   return getJSON<ResearchStatusResponse>(`/api/research/status?provider=${encodeURIComponent(provider)}`, { noStore: true });
 }
 
-export function fetchResearchSnapshots(params: {
-  symbol: string;
-  market: string;
+export function fetchResearchSnapshots(params?: {
+  symbol?: string;
+  market?: string;
   provider?: string;
   bucketStart?: string;
   bucketEnd?: string;
@@ -133,13 +133,13 @@ export function fetchResearchSnapshots(params: {
   limit?: number;
 }) {
   const query = new URLSearchParams();
-  query.set('symbol', params.symbol);
-  query.set('market', params.market);
-  if (params.provider) query.set('provider', params.provider);
-  if (params.bucketStart) query.set('bucket_start', params.bucketStart);
-  if (params.bucketEnd) query.set('bucket_end', params.bucketEnd);
-  if (typeof params.limit === 'number') query.set('limit', String(params.limit));
-  if (typeof params.descending === 'boolean') query.set('descending', params.descending ? '1' : '0');
+  if (params?.symbol) query.set('symbol', params.symbol);
+  if (params?.market) query.set('market', params.market);
+  if (params?.provider) query.set('provider', params.provider);
+  if (params?.bucketStart) query.set('bucket_start', params.bucketStart);
+  if (params?.bucketEnd) query.set('bucket_end', params.bucketEnd);
+  if (typeof params?.limit === 'number') query.set('limit', String(params.limit));
+  if (typeof params?.descending === 'boolean') query.set('descending', params.descending ? '1' : '0');
   const queryString = query.toString();
   return getJSON<ResearchSnapshotsResponse>(`/api/research/snapshots${queryString ? `?${queryString}` : ''}`, { noStore: true });
 }
@@ -198,20 +198,8 @@ export function fetchQuantOpsWorkflow() {
   return getJSON<QuantOpsWorkflowResponse>('/api/quant-ops/workflow', { noStore: true });
 }
 
-export function revalidateQuantOpsCandidate(query: BacktestQuery, settings: ValidationSettings) {
-  return postJSON<QuantOpsActionResponse>('/api/quant-ops/revalidate', { query, settings: serializeValidationSettings(settings) });
-}
-
-export function revalidateQuantOpsSymbolCandidate(symbol: string, query: BacktestQuery, settings: ValidationSettings) {
-  return postJSON<QuantOpsActionResponse>('/api/quant-ops/revalidate-symbol', { symbol, query, settings: serializeValidationSettings(settings) });
-}
-
-export function setQuantOpsSymbolApproval(symbol: string, status: 'approved' | 'rejected' | 'hold', note?: string) {
-  return postJSON<QuantOpsActionResponse>('/api/quant-ops/set-symbol-approval', { symbol, status, note });
-}
-
-export function saveQuantOpsSymbolCandidate(symbol: string, note?: string) {
-  return postJSON<QuantOpsActionResponse>('/api/quant-ops/save-symbol-candidate', { symbol, note });
+export function revalidateQuantOpsCandidate(query: BacktestQuery, settings: ValidationSettings, candidateKey?: string) {
+  return postJSON<QuantOpsActionResponse>('/api/quant-ops/revalidate', { query, settings: serializeValidationSettings(settings), candidate_key: candidateKey });
 }
 
 export function saveQuantOpsCandidate(candidateId?: string, note?: string) {
@@ -220,6 +208,10 @@ export function saveQuantOpsCandidate(candidateId?: string, note?: string) {
 
 export function applyQuantOpsRuntime(candidateId?: string) {
   return postJSON<QuantOpsActionResponse>('/api/quant-ops/apply-runtime', { candidate_id: candidateId });
+}
+
+export function resetQuantOpsWorkflow(clearSearch = true) {
+  return postJSON<QuantOpsActionResponse>('/api/quant-ops/reset-workflow', { clear_search: clearSearch });
 }
 
 export function fetchReportsExplain() {

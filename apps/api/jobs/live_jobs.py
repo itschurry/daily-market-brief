@@ -12,13 +12,14 @@ from services.execution_service import get_execution_service
 from services.live_signal_engine import scan_live_strategies
 from services.universe_builder import get_universe_snapshot
 from services.strategy_registry import list_strategies
+from market_utils import normalize_market
 
 
 def run_premarket_universe_job() -> None:
     for strategy in list_strategies():
         get_universe_snapshot(
-            str(strategy.get("universe_rule") or "top_liquidity_200"),
-            market=str(strategy.get("market") or "") or None,
+            str(strategy.get("universe_rule") or "kospi"),
+            market=normalize_market(str(strategy.get("market") or "")) or None,
             refresh=True,
         )
     logger.info("premarket_universe_job completed")

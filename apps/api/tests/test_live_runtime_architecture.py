@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import sys
 import unittest
+import shutil
+import tempfile
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +18,38 @@ from services import universe_builder as universe_svc
 
 
 class LiveRuntimeArchitectureTests(unittest.TestCase):
+    def setUp(self):
+        self._original_registry_path = registry_svc.STRATEGY_REGISTRY_PATH
+        self._tmpdir = Path(tempfile.mkdtemp(prefix="strategy_registry_test_"))
+        self._tmp_registry = self._tmpdir / "strategy_registry.json"
+        self._tmp_registry.write_text(json.dumps([
+            {
+                "strategy_id": "kr_momentum_v1",
+                "name": "KR Momentum v1",
+                "enabled": True,
+                "approval_status": "approved",
+                "market": "KOSPI",
+                "universe_rule": "kospi",
+                "scan_cycle": "5m",
+                "params": {},
+                "risk_limits": {},
+                "version": 1,
+                "research_summary": {},
+                "updated_at": "2026-04-03T00:00:00+00:00",
+            }
+        ], ensure_ascii=False), encoding="utf-8")
+        registry_svc.STRATEGY_REGISTRY_PATH = self._tmp_registry
+        self.addCleanup(self._cleanup_tmp_registry)
+
+    def _cleanup_tmp_registry(self):
+        registry_svc.STRATEGY_REGISTRY_PATH = self._original_registry_path
+
+    def tearDown(self):
+        try:
+            shutil.rmtree(self._tmpdir)
+        except Exception:
+            pass
+
     def test_strategy_registry_live_only_returns_enabled_approved(self):
         rows = registry_svc.list_strategies(live_only=True)
         self.assertGreaterEqual(len(rows), 1)
@@ -22,8 +57,8 @@ class LiveRuntimeArchitectureTests(unittest.TestCase):
         self.assertTrue(all(item.get("approval_status") == "approved" for item in rows))
 
     def test_universe_builder_returns_rule_snapshot(self):
-        snapshot = universe_svc.get_universe_snapshot("top_liquidity_200", market="KOSPI", refresh=True)
-        self.assertEqual("top_liquidity_200", snapshot["rule_name"])
+        snapshot = universe_svc.get_universe_snapshot("kospi", market="KOSPI", refresh=True)
+        self.assertEqual("kospi", snapshot["rule_name"])
         self.assertEqual("KOSPI", snapshot["market"])
         self.assertGreaterEqual(snapshot["symbol_count"], 1)
 
@@ -34,7 +69,7 @@ class LiveRuntimeArchitectureTests(unittest.TestCase):
             "enabled": True,
             "approval_status": "approved",
             "market": "KOSPI",
-            "universe_rule": "top_liquidity_200",
+            "universe_rule": "kospi",
             "scan_cycle": "5m",
             "params": {
                 "market": "KOSPI",
@@ -73,8 +108,8 @@ class LiveRuntimeArchitectureTests(unittest.TestCase):
             "spread_pct": 0.1,
         }
         with patch.object(live_svc, "list_strategies", return_value=[strategy]), \
-             patch.object(live_svc, "get_universe_snapshot", return_value={
-                 "rule_name": "top_liquidity_200",
+            patch.object(live_svc, "get_universe_snapshot", return_value={
+                 "rule_name": "kospi",
                  "market": "KOSPI",
                  "symbol_count": 1,
                  "symbols": [{"code": "005930", "name": "삼성전자", "market": "KOSPI", "sector": "반도체"}],

@@ -18,15 +18,13 @@ from routes.quant_ops import (
     handle_get_quant_ops_policy,
     handle_get_quant_ops_workflow,
     handle_quant_ops_apply_runtime,
+    handle_quant_ops_reset_workflow,
     handle_quant_ops_revalidate,
-    handle_quant_ops_revalidate_symbol,
-    handle_quant_ops_save_symbol_candidate,
     handle_quant_ops_reset_policy,
     handle_quant_ops_save_candidate,
     handle_quant_ops_save_policy,
-    handle_quant_ops_set_symbol_approval,
 )
-from routes.research import handle_research_ingest_bulk, handle_research_latest_snapshot, handle_research_status
+from routes.research import handle_research_ingest_bulk, handle_research_latest_snapshot, handle_research_scanner_enrich_targets, handle_research_scanner_targets, handle_research_status
 from routes.research import handle_research_snapshots
 from routes.reports import (
     handle_analysis,
@@ -117,6 +115,8 @@ GET_ROUTES: tuple[Route, ...] = (
     Route("/api/reports/index", lambda _path, _query: handle_reports_index()),
     Route("/api/hanna/brief", lambda _path, query: handle_hanna_brief(_query_value(query, "date") or None)),
     Route("/api/research/status", lambda _path, query: handle_research_status(query)),
+    Route("/api/research/scanner-targets", lambda _path, query: handle_research_scanner_targets(query)),
+    Route("/api/research/scanner-enrich-targets", lambda _path, query: handle_research_scanner_enrich_targets(query)),
     Route("/api/research/snapshots/latest", lambda _path, query: handle_research_latest_snapshot(query)),
     Route("/api/research/snapshots", lambda _path, query: handle_research_snapshots(query)),
     Route("/api/strategies", lambda _path, query: handle_strategies_list(query)),
@@ -181,11 +181,9 @@ POST_ROUTES: tuple[Route, ...] = (
     Route("/api/quant-ops/policy/save", lambda _path, payload: handle_quant_ops_save_policy(payload)),
     Route("/api/quant-ops/policy/reset", lambda _path, _payload: handle_quant_ops_reset_policy()),
     Route("/api/quant-ops/revalidate", lambda _path, payload: handle_quant_ops_revalidate(payload)),
-    Route("/api/quant-ops/revalidate-symbol", lambda _path, payload: handle_quant_ops_revalidate_symbol(payload)),
-    Route("/api/quant-ops/set-symbol-approval", lambda _path, payload: handle_quant_ops_set_symbol_approval(payload)),
-    Route("/api/quant-ops/save-symbol-candidate", lambda _path, payload: handle_quant_ops_save_symbol_candidate(payload)),
     Route("/api/quant-ops/save-candidate", lambda _path, payload: handle_quant_ops_save_candidate(payload)),
     Route("/api/quant-ops/apply-runtime", lambda _path, payload: handle_quant_ops_apply_runtime(payload)),
+    Route("/api/quant-ops/reset-workflow", lambda _path, payload: handle_quant_ops_reset_workflow(payload)),
 )
 
 

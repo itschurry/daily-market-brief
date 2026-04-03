@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+        # user: "1000:1000"
     ports:
       - "8001:8001"
     volumes:
@@ -29,6 +30,7 @@ services:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
+        # user: "1000:1000"
     ports:
       - "8081:80"
     depends_on:
