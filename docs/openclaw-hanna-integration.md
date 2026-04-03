@@ -166,9 +166,10 @@ Recommended fields:
 - `freshness`
 - `accepted_last_run`
 - `rejected_last_run`
+- `source_of_truth: latest_snapshot_directory`
 - `received_valid_last_run`
 - `deduped_count_last_run`
-- `source_of_truth`
+- `source`
 - `status`
 
 Recommended status values:
@@ -242,6 +243,11 @@ WealthPulse should derive runtime state as:
 - `fresh`: snapshot exists and TTL is valid
 - `stale`: snapshot exists but TTL expired
 - `missing`: no matching snapshot found
+
+Lookup responsibility:
+
+- `load_research_snapshot_for_timestamp()` is bucket/time selection only.
+- TTL/staleness is evaluated by `StoredResearchScorer` using the scan timestamp.
 
 Important:
 

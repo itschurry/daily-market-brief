@@ -75,6 +75,12 @@ class ResearchStoreTests(unittest.TestCase):
         self.assertEqual(200, status_code)
         self.assertEqual("healthy", status_payload["status"])
         self.assertEqual("fresh", status_payload["freshness"])
+        self.assertEqual("latest_snapshot_directory", status_payload["source_of_truth"])
+        self.assertEqual("latest_snapshot_directory", status_payload["source"])
+        self.assertEqual(1, status_payload["accepted_last_run"])
+        self.assertEqual(0, status_payload["rejected_last_run"])
+        self.assertEqual(1, status_payload["received_valid_last_run"])
+        self.assertEqual(0, status_payload["deduped_count_last_run"])
 
     def test_latest_snapshot_route_returns_404_when_missing(self):
         status_code, payload = handle_research_latest_snapshot({"symbol": ["005930"], "market": ["KR"]})
@@ -148,6 +154,79 @@ class ResearchStoreTests(unittest.TestCase):
 
         self.assertEqual(1, len(rows))
         self.assertEqual("window b", rows[0]["summary"])
+
+    def test_same_bucket_reingest_can_replace_latest_when_newer_generated(self):
+        handle_research_ingest_bulk({
+            "provider": "openclaw",
+            "schema_version": "v1",
+            "run_id": "cron-replace-1",
+            "generated_at": "2026-04-03T10:01:00+09:00",
+            "items": [
+                {
+                    "symbol": "005930",
+                    "market": "KR",
+                    "bucket_ts": "2026-04-03T10:00:00+09:00",
+                    "research_score": 0.55,
+                    "components": {"freshness_score": 0.8},
+                    "warnings": ["already_extended_intraday"],
+                    "tags": ["news"],
+                    "summary": "older_generation",
+                    "ttl_minutes": 120,
+                }
+            ],
+        })
+        status_code, payload = handle_research_ingest_bulk({
+            "provider": "openclaw",
+            "schema_version": "v1",
+            "run_id": "cron-replace-2",
+            "generated_at": "2026-04-03T10:05:00+09:00",
+            "items": [
+                {
+                    "symbol": "005930",
+                    "market": "KR",
+                    "bucket_ts": "2026-04-03T10:00:00+09:00",
+                    "research_score": 0.72,
+                    "components": {"freshness_score": 0.9},
+                    "warnings": ["already_extended_intraday"],
+                    "tags": ["news"],
+                    "summary": "newer_generation",
+                    "ttl_minutes": 120,
+                }
+            ],
+        })
+
+        self.assertEqual(200, status_code)
+        self.assertEqual(1, payload["accepted"])
+        self.assertEqual(1, payload["received_valid"])
+        self.assertEqual(0, payload["deduped_count"])
+        latest = store.load_latest_research_snapshot("005930", "KR", provider="openclaw")
+        self.assertIsNotNone(latest)
+        self.assertEqual("newer_generation", latest["summary"])
+
+    def test_load_research_snapshot_for_timestamp_is_bucket_lookup_only(self):
+        handle_research_ingest_bulk({
+            "provider": "openclaw",
+            "schema_version": "v1",
+            "items": [
+                {
+                    "symbol": "005930",
+                    "market": "KR",
+                    "bucket_ts": "2026-04-03T09:00:00+09:00",
+                    "generated_at": "2026-04-03T09:00:00+09:00",
+                    "research_score": 0.44,
+                    "ttl_minutes": 1,
+                }
+            ],
+        })
+        row = store.load_research_snapshot_for_timestamp(
+            "005930",
+            "KR",
+            "2099-01-01T00:00:00+09:00",
+            provider="openclaw",
+        )
+
+        self.assertIsNotNone(row)
+        self.assertEqual(0.44, row["research_score"])
 
     def test_load_research_snapshots_returns_ascending_when_descending_false(self):
         handle_research_ingest_bulk({
