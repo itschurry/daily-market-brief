@@ -1258,8 +1258,8 @@ def _regime_stats_from_curve(equity_curve: list[dict[str, Any]]) -> dict[str, di
     return result
 
 
-def run_backtest_with_extended_metrics(query: dict[str, list[str]]) -> dict[str, Any]:
-    payload = get_backtest_service().run_with_optional_optimization(query, auto_optimize=True)
+def run_backtest_with_extended_metrics(query: dict[str, list[str]], *, auto_optimize: bool = True) -> dict[str, Any]:
+    payload = get_backtest_service().run_with_optional_optimization(query, auto_optimize=auto_optimize)
     if not isinstance(payload, dict):
         return {"error": "invalid_backtest_payload"}
 
@@ -1283,7 +1283,78 @@ def run_backtest_with_extended_metrics(query: dict[str, list[str]]) -> dict[str,
     return payload
 
 
-def run_validation_diagnostics(query: dict[str, list[str]]) -> dict[str, Any]:
+def _build_light_validation_payload(backtest_payload: dict[str, Any]) -> dict[str, Any]:
+    metrics = backtest_payload.get("metrics") if isinstance(backtest_payload.get("metrics"), dict) else {}
+    scorecard = backtest_payload.get("scorecard") if isinstance(backtest_payload.get("scorecard"), dict) else {}
+    reliability_diagnostic = backtest_payload.get("reliability_diagnostic") if isinstance(backtest_payload.get("reliability_diagnostic"), dict) else {}
+    trade_count = int(metrics.get("trade_count", 0) or 0)
+    positive_window_ratio = 1.0 if trade_count > 0 and _to_float(metrics.get("total_return_pct"), 0.0) > 0.0 else 0.0
+    return {
+        "ok": True,
+        "config": {
+            "mode": "light",
+            "walk_forward": False,
+        },
+        "segments": {
+            "oos": {
+                **metrics,
+                "strategy_scorecard": scorecard,
+                "exit_reason_analysis": metrics.get("exit_reason_analysis") if isinstance(metrics.get("exit_reason_analysis"), dict) else {},
+            },
+        },
+        "rolling_windows": [],
+        "summary": {
+            "windows": 1 if trade_count > 0 else 0,
+            "positive_windows": 1 if positive_window_ratio > 0 else 0,
+            "positive_window_ratio": positive_window_ratio,
+            "oos_reliability": classify_walk_forward_reliability(
+                trade_count=trade_count,
+                profit_factor=_to_float(metrics.get("profit_factor"), 0.0),
+                sharpe=_to_float(metrics.get("sharpe"), 0.0),
+                total_return_pct=_to_float(metrics.get("total_return_pct"), 0.0),
+                positive_window_ratio=positive_window_ratio,
+            ).label,
+            "reliability_diagnostic": reliability_diagnostic,
+            "composite_score": scorecard.get("composite_score"),
+            "exit_reason_stats": metrics.get("exit_reason_stats") if isinstance(metrics.get("exit_reason_stats"), dict) else {},
+            "exit_reason_analysis": metrics.get("exit_reason_analysis") if isinstance(metrics.get("exit_reason_analysis"), dict) else {},
+            "regime_stats": metrics.get("regime_stats") if isinstance(metrics.get("regime_stats"), dict) else {},
+        },
+        "scorecard": scorecard,
+        "source": "backtest_light",
+    }
+
+
+def run_validation_diagnostics(query: dict[str, list[str]], *, mode: str = "full") -> dict[str, Any]:
+    normalized_mode = str(mode or "full").strip().lower()
+    if normalized_mode == "light":
+        base_backtest = run_backtest_with_extended_metrics(query, auto_optimize=False)
+        if not isinstance(base_backtest, dict):
+            return {"ok": False, "error": "invalid_validation_payload"}
+        if base_backtest.get("error"):
+            return {"ok": False, **base_backtest}
+        validation_payload = _build_light_validation_payload(base_backtest)
+        diagnosis = _diagnose_walk_forward_result(validation_payload)
+        return {
+            "ok": True,
+            "validation": validation_payload,
+            "diagnosis": diagnosis,
+            "research": {
+                "target_label": "medium",
+                "base_label": str(diagnosis.get("label") or "low"),
+                "trials_run": 0,
+                "trial_limit": 0,
+                "improvement_found": False,
+                "best_label": str(diagnosis.get("label") or "low"),
+                "suggestions": [],
+                "errors": [],
+                "notes": [
+                    "light diagnostics mode: revalidate에서는 full walk-forward 대신 단일 백테스트 기반 핵심 지표만 사용합니다.",
+                    "전체 walk-forward 및 local probe 탐색은 별도 validation 경로에서 실행하세요.",
+                ],
+            },
+        }
+
     base_payload = run_walk_forward_validation(query)
     if not isinstance(base_payload, dict):
         return {"ok": False, "error": "invalid_validation_payload"}

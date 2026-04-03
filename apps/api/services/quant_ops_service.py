@@ -1007,6 +1007,13 @@ def _finalize_search_handoff_record(
     return finalized
 
 
+def _run_revalidation_diagnostics(service_query: dict[str, list[str]]) -> dict[str, Any]:
+    try:
+        return run_validation_diagnostics(service_query, mode="light")
+    except TypeError:
+        return run_validation_diagnostics(service_query)
+
+
 def _revalidate_optimizer_candidate_impl(
     query: dict[str, Any],
     settings: dict[str, Any],
@@ -1046,7 +1053,9 @@ def _revalidate_optimizer_candidate_impl(
         patch_source,
         preserve_keys=explicit_override_keys,
     )
-    diagnostics = run_validation_diagnostics(_build_service_query(mutated_query, resolved_settings))
+    diagnostics = _run_revalidation_diagnostics(
+        _build_service_query(mutated_query, resolved_settings),
+    )
     if not isinstance(diagnostics, dict) or diagnostics.get("error") or not diagnostics.get("ok"):
         return {
             "ok": False,

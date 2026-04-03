@@ -87,7 +87,8 @@ class _StubBacktestService:
         self._payload_for_optional = payload_for_optional
         self._payload_for_run = payload_for_run
 
-    def run_with_optional_optimization(self, _query: dict[str, list[str]]) -> dict:
+    def run_with_optional_optimization(self, _query: dict[str, list[str]], auto_optimize: bool = True) -> dict:
+        _ = auto_optimize
         return copy.deepcopy(self._payload_for_optional)
 
     def parse_config(self, _query: dict[str, list[str]]) -> SimpleNamespace:
@@ -262,6 +263,24 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
         self.assertIn("summary_lines", result["diagnosis"])
         self.assertIn("suggestions", result["research"])
         self.assertGreaterEqual(result["research"]["trial_limit"], 1)
+
+    def test_validation_diagnostics_light_mode_skips_walk_forward_and_local_research(self):
+        base_payload = _load_validation_payload()
+        walk_payload = _expand_for_walk_forward(base_payload, repeats=4)
+        stub = _StubBacktestService(payload_for_optional=base_payload, payload_for_run=walk_payload)
+
+        with patch("services.validation_service.get_backtest_service", return_value=stub):
+            result = run_validation_diagnostics({
+                "rsi_min": ["45"],
+                "rsi_max": ["62"],
+            }, mode="light")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual("backtest_light", result["validation"]["source"])
+        self.assertEqual(False, result["validation"]["config"]["walk_forward"])
+        self.assertEqual(0, result["research"]["trial_limit"])
+        self.assertEqual([], result["research"]["suggestions"])
+        self.assertIn("summary_lines", result["diagnosis"])
 
 
 if __name__ == "__main__":
