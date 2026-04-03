@@ -258,6 +258,8 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
             "provider": provider,
             "run_id": "",
             "accepted": 0,
+            "received_valid": 0,
+            "deduped_count": 0,
             "rejected": 1,
             "errors": [{"index": -1, "error": "provider_mismatch"}],
         }
@@ -268,6 +270,8 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
             "provider": provider,
             "run_id": "",
             "accepted": 0,
+            "received_valid": 0,
+            "deduped_count": 0,
             "rejected": 1,
             "errors": [{"index": -1, "error": "schema_version_unsupported"}],
         }
@@ -280,6 +284,8 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
             "provider": provider,
             "run_id": run_id,
             "accepted": 0,
+            "received_valid": 0,
+            "deduped_count": 0,
             "rejected": 1,
             "errors": [{"index": -1, "error": "generated_at_required"}],
         }
@@ -291,6 +297,8 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
             "provider": provider,
             "run_id": run_id,
             "accepted": 0,
+            "received_valid": 0,
+            "deduped_count": 0,
             "rejected": 0,
             "errors": [{"index": -1, "error": "items_must_be_list"}],
         }
@@ -298,6 +306,7 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
     ingested_at = _now_iso()
     accepted_items: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    validated_item_count = 0
     batch_unique_by_key: dict[str, dict[str, Any]] = {}
     for index, item in enumerate(items):
         if not isinstance(item, dict):
@@ -315,6 +324,7 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
         except ValueError as exc:
             errors.append({"index": index, "error": str(exc)})
             continue
+        validated_item_count += 1
 
         key = _snapshot_history_key(normalized)
         if key in batch_unique_by_key and not _is_newer_snapshot(normalized, batch_unique_by_key[key]):
@@ -369,22 +379,27 @@ def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
         "last_generated_at": latest_generated_at,
         "last_run_id": run_id,
         "accepted_last_run": persisted_count,
+        "received_valid_last_run": validated_item_count,
+        "deduped_count_last_run": max(0, validated_item_count - persisted_count),
         "rejected_last_run": len(errors),
         "fresh_until": fresh_until,
     }
     _write_json(RESEARCH_PROVIDER_STATE_PATH, {"providers": providers})
 
     return {
-        "ok": persisted_count > 0 and not errors,
+        "ok": not errors,
         "provider": provider,
         "run_id": run_id,
         "accepted": persisted_count,
+        "received_valid": validated_item_count,
+        "deduped_count": max(0, validated_item_count - persisted_count),
         "rejected": len(errors),
         "errors": errors,
     }
 
 
 def load_provider_status(provider: str = OPENCLAW_PROVIDER) -> dict[str, Any]:
+    """Compute provider status from latest snapshot files and provider ingest metadata."""
     provider_key = str(provider).strip().lower() or OPENCLAW_PROVIDER
     payload = _read_json(RESEARCH_PROVIDER_STATE_PATH, {"providers": {}})
     providers = payload.get("providers") if isinstance(payload.get("providers"), dict) else {}
@@ -408,11 +423,14 @@ def load_provider_status(provider: str = OPENCLAW_PROVIDER) -> dict[str, Any]:
             "provider": provider_key,
             "status": "missing",
             "freshness": "missing",
+            "source": "latest_snapshot_directory",
             "last_received_at": "",
             "last_generated_at": "",
             "last_run_id": "",
             "accepted_last_run": 0,
             "rejected_last_run": 0,
+            "received_valid_last_run": 0,
+            "deduped_count_last_run": 0,
             "coverage_count": 0,
             "fresh_symbol_count": 0,
             "stale_symbol_count": 0,
@@ -443,6 +461,8 @@ def load_provider_status(provider: str = OPENCLAW_PROVIDER) -> dict[str, Any]:
     total_count = len(latest_snapshots)
     accepted_last_run = int(state.get("accepted_last_run") or 0) if isinstance(state, dict) else 0
     rejected_last_run = int(state.get("rejected_last_run") or 0) if isinstance(state, dict) else 0
+    received_valid_last_run = int(state.get("received_valid_last_run") or 0) if isinstance(state, dict) else 0
+    deduped_count_last_run = int(state.get("deduped_count_last_run") or 0) if isinstance(state, dict) else 0
     total_run_count = accepted_last_run + rejected_last_run
     accept_ratio = (accepted_last_run / total_run_count) if total_run_count > 0 else 0.0
     freshness = "fresh" if (fresh_symbol_count > 0 and stale_symbol_count == 0) else "stale"
@@ -462,6 +482,9 @@ def load_provider_status(provider: str = OPENCLAW_PROVIDER) -> dict[str, Any]:
         "last_run_id": str(state.get("last_run_id") or ""),
         "accepted_last_run": accepted_last_run,
         "rejected_last_run": rejected_last_run,
+        "received_valid_last_run": received_valid_last_run,
+        "deduped_count_last_run": deduped_count_last_run,
+        "source_of_truth": "latest_snapshot_directory",
         "coverage_count": total_count,
         "fresh_symbol_count": fresh_symbol_count,
         "stale_symbol_count": stale_symbol_count,
@@ -539,6 +562,11 @@ def load_research_snapshot_for_timestamp(
     *,
     provider: str = OPENCLAW_PROVIDER,
 ) -> dict[str, Any] | None:
+    """Select the best snapshot candidate for the requested timestamp.
+
+    This function only performs bucket-aware lookup, it does not enforce TTL.
+    Staleness is evaluated by runtime scorer (StoredResearchScorer).
+    """
     parsed = _parse_datetime(request_timestamp)
     if parsed is None:
         return load_latest_research_snapshot(symbol, market, provider=provider)

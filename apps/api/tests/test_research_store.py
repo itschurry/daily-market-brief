@@ -65,6 +65,8 @@ class ResearchStoreTests(unittest.TestCase):
 
         self.assertEqual(200, status_code)
         self.assertEqual(1, payload["accepted"])
+        self.assertEqual(1, payload["received_valid"])
+        self.assertEqual(0, payload["deduped_count"])
         latest = store.load_latest_research_snapshot("005930", "KR", provider="openclaw")
         self.assertIsNotNone(latest)
         self.assertEqual(0.61, latest["research_score"])
@@ -250,7 +252,7 @@ class ResearchStoreTests(unittest.TestCase):
             "provider": "openclaw",
             "schema_version": "v1",
             "run_id": "cron-dup-2",
-            "generated_at": "2026-04-03T10:00:01+09:00",
+            "generated_at": "2026-04-03T09:00:00+09:00",
             "items": [
                 {
                     "symbol": "005930",
@@ -267,6 +269,9 @@ class ResearchStoreTests(unittest.TestCase):
         })
 
         self.assertEqual(200, status_code)
+        self.assertEqual(0, payload["accepted"])
+        self.assertEqual(1, payload["received_valid"])
+        self.assertEqual(1, payload["deduped_count"])
         rows = store.load_research_snapshots("005930", "KR", provider="openclaw", limit=20, descending=True)
         self.assertEqual(1, len(rows))
 

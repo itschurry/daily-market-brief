@@ -136,10 +136,18 @@ Recommended response:
   "provider": "openclaw",
   "run_id": "cron-2026-04-03T09:30:00+09:00",
   "accepted": 1,
+  "received_valid": 1,
+  "deduped_count": 0,
   "rejected": 0,
   "errors": []
 }
 ```
+
+Notes:
+
+- `accepted` is the number of snapshots actually written/replaced in storage.
+- `received_valid` is the number of items that passed schema validation.
+- `deduped_count` is `received_valid - accepted` (existing-snapshot + in-batch dedupe effects).
 
 ### 2. Provider Status API
 
@@ -158,6 +166,9 @@ Recommended fields:
 - `freshness`
 - `accepted_last_run`
 - `rejected_last_run`
+- `received_valid_last_run`
+- `deduped_count_last_run`
+- `source_of_truth`
 - `status`
 
 Recommended status values:
