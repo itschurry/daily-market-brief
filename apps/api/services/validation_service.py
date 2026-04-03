@@ -1259,7 +1259,7 @@ def _regime_stats_from_curve(equity_curve: list[dict[str, Any]]) -> dict[str, di
 
 
 def run_backtest_with_extended_metrics(query: dict[str, list[str]]) -> dict[str, Any]:
-    payload = get_backtest_service().run_with_optional_optimization(query)
+    payload = get_backtest_service().run_with_optional_optimization(query, auto_optimize=True)
     if not isinstance(payload, dict):
         return {"error": "invalid_backtest_payload"}
 

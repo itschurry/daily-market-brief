@@ -199,14 +199,52 @@ class BacktestService:
                 _cache._backtest_run_cache.pop(oldest_key, None)
         return result
 
-    def run_with_optional_optimization(self, query: dict[str, list[str]]) -> dict:
+    @staticmethod
+    def _coerce_query_str(query: dict[str, list[str]], name: str, default: str = "") -> str:
+        value = query.get(name, [default])[0]
+        return str(value).strip() if value is not None else default.strip()
+
+    @staticmethod
+    def _coerce_query_int(
+        query: dict[str, list[str]],
+        name: str,
+        default: int,
+        minimum: int,
+        maximum: int | None = None,
+    ) -> int:
+        raw = query.get(name, [str(default)])[0]
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = default
+        if maximum is None:
+            return max(minimum, value)
+        return max(minimum, min(maximum, value))
+
+    def _build_optimization_payload(self, query: dict[str, list[str]]) -> dict[str, object]:
+        query_payload = {
+            "market_scope": self._coerce_query_str(query, "market_scope", "kospi"),
+            "lookback_days": self._coerce_query_int(query, "lookback_days", 1095, 180),
+        }
+        settings_payload = {
+            "trainingDays": self._coerce_query_int(query, "training_days", 180, 30),
+            "validationDays": self._coerce_query_int(query, "validation_days", 60, 20),
+            "objective": self._coerce_query_str(query, "objective", "수익 우선"),
+        }
+        return {"query": query_payload, "settings": settings_payload}
+
+    def run_with_optional_optimization(self, query: dict[str, list[str]], *, auto_optimize: bool = False) -> dict:
         config = self.parse_config(query)
         result = self.run(config)
+        if not auto_optimize:
+            return result
+
         if not _OPTIMIZED_PARAMS_PATH.exists():
             try:
                 from routes.optimization import handle_run_optimization
 
-                _, optimization_payload = handle_run_optimization()
+                payload = self._build_optimization_payload(query)
+                _, optimization_payload = handle_run_optimization(payload)
                 if isinstance(result, dict):
                     result["optimization"] = optimization_payload
             except Exception:

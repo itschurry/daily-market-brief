@@ -11,7 +11,7 @@ def _parse_backtest_config(query: dict[str, list[str]]) -> BacktestConfig:
 
 def handle_backtest_run(query: dict) -> tuple[int, dict]:
     try:
-        payload = get_backtest_service().run_with_optional_optimization(query)
+        payload = get_backtest_service().run_with_optional_optimization(query, auto_optimize=False)
         return 200, payload
     except Exception as e:
         return 500, {"error": str(e)}
