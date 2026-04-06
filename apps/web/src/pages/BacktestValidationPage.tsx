@@ -5,7 +5,12 @@ import { fetchStrategyMetadata, fetchValidationBacktest, fetchValidationWalkForw
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { defaultBacktestQuery } from '../hooks/useBacktest';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
-import { formatValidationSettingsLabel, useValidationSettingsStore } from '../hooks/useValidationSettingsStore';
+import {
+  formatValidationSettingsLabel,
+  useValidationSettingsStore,
+  validationSourceModeLabel,
+} from '../hooks/useValidationSettingsStore';
+import { VALIDATION_TRANSFER_STORAGE_KEY } from '../lib/validationConfigStorage';
 import type { ValidationSettings } from '../hooks/useValidationSettingsStore';
 import type { BacktestData, BacktestQuery, StrategyKind } from '../types';
 import type { StrategyRegistryItem, ValidationResponse } from '../types/domain';
@@ -19,8 +24,6 @@ interface BacktestValidationPageProps {
   errorMessage: string;
   onRefresh: () => void;
 }
-
-const STRATEGY_VALIDATION_TRANSFER_KEY = 'console_strategy_validation_transfer_v1';
 
 function strategyLabel(strategyKind: string | undefined) {
   if (strategyKind === 'mean_reversion') return 'Mean Reversion';
@@ -256,10 +259,11 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   // the effect ran with null metadata and cleared the localStorage key.
   const transferRef = useRef<StrategyRegistryItem | null>(null);
   const transferApplied = useRef(false);
+  const settingsLoadStarted = useRef(false);
   if (transferRef.current === null && !transferApplied.current) {
-    const raw = localStorage.getItem(STRATEGY_VALIDATION_TRANSFER_KEY);
+    const raw = localStorage.getItem(VALIDATION_TRANSFER_STORAGE_KEY);
     if (raw) {
-      localStorage.removeItem(STRATEGY_VALIDATION_TRANSFER_KEY);
+      localStorage.removeItem(VALIDATION_TRANSFER_STORAGE_KEY);
       try { transferRef.current = JSON.parse(raw) as StrategyRegistryItem; } catch { /* ignore */ }
     }
   }
@@ -302,9 +306,13 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   }, [metadataLoading, metadata, push, validationStore]);
 
   useEffect(() => {
-    if (validationStore.serverLoaded) return;
-    validationStore.loadSavedFromServer().catch(() => undefined);
-  }, [validationStore]);
+    if (validationStore.serverLoaded || settingsLoadStarted.current) return;
+    settingsLoadStarted.current = true;
+    validationStore.loadSavedFromServer().catch(() => {
+      settingsLoadStarted.current = false;
+      return undefined;
+    });
+  }, [validationStore.serverLoaded, validationStore]);
 
   const fetchOptimizationArtifacts = useCallback(async () => {
     try {
@@ -780,8 +788,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                     value={validationStore.draftSettings.runtimeCandidateSourceMode}
                     onChange={(e) => validationStore.setDraftSettings((prev) => ({ ...prev, runtimeCandidateSourceMode: e.target.value as ValidationSettings['runtimeCandidateSourceMode'] }))}
                   >
-                    <option value="quant_only">quant_only</option>
-                    <option value="hybrid">hybrid</option>
+                    <option value="quant_only">{validationSourceModeLabel('quant_only')}</option>
+                    <option value="hybrid">{validationSourceModeLabel('hybrid')}</option>
                   </select>
                 </label>
               </div>

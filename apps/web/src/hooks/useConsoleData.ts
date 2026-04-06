@@ -19,7 +19,7 @@ import {
 } from '../api/domain';
 import { UI_TEXT } from '../constants/uiText';
 import type { ConsoleDataState, ConsoleSnapshot } from '../types/consoleView';
-import type { AnalysisTab, LabTab, OperationsTab, TopSection } from '../types/navigation';
+import type { DashboardTab, LabTab, ResearchTab, WorkspacePage } from '../types/navigation';
 
 const FAST_POLLING_MS = 15_000;
 const MID_POLLING_MS = 30_000;
@@ -28,10 +28,10 @@ const SLOW_POLLING_MS = 60_000;
 type SnapshotKey = keyof Omit<ConsoleSnapshot, 'fetchedAt'>;
 
 interface ConsoleDataRoute {
-  section: TopSection;
-  operationsTab: OperationsTab;
+  page: WorkspacePage;
+  dashboardTab: DashboardTab;
   labTab: LabTab;
-  analysisTab: AnalysisTab;
+  researchTab: ResearchTab;
 }
 
 interface ConsoleDataProfile {
@@ -66,47 +66,17 @@ function emptySnapshot(): ConsoleSnapshot {
 }
 
 function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
-  if (route.section === 'operations' && route.operationsTab === 'overview') {
+  if (route.page === 'operations-dashboard' && route.dashboardTab === 'overview') {
     return {
       signalLimit: 40,
-      initialTargets: ['engine', 'signals', 'research', 'portfolio', 'liveMarket'],
+      initialTargets: ['engine', 'signals', 'research', 'portfolio', 'liveMarket', 'marketContext', 'strategies'],
       fastTargets: ['engine', 'liveMarket'],
       midTargets: ['signals', 'portfolio'],
-      slowTargets: ['research', 'marketContext'],
+      slowTargets: ['research', 'marketContext', 'strategies'],
     };
   }
 
-  if (route.section === 'analysis' && ['today-report', 'alerts', 'watch-decision'].includes(route.analysisTab)) {
-    return {
-      signalLimit: 80,
-      initialTargets: ['engine', 'signals', 'validation', 'reports', 'research', 'todayPicks', 'hannaBrief'],
-      fastTargets: ['engine'],
-      midTargets: ['signals'],
-      slowTargets: ['reports', 'research', 'todayPicks', 'recommendations', 'macro', 'hannaBrief'],
-    };
-  }
-
-  if (route.section === 'operations' && route.operationsTab === 'orders') {
-    return {
-      signalLimit: 0,
-      initialTargets: ['engine', 'research', 'portfolio'],
-      fastTargets: ['engine'],
-      midTargets: ['research', 'portfolio'],
-      slowTargets: [],
-    };
-  }
-
-  if (route.section === 'operations' && route.operationsTab === 'strategies') {
-    return {
-      signalLimit: 0,
-      initialTargets: ['engine', 'strategies', 'research'],
-      fastTargets: ['engine'],
-      midTargets: ['strategies'],
-      slowTargets: ['research'],
-    };
-  }
-
-  if (route.section === 'operations' && route.operationsTab === 'scanner') {
+  if (route.page === 'operations-dashboard' && route.dashboardTab === 'scanner') {
     return {
       signalLimit: 0,
       initialTargets: ['engine', 'scanner', 'research'],
@@ -116,7 +86,7 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
     };
   }
 
-  if (route.section === 'operations' && route.operationsTab === 'performance') {
+  if (route.page === 'operations-dashboard' && route.dashboardTab === 'performance') {
     return {
       signalLimit: 0,
       initialTargets: ['engine', 'performance', 'research'],
@@ -126,27 +96,17 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
     };
   }
 
-  if (route.section === 'analysis' && (route.analysisTab === 'watchlist' || route.analysisTab === 'research')) {
+  if (route.page === 'orders-execution') {
     return {
       signalLimit: 0,
-      initialTargets: ['engine'],
+      initialTargets: ['engine', 'research', 'portfolio'],
       fastTargets: ['engine'],
-      midTargets: [],
+      midTargets: ['research', 'portfolio'],
       slowTargets: [],
     };
   }
 
-  if (route.section === 'lab' && route.labTab === 'validation') {
-    return {
-      signalLimit: 0,
-      initialTargets: ['engine', 'strategies', 'research', 'validation'],
-      fastTargets: ['engine'],
-      midTargets: ['strategies'],
-      slowTargets: ['research', 'validation'],
-    };
-  }
-
-  if (route.section === 'lab' && route.labTab === 'strategies') {
+  if (route.page === 'strategy-operations') {
     return {
       signalLimit: 0,
       initialTargets: ['engine', 'strategies', 'research'],
@@ -156,13 +116,63 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
     };
   }
 
-  if (route.section === 'lab' && route.labTab === 'universe') {
+  if (route.page === 'research-ai' && ['today-report', 'alerts', 'watch-decision'].includes(route.researchTab)) {
+    return {
+      signalLimit: 80,
+      initialTargets: ['engine', 'signals', 'validation', 'reports', 'research', 'todayPicks', 'hannaBrief'],
+      fastTargets: ['engine'],
+      midTargets: ['signals'],
+      slowTargets: ['reports', 'research', 'todayPicks', 'recommendations', 'macro', 'hannaBrief'],
+    };
+  }
+
+  if (route.page === 'research-ai' && (route.researchTab === 'watchlist' || route.researchTab === 'research')) {
+    return {
+      signalLimit: 0,
+      initialTargets: ['engine'],
+      fastTargets: ['engine'],
+      midTargets: [],
+      slowTargets: [],
+    };
+  }
+
+  if (route.page === 'lab' && route.labTab === 'validation') {
+    return {
+      signalLimit: 0,
+      initialTargets: ['engine', 'strategies', 'research', 'validation'],
+      fastTargets: ['engine'],
+      midTargets: ['strategies'],
+      slowTargets: ['research', 'validation'],
+    };
+  }
+
+  if (route.page === 'lab' && route.labTab === 'strategies') {
+    return {
+      signalLimit: 0,
+      initialTargets: ['engine', 'strategies', 'research'],
+      fastTargets: ['engine'],
+      midTargets: ['strategies'],
+      slowTargets: ['research'],
+    };
+  }
+
+  if (route.page === 'lab' && route.labTab === 'universe') {
     return {
       signalLimit: 0,
       initialTargets: ['engine', 'universe'],
       fastTargets: ['engine'],
       midTargets: ['universe'],
       slowTargets: [],
+    };
+  }
+
+  if (route.page === 'settings') {
+    return {
+      signalLimit: 0,
+      initialTargets: ['engine', 'strategies', 'validation', 'research'],
+      fastTargets: ['engine'],
+      midTargets: ['strategies'],
+      slowTargets: ['validation', 'research'],
     };
   }
 
@@ -184,7 +194,7 @@ export function useConsoleData(route: ConsoleDataRoute) {
   });
   const profile = useMemo(
     () => resolveDataProfile(route),
-    [route.analysisTab, route.labTab, route.operationsTab, route.section],
+    [route.dashboardTab, route.labTab, route.page, route.researchTab],
   );
 
   const patchSnapshot = useCallback((partial: Partial<ConsoleSnapshot>, hasError: boolean) => {
@@ -273,11 +283,11 @@ export function useConsoleData(route: ConsoleDataRoute) {
     return () => window.clearInterval(timer);
   }, [fetchPartition, profile.slowTargets]);
 
-  return useMemo(
-    () => ({
-      ...state,
-      refresh,
-    }),
-    [state, refresh],
-  );
+  return {
+    snapshot: state.snapshot,
+    loading: state.loading,
+    hasError: state.hasError,
+    errorMessage: state.errorMessage,
+    refresh,
+  };
 }

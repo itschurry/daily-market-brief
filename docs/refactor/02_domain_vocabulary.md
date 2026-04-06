@@ -21,4 +21,15 @@
   - `draft -> candidate`
   - `ready -> approved`
   - `enabled -> applied`
-- legacy routes remain for compatibility, but mode names exposed to users are only `operations`, `lab`, and `analysis`.
+- legacy routes remain for compatibility.
+- user-visible workspace pages are:
+  - `operations-dashboard`
+  - `orders-execution`
+  - `strategy-operations`
+  - `lab`
+  - `research-ai`
+  - `settings`
+- these pages still map internally to the three product modes:
+  - operations
+  - lab
+  - analysis

@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import Any
 
 from market_utils import lookup_company_listing
+from services.order_decision_service import summarize_order_decision
 
 
 _SIGNAL_STAGE_PRIORITY = {
@@ -16,13 +17,6 @@ _SIGNAL_STAGE_PRIORITY = {
     "filled": 6,
     "rejected": 6,
 }
-
-
-def _to_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 @lru_cache(maxsize=256)
@@ -77,35 +71,31 @@ def _signal_key(payload: dict[str, Any]) -> str:
 
 def derive_signal_workflow(signal: dict[str, Any]) -> dict[str, Any]:
     signal_state = str(signal.get("signal_state") or "watch").lower()
-    final_action = str(signal.get("final_action") or "").strip().lower()
-    entry_allowed = bool(signal.get("entry_allowed"))
-    size_recommendation = signal.get("size_recommendation") if isinstance(signal.get("size_recommendation"), dict) else {}
-    order_qty = _to_int(size_recommendation.get("quantity") or 0)
-    risk_check = signal.get("risk_check") if isinstance(signal.get("risk_check"), dict) else {}
-    blocked_reason = str(risk_check.get("reason_code") or final_action or "")
+    decision = summarize_order_decision(signal)
+    order_qty = int(decision["order_quantity"])
+    blocked_reason = str(decision["blocked_reason"])
 
     stage = "watch"
     execution_status = "watch_only"
-    orderable = False
+    orderable = bool(decision["orderable"])
 
     if signal_state == "exit":
         stage = "execution_decided"
         execution_status = "exit_signal"
     elif signal_state != "entry":
-        if final_action == "watch_only":
+        if str(decision["reason_code"]) == "watch_only":
             stage = "signal_generated"
             execution_status = "watch_only"
         else:
             stage = "blocked"
             execution_status = "non_entry_signal"
-    elif not entry_allowed or final_action == "blocked":
+    elif str(decision["action"]) == "block":
         stage = "blocked"
         execution_status = blocked_reason or "risk_blocked"
-    elif final_action == "review_for_entry":
+    elif str(decision["action"]) == "buy":
         stage = "order_ready" if order_qty > 0 else "execution_decided"
         execution_status = "ready_for_order" if order_qty > 0 else "size_pending"
-        orderable = order_qty > 0
-    elif final_action == "watch_only":
+    elif str(decision["reason_code"]) == "operator_review":
         stage = "execution_decided"
         execution_status = "operator_review"
     else:

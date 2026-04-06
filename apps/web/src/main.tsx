@@ -2,7 +2,10 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { ToastProvider } from './hooks/useToast.tsx';
+import { migrateLegacyConsoleStorage } from './lib/validationConfigStorage.ts';
 import './index.css';
+
+migrateLegacyConsoleStorage();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

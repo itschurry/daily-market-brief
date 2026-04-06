@@ -15,8 +15,11 @@
   - 위치: 브라우저 `localStorage`
   - 용도: 사용자가 아직 서버 저장 전 편집 중인 값
   - 저장 키
-    - `backtest_query_v3`
-    - `console_validation_settings_draft_v1`
+    - `wp_config_draft_query_v1`
+    - `wp_config_draft_settings_v1`
+  - 호환 마이그레이션
+    - `backtest_query_v3 -> wp_config_draft_query_v1`
+    - `console_validation_settings_draft_v1 -> wp_config_draft_settings_v1`
 - `saved`
   - 위치: 서버 파일 저장소
   - 원본: `apps/api/services/backtest_params_store.py`

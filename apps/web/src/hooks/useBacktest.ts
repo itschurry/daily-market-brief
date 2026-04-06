@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getJSON } from '../api/client';
+import { CONFIG_DRAFT_QUERY_STORAGE_KEY, loadStoredJson, saveStoredJson } from '../lib/validationConfigStorage';
 import type { BacktestData, BacktestQuery, PortfolioConstraints, RiskProfile, StrategyKind } from '../types';
 
 function defaultPortfolioConstraints(marketScope: BacktestQuery['market_scope'] = 'kospi'): PortfolioConstraints {
@@ -86,8 +87,6 @@ export function defaultBacktestQuery(
 }
 
 export const DEFAULT_BACKTEST_QUERY: BacktestQuery = defaultBacktestQuery('kospi');
-
-const BACKTEST_QUERY_STORAGE_KEY = 'backtest_query_v3';
 
 function buildQueryString(query: BacktestQuery) {
   const params = new URLSearchParams();
@@ -188,15 +187,11 @@ function normalizeBacktestQuery(value: unknown): BacktestQuery {
 }
 
 export function loadBacktestQuery() {
-  try {
-    return normalizeBacktestQuery(JSON.parse(localStorage.getItem(BACKTEST_QUERY_STORAGE_KEY) || 'null'));
-  } catch {
-    return { ...DEFAULT_BACKTEST_QUERY };
-  }
+  return normalizeBacktestQuery(loadStoredJson(CONFIG_DRAFT_QUERY_STORAGE_KEY));
 }
 
 export function saveBacktestQuery(query: BacktestQuery) {
-  localStorage.setItem(BACKTEST_QUERY_STORAGE_KEY, JSON.stringify(query));
+  saveStoredJson(CONFIG_DRAFT_QUERY_STORAGE_KEY, query);
 }
 
 export function useBacktest(initialQuery: BacktestQuery = DEFAULT_BACKTEST_QUERY, options?: { autoRun?: boolean }) {

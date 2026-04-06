@@ -3,11 +3,10 @@ import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { deleteStrategyPreset, saveStrategyPreset, seedDefaultStrategies, toggleStrategyEnabled } from '../api/domain';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import { loadBacktestQuery } from '../hooks/useBacktest';
+import { VALIDATION_TRANSFER_STORAGE_KEY } from '../lib/validationConfigStorage';
 import type { StrategyRegistryItem } from '../types/domain';
 import type { ConsoleSnapshot } from '../types/consoleView';
 import { formatDateTime, formatPercent } from '../utils/format';
-
-const STRATEGY_VALIDATION_TRANSFER_KEY = 'console_strategy_validation_transfer_v1';
 
 interface StrategiesPageProps {
   snapshot: ConsoleSnapshot;
@@ -389,7 +388,7 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh, mod
                         현재 전략 복제
                       </button>
                       <button className="ghost-button" onClick={() => {
-                        localStorage.setItem(STRATEGY_VALIDATION_TRANSFER_KEY, JSON.stringify(selectedStrategy));
+                        localStorage.setItem(VALIDATION_TRANSFER_STORAGE_KEY, JSON.stringify(selectedStrategy));
                         window.location.href = '/lab/validation';
                       }}>
                         전략 검증 랩 열기

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from models.trade_state import TradeState
+from services.order_decision_service import summarize_order_decision
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -25,13 +26,8 @@ def build_signal_payload(
     if not reason_codes:
         reason_codes = [str(item) for item in (signal.get("reasons") or []) if str(item)]
 
-    decision_preview = "block"
-    if signal_state == "entry" and entry_allowed:
-        decision_preview = "allow"
-    elif signal_state not in {"entry", "watch", "exit"}:
-        decision_preview = "skip"
-    elif signal_state in {"watch", "exit"}:
-        decision_preview = "skip"
+    decision_summary = summarize_order_decision(signal)
+    decision_preview = "allow" if decision_summary["action"] == "buy" else "block" if decision_summary["action"] == "block" else "skip"
 
     order_preview_status = "not_created"
     if decision_preview == "allow":

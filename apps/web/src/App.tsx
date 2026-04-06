@@ -1,143 +1,168 @@
 import { useEffect, useState } from 'react';
 import { UI_TEXT } from './constants/uiText';
 import { useConsoleData } from './hooks/useConsoleData';
+import { FEATURE_FLAGS } from './lib/featureFlags';
 import { BacktestValidationPage } from './pages/BacktestValidationPage';
 import { PaperPortfolioPage } from './pages/PaperPortfolioPage';
 import { PerformancePage } from './pages/PerformancePage';
 import { ReportsPage } from './pages/ReportsPage';
 import { ResearchSnapshotsPage } from './pages/ResearchSnapshotsPage';
 import { ScannerPage } from './pages/ScannerPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { StrategiesPage } from './pages/StrategiesPage';
 import { UniversePage } from './pages/UniversePage';
 import { WatchlistPage } from './pages/WatchlistPage';
 import { WealthPulseHomePage } from './pages/WealthPulseHomePage';
-import type { AnalysisTab, LabTab, OperationsTab, TopSection } from './types/navigation';
+import type { DashboardTab, LabTab, ResearchTab, WorkspacePage } from './types/navigation';
 
 interface RouteState {
-  section: TopSection;
-  operationsTab: OperationsTab;
+  page: WorkspacePage;
+  dashboardTab: DashboardTab;
   labTab: LabTab;
-  analysisTab: AnalysisTab;
+  researchTab: ResearchTab;
   canonicalPath: string;
 }
 
-const OPERATIONS_TABS: Array<{ id: OperationsTab; label: string; path: string; hint: string }> = [
-  { id: 'overview', label: UI_TEXT.operationsTabs.overview, path: '/operations/overview', hint: '포트폴리오 · 신호 · 리스크 요약' },
-  { id: 'strategies', label: UI_TEXT.operationsTabs.strategies, path: '/operations/strategies', hint: '승인/적용 전략 상태 확인' },
-  { id: 'scanner', label: UI_TEXT.operationsTabs.scanner, path: '/operations/scanner', hint: '운영 스캐너와 후보군 관찰' },
-  { id: 'orders', label: UI_TEXT.operationsTabs.orders, path: '/operations/orders', hint: '주문 상태와 차단 사유 확인' },
-  { id: 'performance', label: UI_TEXT.operationsTabs.performance, path: '/operations/performance', hint: '운용 성과와 체결 성과 추적' },
+const WORKSPACE_PAGES: Array<{ id: WorkspacePage; label: string; path: string; hint: string }> = [
+  { id: 'operations-dashboard', label: '운영 대시보드', path: '/operations-dashboard', hint: 'applied 전략 · 신호 · 이상 징후' },
+  { id: 'orders-execution', label: '주문/체결', path: '/orders-execution', hint: '주문 상태 · 차단 사유 · 포지션' },
+  { id: 'strategy-operations', label: '전략 운영 상태', path: '/strategy-operations', hint: 'approved/applied 상태 추적' },
+  { id: 'lab', label: '실험실(Lab)', path: '/lab/validation', hint: '백테스트 · 탐색 · 재검증' },
+  { id: 'research-ai', label: '리서치/AI', path: '/research-ai/brief', hint: '시장 브리프 · AI 인사이트' },
+  { id: 'settings', label: '설정', path: '/settings', hint: 'draft/saved/displayed 상태 관리' },
+];
+
+const DASHBOARD_TABS: Array<{ id: DashboardTab; label: string; path: string; hint: string }> = [
+  { id: 'overview', label: UI_TEXT.operationsTabs.overview, path: '/operations-dashboard', hint: '현재 applied 전략과 오늘 파이프라인 상태' },
+  { id: 'scanner', label: UI_TEXT.operationsTabs.scanner, path: '/operations-dashboard/scanner', hint: '장중 후보와 blocked reason 관찰' },
+  { id: 'performance', label: UI_TEXT.operationsTabs.performance, path: '/operations-dashboard/performance', hint: '체결/운용 성과 추적' },
 ];
 
 const LAB_TABS: Array<{ id: LabTab; label: string; path: string; hint: string }> = [
-  { id: 'validation', label: UI_TEXT.labTabs.validation, path: '/lab/validation', hint: '백테스트 · 검증 · 저장 흐름' },
-  { id: 'strategies', label: UI_TEXT.labTabs.strategies, path: '/lab/strategies', hint: '프리셋 생성 · 복제 · 삭제' },
-  { id: 'universe', label: UI_TEXT.labTabs.universe, path: '/lab/universe', hint: '실험용 유니버스 비교와 검토' },
+  { id: 'validation', label: UI_TEXT.labTabs.validation, path: '/lab/validation', hint: '백테스트 · 검증 · 재검증' },
+  { id: 'strategies', label: UI_TEXT.labTabs.strategies, path: '/lab/strategies', hint: '실험용 프리셋 생성 · 복제 · 삭제' },
+  { id: 'universe', label: UI_TEXT.labTabs.universe, path: '/lab/universe', hint: '실험용 유니버스 비교' },
 ];
 
-const ANALYSIS_TABS: Array<{ id: AnalysisTab; label: string; path: string; hint: string }> = [
-  { id: 'today-report', label: UI_TEXT.analysisTabs.todayReport, path: '/analysis/brief', hint: '오늘 시장 브리프와 해석' },
-  { id: 'alerts', label: UI_TEXT.analysisTabs.alerts, path: '/analysis/alerts', hint: '리스크 알림과 대응 포인트' },
-  { id: 'watch-decision', label: UI_TEXT.analysisTabs.watchDecision, path: '/analysis/watch-decisions', hint: '관심 시나리오 검토' },
-  { id: 'watchlist', label: UI_TEXT.analysisTabs.watchlist, path: '/analysis/watchlist', hint: '관심 종목 저장과 분석' },
-  { id: 'research', label: UI_TEXT.analysisTabs.research, path: '/analysis/research', hint: '리서치 스냅샷 조회' },
+const RESEARCH_TABS: Array<{ id: ResearchTab; label: string; path: string; hint: string }> = [
+  { id: 'today-report', label: UI_TEXT.analysisTabs.todayReport, path: '/research-ai/brief', hint: '오늘 시장 브리프와 실행 포인트' },
+  { id: 'alerts', label: UI_TEXT.analysisTabs.alerts, path: '/research-ai/alerts', hint: '리스크 알림과 대응 포인트' },
+  { id: 'watch-decision', label: UI_TEXT.analysisTabs.watchDecision, path: '/research-ai/watch-decisions', hint: '관심 시나리오 검토' },
+  { id: 'watchlist', label: UI_TEXT.analysisTabs.watchlist, path: '/research-ai/watchlist', hint: '관심 종목 저장과 분석' },
+  { id: 'research', label: UI_TEXT.analysisTabs.research, path: '/research-ai/research', hint: '리서치 스냅샷 조회' },
 ];
 
-const SECTION_COPY: Record<TopSection, string> = {
-  operations: '자동거래 실행, 주문 판단, 체결 추적, 장애 확인을 운영 관점으로 봅니다.',
-  lab: '백테스트, 파라미터 탐색, 전략 실험, 재검증을 실험 모드에서만 수행합니다.',
-  analysis: '리서치, 시장 데이터 조회, AI 인사이트를 분석 모드에서만 다룹니다.',
+const PAGE_COPY: Record<WorkspacePage, string> = {
+  'operations-dashboard': '운영자가 자동거래 파이프라인 상태를 첫 화면에서 이해하도록 구성한 관제 홈입니다.',
+  'orders-execution': '주문 lifecycle, blocked reason, 체결 상태를 운영 관점에서 추적합니다.',
+  'strategy-operations': '운영 반영 대상 전략의 approved/applied 상태와 런타임 반영 여부를 봅니다.',
+  lab: '백테스트, 탐색, 검증, 프리셋 실험은 이 영역에서만 수행합니다.',
+  'research-ai': '리서치, 시장 데이터, AI 인사이트를 실행 판단과 분리해 조회합니다.',
+  settings: 'draft, saved, displayed 설정 상태와 공유 저장 기준을 한곳에서 관리합니다.',
 };
 
-const SECTION_BADGE: Record<TopSection, string> = {
-  operations: 'Execution + Monitoring + Runtime',
-  lab: 'Backtest + Validation + Config',
-  analysis: 'Research + Market Data + Insight',
-};
+function defaultRouteState(): RouteState {
+  return {
+    page: 'operations-dashboard',
+    dashboardTab: 'overview',
+    labTab: 'validation',
+    researchTab: 'today-report',
+    canonicalPath: '/operations-dashboard',
+  };
+}
+
+function withDefaults(partial: Partial<RouteState> & Pick<RouteState, 'page' | 'canonicalPath'>): RouteState {
+  return {
+    dashboardTab: 'overview',
+    labTab: 'validation',
+    researchTab: 'today-report',
+    ...partial,
+  };
+}
 
 function toRouteState(pathname: string): RouteState {
   const path = pathname.toLowerCase();
   const normalize = (nextPath: string): RouteState => toRouteState(nextPath);
 
   const legacyRedirects: Record<string, string> = {
-    '/': '/operations/overview',
-    '/home': '/operations/overview',
-    '/dashboard': '/operations/overview',
-    '/overview': '/operations/overview',
-    '/console/strategies': '/operations/strategies',
-    '/console/scanner': '/operations/scanner',
-    '/console/orders': '/operations/orders',
-    '/console/performance': '/operations/performance',
-    '/console/watchlist': '/analysis/watchlist',
-    '/console/research': '/analysis/research',
+    '/': '/operations-dashboard',
+    '/home': '/operations-dashboard',
+    '/dashboard': '/operations-dashboard',
+    '/overview': '/operations-dashboard',
+    '/operations/overview': '/operations-dashboard',
+    '/operations/scanner': '/operations-dashboard/scanner',
+    '/operations/performance': '/operations-dashboard/performance',
+    '/operations/orders': '/orders-execution',
+    '/operations/strategies': '/strategy-operations',
+    '/console/strategies': '/strategy-operations',
+    '/console/scanner': '/operations-dashboard/scanner',
+    '/console/orders': '/orders-execution',
+    '/console/performance': '/operations-dashboard/performance',
+    '/console/watchlist': '/research-ai/watchlist',
+    '/console/research': '/research-ai/research',
     '/console/validation': '/lab/validation',
     '/console/validation-lab': '/lab/validation',
     '/console/universe': '/lab/universe',
-    '/reports': '/analysis/brief',
-    '/reports/today-report': '/analysis/brief',
-    '/reports/today': '/analysis/brief',
-    '/reports/recommendations': '/analysis/brief',
-    '/reports/today-recommendations': '/analysis/brief',
-    '/reports/alerts': '/analysis/alerts',
-    '/reports/watch-decision': '/analysis/watch-decisions',
-    '/reports/action-board': '/analysis/alerts',
-    '/signals': '/operations/scanner',
-    '/paper': '/operations/orders',
+    '/reports': '/research-ai/brief',
+    '/reports/today-report': '/research-ai/brief',
+    '/reports/today': '/research-ai/brief',
+    '/reports/recommendations': '/research-ai/brief',
+    '/reports/today-recommendations': '/research-ai/brief',
+    '/reports/alerts': '/research-ai/alerts',
+    '/reports/watch-decision': '/research-ai/watch-decisions',
+    '/reports/action-board': '/research-ai/alerts',
+    '/analysis/brief': '/research-ai/brief',
+    '/analysis/alerts': '/research-ai/alerts',
+    '/analysis/watch-decisions': '/research-ai/watch-decisions',
+    '/analysis/watchlist': '/research-ai/watchlist',
+    '/analysis/research': '/research-ai/research',
+    '/signals': '/operations-dashboard/scanner',
+    '/paper': '/orders-execution',
     '/backtest': '/lab/validation',
   };
   if (legacyRedirects[path]) return normalize(legacyRedirects[path]);
 
-  if (path.startsWith('/operations/')) {
-    const segment = path.replace('/operations/', '');
-    const found = OPERATIONS_TABS.find((tab) => tab.id === segment);
-    if (found) {
-      return {
-        section: 'operations',
-        operationsTab: found.id,
-        labTab: 'validation',
-        analysisTab: 'today-report',
-        canonicalPath: found.path,
-      };
-    }
-    return normalize('/operations/overview');
+  if (path === '/operations-dashboard' || path === '/operations-dashboard/') {
+    return withDefaults({ page: 'operations-dashboard', dashboardTab: 'overview', canonicalPath: '/operations-dashboard' });
   }
-
+  if (path === '/operations-dashboard/scanner') {
+    return withDefaults({ page: 'operations-dashboard', dashboardTab: 'scanner', canonicalPath: '/operations-dashboard/scanner' });
+  }
+  if (path === '/operations-dashboard/performance') {
+    return withDefaults({ page: 'operations-dashboard', dashboardTab: 'performance', canonicalPath: '/operations-dashboard/performance' });
+  }
+  if (path === '/orders-execution') {
+    return withDefaults({ page: 'orders-execution', canonicalPath: '/orders-execution' });
+  }
+  if (path === '/strategy-operations') {
+    return withDefaults({ page: 'strategy-operations', canonicalPath: '/strategy-operations' });
+  }
   if (path.startsWith('/lab/')) {
     const segment = path.replace('/lab/', '');
     const found = LAB_TABS.find((tab) => tab.id === segment);
     if (found) {
-      return {
-        section: 'lab',
-        operationsTab: 'overview',
-        labTab: found.id,
-        analysisTab: 'today-report',
-        canonicalPath: found.path,
-      };
+      return withDefaults({ page: 'lab', labTab: found.id, canonicalPath: found.path });
     }
     return normalize('/lab/validation');
   }
-
-  if (path.startsWith('/analysis/')) {
-    const segment = path.replace('/analysis/', '');
+  if (path.startsWith('/research-ai/')) {
+    const segment = path.replace('/research-ai/', '');
     const normalizedSegment = segment === 'brief'
       ? 'today-report'
       : segment === 'watch-decisions'
         ? 'watch-decision'
         : segment;
-    const found = ANALYSIS_TABS.find((tab) => tab.id === normalizedSegment);
+    const found = RESEARCH_TABS.find((tab) => tab.id === normalizedSegment);
     if (found) {
-      return {
-        section: 'analysis',
-        operationsTab: 'overview',
-        labTab: 'validation',
-        analysisTab: found.id,
-        canonicalPath: found.path,
-      };
+      return withDefaults({ page: 'research-ai', researchTab: found.id, canonicalPath: found.path });
     }
-    return normalize('/analysis/brief');
+    return normalize('/research-ai/brief');
+  }
+  if (path === '/settings') {
+    return withDefaults({ page: 'settings', canonicalPath: '/settings' });
   }
 
-  return normalize('/operations/overview');
+  return defaultRouteState();
 }
 
 function pushPath(path: string) {
@@ -152,14 +177,24 @@ export default function App() {
   const [route, setRoute] = useState<RouteState>(() => toRouteState(location.pathname));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { snapshot, loading, hasError, errorMessage, refresh } = useConsoleData(route);
-  const activeOperationsTab = OPERATIONS_TABS.find((tab) => tab.id === route.operationsTab);
+  const activePage = WORKSPACE_PAGES.find((page) => page.id === route.page) || WORKSPACE_PAGES[0];
+  const activeDashboardTab = DASHBOARD_TABS.find((tab) => tab.id === route.dashboardTab);
   const activeLabTab = LAB_TABS.find((tab) => tab.id === route.labTab);
-  const activeAnalysisTab = ANALYSIS_TABS.find((tab) => tab.id === route.analysisTab);
-  const activeLabel = route.section === 'operations'
-    ? activeOperationsTab?.label || UI_TEXT.operationsTabs.overview
-    : route.section === 'lab'
-      ? activeLabTab?.label || UI_TEXT.labTabs.validation
-      : activeAnalysisTab?.label || UI_TEXT.analysisTabs.todayReport;
+  const activeResearchTab = RESEARCH_TABS.find((tab) => tab.id === route.researchTab);
+  const activeLabel = route.page === 'operations-dashboard'
+    ? activeDashboardTab?.label || activePage.label
+    : route.page === 'lab'
+      ? activeLabTab?.label || activePage.label
+      : route.page === 'research-ai'
+        ? activeResearchTab?.label || activePage.label
+        : activePage.label;
+  const activeHint = route.page === 'operations-dashboard'
+    ? activeDashboardTab?.hint || activePage.hint
+    : route.page === 'lab'
+      ? activeLabTab?.hint || activePage.hint
+      : route.page === 'research-ai'
+        ? activeResearchTab?.hint || activePage.hint
+        : activePage.hint;
 
   useEffect(() => {
     const initial = toRouteState(location.pathname);
@@ -180,43 +215,8 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  function moveToSection(section: TopSection) {
-    const targetPath = section === 'operations'
-      ? '/operations/overview'
-      : section === 'lab'
-        ? '/lab/validation'
-        : '/analysis/brief';
+  function navigateTo(targetPath: string) {
     const next = toRouteState(targetPath);
-    pushPath(next.canonicalPath);
-    setRoute(next);
-    setMobileNavOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function moveToOperationsTab(tab: OperationsTab) {
-    const target = OPERATIONS_TABS.find((item) => item.id === tab);
-    if (!target) return;
-    const next = toRouteState(target.path);
-    pushPath(next.canonicalPath);
-    setRoute(next);
-    setMobileNavOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function moveToLabTab(tab: LabTab) {
-    const target = LAB_TABS.find((item) => item.id === tab);
-    if (!target) return;
-    const next = toRouteState(target.path);
-    pushPath(next.canonicalPath);
-    setRoute(next);
-    setMobileNavOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function moveToAnalysisTab(tab: AnalysisTab) {
-    const target = ANALYSIS_TABS.find((item) => item.id === tab);
-    if (!target) return;
-    const next = toRouteState(target.path);
     pushPath(next.canonicalPath);
     setRoute(next);
     setMobileNavOpen(false);
@@ -254,134 +254,126 @@ export default function App() {
         <div className="app-sidebar-brand">
           <div className="app-sidebar-kicker">WealthPulse</div>
           <div className="app-sidebar-title">Operator Workspace</div>
-          <div className="app-sidebar-copy">{SECTION_COPY[route.section]}</div>
+          <div className="app-sidebar-copy">{PAGE_COPY[route.page]}</div>
         </div>
 
         <div className="app-sidebar-group">
-          <div className="app-sidebar-group-label">Modes</div>
-          <button
-            onClick={() => moveToSection('operations')}
-            className={`app-nav-button ${route.section === 'operations' ? 'active' : ''}`}
-            aria-current={route.section === 'operations' ? 'page' : undefined}
-          >
-            <span className="app-nav-step">01</span>
-            <span className="app-nav-label-wrap">
-              <span className="app-nav-label">{UI_TEXT.topTabs.operations}</span>
-              <span className="app-nav-help">자동거래 실행 · 주문 관제</span>
-            </span>
-          </button>
-          <button
-            onClick={() => moveToSection('lab')}
-            className={`app-nav-button ${route.section === 'lab' ? 'active' : ''}`}
-            aria-current={route.section === 'lab' ? 'page' : undefined}
-          >
-            <span className="app-nav-step">02</span>
-            <span className="app-nav-label-wrap">
-              <span className="app-nav-label">{UI_TEXT.topTabs.lab}</span>
-              <span className="app-nav-help">백테스트 · 검증 · 승인 준비</span>
-            </span>
-          </button>
-          <button
-            onClick={() => moveToSection('analysis')}
-            className={`app-nav-button ${route.section === 'analysis' ? 'active' : ''}`}
-            aria-current={route.section === 'analysis' ? 'page' : undefined}
-          >
-            <span className="app-nav-step">03</span>
-            <span className="app-nav-label-wrap">
-              <span className="app-nav-label">{UI_TEXT.topTabs.analysis}</span>
-              <span className="app-nav-help">리서치 · 시장 데이터 · 인사이트</span>
-            </span>
-          </button>
+          <div className="app-sidebar-group-label">Workspace</div>
+          {WORKSPACE_PAGES.map((page, index) => (
+            <button
+              key={page.id}
+              onClick={() => navigateTo(page.path)}
+              className={`app-nav-button ${route.page === page.id ? 'active' : ''}`}
+              aria-current={route.page === page.id ? 'page' : undefined}
+            >
+              <span className="app-nav-step">{String(index + 1).padStart(2, '0')}</span>
+              <span className="app-nav-label-wrap">
+                <span className="app-nav-label">{page.label}</span>
+                <span className="app-nav-help">{page.hint}</span>
+              </span>
+            </button>
+          ))}
         </div>
 
-        <div className="app-sidebar-group">
-          <div className="app-sidebar-group-label">
-            {route.section === 'operations' ? 'Operations Views' : route.section === 'lab' ? 'Lab Views' : 'Analysis Views'}
+        {(route.page === 'operations-dashboard' || route.page === 'lab' || route.page === 'research-ai') && (
+          <div className="app-sidebar-group">
+            <div className="app-sidebar-group-label">
+              {route.page === 'operations-dashboard' ? '운영 보조 화면' : route.page === 'lab' ? '실험 화면' : '리서치/AI 화면'}
+            </div>
+            {route.page === 'operations-dashboard' && DASHBOARD_TABS.map((tab, index) => (
+              <button
+                key={tab.id}
+                onClick={() => navigateTo(tab.path)}
+                className={`app-nav-button is-sub ${route.dashboardTab === tab.id ? 'active' : ''}`}
+                aria-current={route.dashboardTab === tab.id ? 'page' : undefined}
+              >
+                <span className="app-nav-step">{String(index + 1).padStart(2, '0')}</span>
+                <span className="app-nav-label-wrap">
+                  <span className="app-nav-label">{tab.label}</span>
+                  <span className="app-nav-help">{tab.hint}</span>
+                </span>
+              </button>
+            ))}
+            {route.page === 'lab' && LAB_TABS.map((tab, index) => (
+              <button
+                key={tab.id}
+                onClick={() => navigateTo(tab.path)}
+                className={`app-nav-button is-sub ${route.labTab === tab.id ? 'active' : ''}`}
+                aria-current={route.labTab === tab.id ? 'page' : undefined}
+              >
+                <span className="app-nav-step">{String(index + 1).padStart(2, '0')}</span>
+                <span className="app-nav-label-wrap">
+                  <span className="app-nav-label">{tab.label}</span>
+                  <span className="app-nav-help">{tab.hint}</span>
+                </span>
+              </button>
+            ))}
+            {route.page === 'research-ai' && RESEARCH_TABS.map((tab, index) => (
+              <button
+                key={tab.id}
+                onClick={() => navigateTo(tab.path)}
+                className={`app-nav-button is-sub ${route.researchTab === tab.id ? 'active' : ''}`}
+                aria-current={route.researchTab === tab.id ? 'page' : undefined}
+              >
+                <span className="app-nav-step">{String(index + 1).padStart(2, '0')}</span>
+                <span className="app-nav-label-wrap">
+                  <span className="app-nav-label">{tab.label}</span>
+                  <span className="app-nav-help">{tab.hint}</span>
+                </span>
+              </button>
+            ))}
           </div>
-          {route.section === 'operations' && OPERATIONS_TABS.map((tab, index) => (
-            <button
-              key={tab.id}
-              onClick={() => moveToOperationsTab(tab.id)}
-              className={`app-nav-button is-sub ${route.operationsTab === tab.id ? 'active' : ''}`}
-              aria-current={route.operationsTab === tab.id ? 'page' : undefined}
-            >
-              <span className="app-nav-step">{String(index + 1).padStart(2, '0')}</span>
-              <span className="app-nav-label-wrap">
-                <span className="app-nav-label">{tab.label}</span>
-                <span className="app-nav-help">{tab.hint}</span>
-              </span>
-            </button>
-          ))}
-          {route.section === 'lab' && LAB_TABS.map((tab, index) => (
-            <button
-              key={tab.id}
-              onClick={() => moveToLabTab(tab.id)}
-              className={`app-nav-button is-sub ${route.labTab === tab.id ? 'active' : ''}`}
-              aria-current={route.labTab === tab.id ? 'page' : undefined}
-            >
-              <span className="app-nav-step">{String(index + 1).padStart(2, '0')}</span>
-              <span className="app-nav-label-wrap">
-                <span className="app-nav-label">{tab.label}</span>
-                <span className="app-nav-help">{tab.hint}</span>
-              </span>
-            </button>
-          ))}
-          {route.section === 'analysis' && ANALYSIS_TABS.map((tab, index) => (
-            <button
-              key={tab.id}
-              onClick={() => moveToAnalysisTab(tab.id)}
-              className={`app-nav-button is-sub ${route.analysisTab === tab.id ? 'active' : ''}`}
-              aria-current={route.analysisTab === tab.id ? 'page' : undefined}
-            >
-              <span className="app-nav-step">{String(index + 1).padStart(2, '0')}</span>
-              <span className="app-nav-label-wrap">
-                <span className="app-nav-label">{tab.label}</span>
-                <span className="app-nav-help">{tab.hint}</span>
-              </span>
-            </button>
-          ))}
-        </div>
+        )}
 
         <div className="app-sidebar-foot">
           <span className={`app-chrome-pill ${loading ? 'is-live' : ''}`}>{loading ? 'Syncing' : 'Ready'}</span>
-          <span className="app-chrome-pill">{SECTION_BADGE[route.section]}</span>
+          <span className="app-chrome-pill">{FEATURE_FLAGS.refactorBundleDNavigation ? 'Bundle D IA' : 'Legacy IA'}</span>
         </div>
       </aside>
 
       <main className="app-main">
         <header className="app-main-header">
           <div>
-            <div className="app-main-kicker">Current Mode</div>
+            <div className="app-main-kicker">{activePage.label}</div>
             <h1 className="app-main-title">{activeLabel}</h1>
-            <div className="app-main-copy">{SECTION_COPY[route.section]}</div>
+            <div className="app-main-copy">{activeHint}</div>
           </div>
         </header>
 
         <div className="app-main-content">
-          {route.section === 'operations' && route.operationsTab === 'overview' && (
+          {route.page === 'operations-dashboard' && route.dashboardTab === 'overview' && (
             <WealthPulseHomePage
               {...sharedProps}
-              onGoLab={() => moveToSection('lab')}
-              onGoAnalysis={() => moveToSection('analysis')}
+              onGoLab={() => navigateTo('/lab/validation')}
+              onGoAnalysis={() => navigateTo('/research-ai/brief')}
             />
           )}
-          {route.section === 'operations' && route.operationsTab === 'strategies' && <StrategiesPage {...sharedProps} mode="operations" />}
-          {route.section === 'operations' && route.operationsTab === 'scanner' && <ScannerPage {...sharedProps} />}
-          {route.section === 'operations' && route.operationsTab === 'orders' && <PaperPortfolioPage {...sharedProps} />}
-          {route.section === 'operations' && route.operationsTab === 'performance' && <PerformancePage {...sharedProps} />}
+          {route.page === 'operations-dashboard' && route.dashboardTab === 'scanner' && <ScannerPage {...sharedProps} />}
+          {route.page === 'operations-dashboard' && route.dashboardTab === 'performance' && <PerformancePage {...sharedProps} />}
 
-          {route.section === 'lab' && route.labTab === 'validation' && <BacktestValidationPage {...sharedProps} />}
-          {route.section === 'lab' && route.labTab === 'strategies' && <StrategiesPage {...sharedProps} mode="lab" />}
-          {route.section === 'lab' && route.labTab === 'universe' && <UniversePage {...sharedProps} />}
+          {route.page === 'orders-execution' && <PaperPortfolioPage {...sharedProps} />}
+          {route.page === 'strategy-operations' && <StrategiesPage {...sharedProps} mode="operations" />}
 
-          {route.section === 'analysis' && ['today-report', 'alerts', 'watch-decision'].includes(route.analysisTab) && (
+          {route.page === 'lab' && route.labTab === 'validation' && <BacktestValidationPage {...sharedProps} />}
+          {route.page === 'lab' && route.labTab === 'strategies' && <StrategiesPage {...sharedProps} mode="lab" />}
+          {route.page === 'lab' && route.labTab === 'universe' && <UniversePage {...sharedProps} />}
+
+          {route.page === 'research-ai' && ['today-report', 'alerts', 'watch-decision'].includes(route.researchTab) && (
             <ReportsPage
               {...sharedProps}
-              reportTab={route.analysisTab as 'today-report' | 'alerts' | 'watch-decision'}
+              reportTab={route.researchTab as 'today-report' | 'alerts' | 'watch-decision'}
             />
           )}
-          {route.section === 'analysis' && route.analysisTab === 'watchlist' && <WatchlistPage {...sharedProps} />}
-          {route.section === 'analysis' && route.analysisTab === 'research' && <ResearchSnapshotsPage {...sharedProps} />}
+          {route.page === 'research-ai' && route.researchTab === 'watchlist' && <WatchlistPage {...sharedProps} />}
+          {route.page === 'research-ai' && route.researchTab === 'research' && <ResearchSnapshotsPage {...sharedProps} />}
+
+          {route.page === 'settings' && (
+            <SettingsPage
+              {...sharedProps}
+              onOpenLab={() => navigateTo('/lab/validation')}
+              onOpenStrategyStatus={() => navigateTo('/strategy-operations')}
+            />
+          )}
         </div>
       </main>
     </div>
