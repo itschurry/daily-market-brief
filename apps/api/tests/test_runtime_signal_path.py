@@ -148,6 +148,50 @@ class RuntimeValidationGateTests(unittest.TestCase):
 
 
 class StrategyEngineRuntimePathTests(unittest.TestCase):
+    def test_build_signal_book_fallbacks_to_live_signals_when_hybrid_has_no_runtime_candidates(self):
+        live_candidate = {
+            "code": "AAPL",
+            "name": "애플",
+            "market": "NASDAQ",
+            "signal_state": "watch",
+            "entry_allowed": True,
+            "final_action": "watch_only",
+            "score": 68.0,
+            "confidence": 65.0,
+            "technical_snapshot": {
+                "current_price": 172.4,
+            },
+            "layer_events": [],
+            "execution_realism": {"liquidity_gate_status": "ok"},
+            "size_recommendation": {"quantity": 1, "reason": "ok"},
+            "risk_inputs": {"stop_loss_pct": 4.2},
+            "risk_check": {"passed": True, "reason_code": "OK", "message": "watch", "checks": []},
+            "candidate_source": "live_scanner",
+        }
+        with patch.object(strategy_svc, "collect_pick_candidates", return_value=[]), \
+             patch.object(
+                 strategy_svc,
+                 "build_live_signal_book",
+                 return_value={
+                     "generated_at": "2026-04-06T09:00:00+09:00",
+                     "signals": [live_candidate],
+                     "risk_guard_state": {"entry_allowed": True, "reasons": []},
+                 },
+             ):
+            book = strategy_svc.build_signal_book(
+                markets=["NASDAQ"],
+                cfg={"runtime_candidate_source_mode": "hybrid"},
+                account={"equity_krw": 10_000_000, "orders": [], "positions": [], "fx_rate": 1300.0},
+            )
+
+        self.assertEqual(1, book["count"])
+        self.assertEqual(1, len(book["signals"]))
+        self.assertEqual("AAPL", book["signals"][0]["code"])
+        self.assertEqual("NASDAQ", book["signals"][0]["market"])
+        self.assertEqual("live_scanner", book["signals"][0]["candidate_source"])
+        self.assertEqual("hybrid", book["signals"][0]["candidate_runtime_source_mode"])
+        self.assertEqual(1, book["entry_allowed_count"])
+
     def test_build_signal_book_attaches_layer_c_metadata_for_runtime_candidates(self):
         candidate = {
             "code": "000810",

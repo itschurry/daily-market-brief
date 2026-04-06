@@ -46,6 +46,10 @@ from services.paper_runtime_store import (
     append_engine_cycle,
     append_order_event,
     append_signal_snapshots,
+    clear_account_snapshots,
+    clear_engine_cycles,
+    clear_order_events,
+    clear_signal_snapshots,
     load_engine_state,
     read_account_snapshots,
     read_engine_cycles,
@@ -1977,19 +1981,7 @@ def handle_paper_reset(payload: dict) -> tuple[int, dict]:
             paper_days=paper_days,
             seed_positions=seed_positions,
         )
-        append_account_snapshot({
-            "timestamp": _now_iso(),
-            "cycle_id": "",
-            "cash_krw": account.get("cash_krw"),
-            "cash_usd": account.get("cash_usd"),
-            "equity_krw": account.get("equity_krw"),
-            "realized_pnl_today": _today_realized_pnl(account),
-            "unrealized_pnl": 0.0,
-            "open_positions_count": len(account.get("positions", [])),
-            "total_orders_today": _today_order_counts(account).get("buy", 0) + _today_order_counts(account).get("sell", 0),
-            "days_left": account.get("days_left"),
-            "engine_state": _auto_trader_state.get("engine_state"),
-        })
+        _append_paper_reset_snapshot(account)
         return 200, {
             "ok": True,
             "account": account,
@@ -2081,7 +2073,7 @@ def handle_paper_engine_cycles(limit: int = 50) -> tuple[int, dict]:
 
 def handle_paper_order_events(limit: int = 100) -> tuple[int, dict]:
     try:
-        rows = read_order_events(limit=limit)
+        rows = [enrich_order_payload(item) for item in read_order_events(limit=limit)]
         return 200, {"ok": True, "orders": rows, "count": len(rows)}
     except Exception as exc:
         return 500, {"ok": False, "error": str(exc)}
@@ -2091,6 +2083,105 @@ def handle_paper_account_history(limit: int = 100) -> tuple[int, dict]:
     try:
         rows = read_account_snapshots(limit=limit)
         return 200, {"ok": True, "history": rows, "count": len(rows)}
+    except Exception as exc:
+        return 500, {"ok": False, "error": str(exc)}
+
+
+def _coerce_bool(raw: object, default: bool) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "t", "yes", "on"}
+    if raw is None:
+        return default
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    return bool(raw) if raw != "" else default
+
+
+def _coerce_optional_float(raw: object) -> float | None:
+    if raw in (None, ""):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value
+
+
+def _coerce_optional_int(raw: object) -> int | None:
+    if raw in (None, ""):
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value
+
+
+def _append_paper_reset_snapshot(account: dict[str, Any]) -> None:
+    append_account_snapshot({
+        "timestamp": _now_iso(),
+        "cycle_id": "",
+        "cash_krw": account.get("cash_krw"),
+        "cash_usd": account.get("cash_usd"),
+        "equity_krw": account.get("equity_krw"),
+        "realized_pnl_today": _today_realized_pnl(account),
+        "unrealized_pnl": 0.0,
+        "open_positions_count": len(account.get("positions", [])),
+        "total_orders_today": _today_order_counts(account).get("buy", 0) + _today_order_counts(account).get("sell", 0),
+        "days_left": account.get("days_left"),
+        "engine_state": _auto_trader_state.get("engine_state"),
+    })
+
+
+def handle_paper_history_clear(payload: dict) -> tuple[int, dict]:
+    try:
+        clear_all = _coerce_bool(payload.get("clear_all"), True)
+        clear_orders = clear_all or _coerce_bool(payload.get("clear_orders"), False)
+        clear_signals = clear_all or _coerce_bool(payload.get("clear_signals"), False)
+        clear_accounts = clear_all or _coerce_bool(payload.get("clear_accounts"), False)
+        clear_cycles = clear_all or _coerce_bool(payload.get("clear_cycles"), False)
+        reset_account = (
+            _coerce_bool(payload.get("reset_account"), False)
+            or _coerce_bool(payload.get("clear_account_state"), False)
+            or _coerce_bool(payload.get("hard_reset"), False)
+        )
+        if reset_account:
+            clear_accounts = True
+
+        if reset_account:
+            _hydrate_auto_trader_state()
+            engine = get_execution_engine(os.getenv("EXECUTION_MODE", "paper"))
+
+        removed_orders = clear_order_events() if clear_orders else 0
+        removed_signals = clear_signal_snapshots() if clear_signals else 0
+        removed_accounts = clear_account_snapshots() if clear_accounts else 0
+        removed_cycles = clear_engine_cycles() if clear_cycles else 0
+        reset_account_data: dict[str, Any] | None = None
+        if reset_account:
+            account = engine.reset(
+                initial_cash_krw=_coerce_optional_float(payload.get("initial_cash_krw")),
+                initial_cash_usd=_coerce_optional_float(payload.get("initial_cash_usd")),
+                paper_days=_coerce_optional_int(payload.get("paper_days")),
+                seed_positions=_parse_seed_positions(payload.get("seed_positions")),
+            )
+            _append_paper_reset_snapshot(account)
+            reset_account_data = account
+
+        return 200, {
+            "ok": True,
+            "account_reset": reset_account,
+            "clear_count": {
+                "order_events": removed_orders,
+                "signal_snapshots": removed_signals,
+                "account_snapshots": removed_accounts,
+                "engine_cycles": removed_cycles,
+            },
+            **({"account": reset_account_data} if reset_account_data is not None else {}),
+        }
+    except ValueError as exc:
+        return 400, {"ok": False, "error": str(exc)}
     except Exception as exc:
         return 500, {"ok": False, "error": str(exc)}
 
@@ -2149,6 +2240,9 @@ class ExecutionService:
 
     def paper_account_history(self, limit: int = 100) -> tuple[int, dict]:
         return handle_paper_account_history(limit)
+
+    def paper_history_clear(self, payload: dict) -> tuple[int, dict]:
+        return handle_paper_history_clear(payload)
 
     def signal_snapshots(self, limit: int = 200) -> tuple[int, dict]:
         return handle_signal_snapshots(limit)

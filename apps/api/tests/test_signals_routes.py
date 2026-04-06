@@ -16,7 +16,7 @@ from routes import signals as signals_route
 class SignalsRouteTests(unittest.TestCase):
     def test_handle_signals_rank_uses_runtime_account_context(self):
         execution_service = SimpleNamespace(
-            paper_engine_status=lambda: (200, {"account": {"cash_krw": 12_500_000, "positions": [{"code": "005930"}]}})
+            paper_account=lambda refresh=False: (200, {"account": {"cash_krw": 12_500_000, "positions": [{"code": "005930"}]}})
         )
 
         with patch.object(signals_route, "get_execution_service", return_value=execution_service), \
@@ -30,10 +30,12 @@ class SignalsRouteTests(unittest.TestCase):
             cfg={},
             account={"cash_krw": 12_500_000, "positions": [{"code": "005930"}]},
         )
+        self.assertEqual((), execution_service.paper_account.call_args.args)
+        self.assertEqual({"refresh": True}, execution_service.paper_account.call_args.kwargs)
 
     def test_handle_signal_detail_uses_runtime_account_context(self):
         execution_service = SimpleNamespace(
-            paper_engine_status=lambda: (200, {"account": {"cash_krw": 7_500_000, "positions": []}})
+            paper_account=lambda refresh=False: (200, {"account": {"cash_krw": 7_500_000, "positions": []}})
         )
         signal_payload = {
             "generated_at": "2026-04-02T18:05:00+09:00",
@@ -55,6 +57,8 @@ class SignalsRouteTests(unittest.TestCase):
             cfg={},
             account={"cash_krw": 7_500_000, "positions": []},
         )
+        self.assertEqual((), execution_service.paper_account.call_args.args)
+        self.assertEqual({"refresh": True}, execution_service.paper_account.call_args.kwargs)
 
 
 if __name__ == "__main__":

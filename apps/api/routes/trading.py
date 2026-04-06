@@ -47,7 +47,14 @@ def handle_paper_engine_resume() -> tuple[int, dict]:
 
 
 def handle_paper_engine_status() -> tuple[int, dict]:
-    return get_execution_service().paper_engine_status()
+    status, payload = get_execution_service().paper_engine_status()
+    if not isinstance(payload, dict):
+        return status, payload
+
+    _, account_payload = get_execution_service().paper_account(True)
+    if isinstance(account_payload, dict):
+        payload["account"] = account_payload
+    return status, payload
 
 
 def handle_paper_engine_cycles(query: dict[str, list[str]]) -> tuple[int, dict]:
@@ -63,6 +70,10 @@ def handle_paper_orders(query: dict[str, list[str]]) -> tuple[int, dict]:
 def handle_paper_account_history(query: dict[str, list[str]]) -> tuple[int, dict]:
     limit = _parse_limit(query, default=100, maximum=500)
     return get_execution_service().paper_account_history(limit)
+
+
+def handle_paper_history_clear(payload: dict) -> tuple[int, dict]:
+    return get_execution_service().paper_history_clear(payload)
 
 
 def handle_paper_workflow(query: dict[str, list[str]]) -> tuple[int, dict]:

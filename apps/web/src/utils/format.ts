@@ -133,6 +133,44 @@ export function formatSymbol(code?: string, name?: string): string {
 export function explainOrderFailureReason(reason: string | null | undefined): string {
   const normalized = String(reason || '').trim();
   if (!normalized) return '-';
+
+  const normalizedUpper = normalized.toUpperCase();
+  const normalizedLower = normalized.toLowerCase();
+
+  const reasonGuide: Record<string, string> = {
+    quote_stale: '시세가 오래돼 주문을 막았습니다. 가격 갱신 후 자동 재시도합니다.',
+    liquidity_guard_blocked: '유동성 가드에서 주문을 막았습니다. 유동성/스프레드 조건이 완화되어야 합니다.',
+    BUY_FAILED: '매수 주문 처리 중 브로커/엔진 단계 오류입니다. 잔액/유동성/호가를 다시 확인하세요.',
+    SELL_FAILED: '매도 주문 처리 중 브로커/엔진 단계 오류입니다. 잔액/호가/포지션 상태를 다시 확인하세요.',
+    insufficient_cash: '현금이 부족해 주문 수량이 부족합니다. 진입 수량을 낮추거나 현금 기반 한도를 확인하세요.',
+    account_unavailable: '계좌 스냅샷이 비어 있어 주문 경로 추적이 제한됩니다. 계좌 조회를 새로고침하세요.',
+    liquidity_unknown: '유동성 정보가 없어 주문이 보류되었습니다. 시장 데이터 수신 시 재평가가 필요합니다.',
+    daily_loss_limit_reached: '일일 손실 한도가 도달해 신규 진입이 차단되었습니다.',
+    LOSS_STREAK_COOLDOWN: '연속 손실 쿨다운 구간입니다. 일정 시간 이후 자동 해제됩니다.',
+    MAX_POSITIONS_REACHED: '시장별 최대 포지션 수에 도달해 신규 진입을 차단했습니다.',
+    POSITION_SIZE_LIMIT_EXCEEDED: '수량 계산 한도로 추천 수량이 0이 되어 주문하지 않습니다.',
+    SIZE_LIMIT_REACHED: '수량 계산 한도로 인해 주문을 하지 못했습니다.',
+    size_zero: '권장 수량이 0주로 계산되었습니다.',
+    max_positions_reached: '시장 최대 보유 수 한도에 따라 주문이 보류됩니다.',
+    duplicate_position: '동일 종목 중복 진입 시도는 차단됩니다.',
+    market_closed: '시장 휴장/장마감 상태입니다.',
+    risk_veto: '리스크 가드에서 주문을 차단했습니다.',
+    risk_guard_blocked: '리스크 가드에서 주문을 차단했습니다.',
+    RISK_GUARD_BLOCKED: '리스크 가드에서 주문을 차단했습니다.',
+    screened: '리스크/평가 단계에서 선별되지 않아 주문이 전송되지 않았습니다.',
+    invalid_unit_price: '현재가 계산값이 유효하지 않아 주문을 생성하지 못했습니다.',
+    liqidity_too_low: '유동성 부족으로 주문 판단을 보류했습니다.',
+    spread_too_wide: '호가 스프레드가 크고 체결 안정성이 낮아 주문을 보류했습니다.',
+  };
+
+  if (reasonGuide[normalized]) return reasonGuide[normalized];
+  if (reasonGuide[normalizedLower]) return reasonGuide[normalizedLower];
+  if (reasonGuide[normalizedUpper]) return reasonGuide[normalizedUpper];
+
+  if (normalizedLower.startsWith('technicals_error')) {
+    return '기술 지표 수집/분석 오류로 판단이 중단되었습니다.';
+  }
+
   if (normalized === 'quote_stale') return '시세가 오래돼 주문을 막았습니다.';
   if (normalized === 'liquidity_guard_blocked') return '유동성 가드가 주문을 차단했습니다.';
   if (normalized === 'buy_failed') return '매수 주문 처리에 실패했습니다.';

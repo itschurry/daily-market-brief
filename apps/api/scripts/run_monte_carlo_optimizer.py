@@ -100,7 +100,13 @@ def build_stage1_param_grid(base_query: dict[str, object] | None = None, strateg
         "stoch_k_max": 90.0,
     }
     if isinstance(base_query, dict):
-        baseline.update({k: v for k, v in base_query.items() if v is not None})
+        merged_payload = dict(base_query)
+        strategy_params = merged_payload.get("strategy_params")
+        if isinstance(strategy_params, dict):
+            for key, value in strategy_params.items():
+                if key not in merged_payload and value is not None:
+                    merged_payload[key] = value
+        baseline.update({k: v for k, v in merged_payload.items() if v is not None and k in baseline})
 
     resolved_strategy_kind = str(strategy_kind or baseline.get("strategy_kind") or "trend_following").strip().lower()
     stop_loss = _coerce_float(baseline.get("stop_loss_pct"), 5.0) or 5.0

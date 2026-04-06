@@ -32,6 +32,10 @@ def handle_performance_summary() -> tuple[int, dict]:
             account = engine_account or {}
 
         order_events = read_order_events(limit=1000)
+        session_start = str(account.get("created_at") or "")
+        if session_start:
+            order_events = [e for e in order_events if str(e.get("logged_at") or "") >= session_start]
+
         today = _today_date_str()
 
         today_events = [e for e in order_events if str(e.get("logged_at") or "")[:10] == today]

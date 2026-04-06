@@ -38,6 +38,23 @@ def _read_lines(path: Path) -> list[str]:
         return []
 
 
+def _clear_file(path: Path) -> int:
+    if not path.exists():
+        return 0
+    removed = len(_read_lines(path))
+    path.write_text("", encoding="utf-8")
+    return removed
+
+
+def _clear_jsonl_files(directory: Path) -> int:
+    if not directory.exists():
+        return 0
+    total = 0
+    for path in directory.glob("*.jsonl"):
+        total += _clear_file(path)
+    return total
+
+
 def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     try:
         payload = read_json_file_cached(path)
@@ -112,6 +129,22 @@ def read_engine_cycles(limit: int = 50) -> list[dict[str, Any]]:
             if isinstance(item, dict):
                 rows.append(item)
     return rows
+
+
+def clear_engine_cycles() -> int:
+    return _clear_jsonl_files(ENGINE_CYCLES_DIR)
+
+
+def clear_order_events() -> int:
+    return _clear_file(ORDER_EVENTS_PATH)
+
+
+def clear_signal_snapshots() -> int:
+    return _clear_file(SIGNAL_SNAPSHOTS_PATH)
+
+
+def clear_account_snapshots() -> int:
+    return _clear_file(ACCOUNT_SNAPSHOTS_PATH)
 
 
 def append_order_event(payload: dict[str, Any]) -> None:

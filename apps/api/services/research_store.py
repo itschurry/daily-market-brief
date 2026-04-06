@@ -190,6 +190,30 @@ def _history_sort_key(item: dict[str, Any]) -> tuple[datetime.datetime, datetime
     return (bucket_dt, ingested_dt, str(item.get("run_id") or ""))
 
 
+def _attach_snapshot_name(item: dict[str, Any]) -> dict[str, Any]:
+    snapshot = dict(item)
+    symbol = str(snapshot.get("symbol") or "").strip().upper()
+    market = _normalize_market_input(str(snapshot.get("market") or ""))
+    if not symbol or not market:
+        return snapshot
+
+    try:
+        from market_utils import lookup_company_listing
+        listing = lookup_company_listing(code=symbol, market=market)
+    except Exception:
+        listing = None
+
+    if isinstance(listing, dict):
+        resolved_name = str(listing.get("name") or "").strip()
+        existing_name = str(snapshot.get("name") or "").strip()
+        if resolved_name and (not existing_name or existing_name == symbol):
+            snapshot["name"] = resolved_name
+        if isinstance(listing.get("market"), str) and listing.get("market"):
+            snapshot["market"] = str(listing.get("market"))
+
+    return snapshot
+
+
 def _normalize_components(value: Any) -> dict[str, float]:
     if value is None:
         return {}
@@ -552,7 +576,9 @@ def load_latest_research_snapshot(symbol: str, market: str, *, provider: str = "
             continue
         if selected is None or _is_newer_snapshot(payload, selected):
             selected = payload
-    return selected
+    if selected is None:
+        return None
+    return _attach_snapshot_name(selected)
 
 
 def list_latest_research_snapshots(
@@ -585,6 +611,7 @@ def list_latest_research_snapshots(
             newest_by_symbol_market[dedupe_key] = normalized_payload
 
     rows = list(newest_by_symbol_market.values())
+    rows = [_attach_snapshot_name(item) for item in rows]
     rows.sort(key=_history_sort_key, reverse=True)
     if limit > 0:
         rows = rows[:limit]
@@ -638,6 +665,7 @@ def load_research_snapshots(
         filtered_rows.append(item)
 
     rows = _dedupe_history_rows(filtered_rows)
+    rows = [_attach_snapshot_name(item) for item in rows]
 
     def sort_key(item: dict[str, Any]) -> tuple[datetime.datetime, datetime.datetime, str]:
         bucket_dt = _parse_datetime(item.get("bucket_ts")) or datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)

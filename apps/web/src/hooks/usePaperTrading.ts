@@ -58,6 +58,18 @@ type PaperAccountHistoryResponse = {
   count?: number;
   error?: string;
 };
+type PaperHistoryClearResponse = {
+  ok?: boolean;
+  error?: string;
+  account_reset?: boolean;
+  clear_count?: {
+    order_events?: number;
+    signal_snapshots?: number;
+    account_snapshots?: number;
+    engine_cycles?: number;
+  };
+  account?: PaperAccountData;
+};
 type SignalSnapshotsResponse = {
   ok?: boolean;
   snapshots?: Record<string, unknown>[];
@@ -222,6 +234,49 @@ export function usePaperTrading() {
     }
   }, []);
 
+  const clearHistory = useCallback(async (payload: {
+    clear_all?: boolean;
+    clear_orders?: boolean;
+    clear_signals?: boolean;
+    clear_accounts?: boolean;
+    clear_cycles?: boolean;
+    reset_account?: boolean;
+    clear_account_state?: boolean;
+    hard_reset?: boolean;
+    initial_cash_krw?: number;
+    initial_cash_usd?: number;
+    paper_days?: number;
+  } = { clear_all: true }) => {
+    try {
+      const response = await postJSON<PaperHistoryClearResponse>('/api/paper/history/clear', payload);
+      const payloadData = response.data;
+      if (!response.ok || !payloadData.ok) {
+        const message = payloadData.error || '논리 실행 로그 정리에 실패했습니다.';
+        setLastError(message);
+        return { ok: false, error: message };
+      }
+      setLastError('');
+      return {
+        ok: true,
+        clear_count: payloadData.clear_count || {},
+        account_reset: payloadData.account_reset || false,
+        account: payloadData.account as PaperAccountData,
+      };
+    } catch {
+      const message = '논리 실행 로그 정리 요청 중 오류가 발생했습니다.';
+      setLastError(message);
+      return { ok: false, error: message };
+    }
+  }, []);
+
+  const clearRuntimeLogs = useCallback(() => {
+    setCycles([]);
+    setOrderEvents([]);
+    setAccountHistory([]);
+    setSignalSnapshots([]);
+    setWorkflowSummary({ counts: {}, items: [], count: 0 });
+  }, []);
+
   const startEngine = useCallback(async (params?: Partial<PaperEngineConfig>) => {
     try {
       const response = await postJSON<PaperEngineResponse>('/api/paper/engine/start', params || {});
@@ -340,9 +395,11 @@ export function usePaperTrading() {
     autoInvest,
     refreshEngineStatus,
     refreshRuntimeLogs,
+    clearRuntimeLogs,
     startEngine,
     stopEngine,
     pauseEngine,
     resumeEngine,
+    clearHistory,
   };
 }

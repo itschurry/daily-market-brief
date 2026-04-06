@@ -10,7 +10,6 @@ import { StrategiesPage } from './pages/StrategiesPage';
 import { ResearchSnapshotsPage } from './pages/ResearchSnapshotsPage';
 import { WatchlistPage } from './pages/WatchlistPage';
 import { WealthPulseHomePage } from './pages/WealthPulseHomePage';
-import { WorkspaceStageRail } from './components/WorkspaceStageRail';
 import type { ConsoleTab, ReportTab, TopSection } from './types/navigation';
 
 interface RouteState {
@@ -317,19 +316,6 @@ export default function App() {
             <h1 className="app-main-title">{activeLabel}</h1>
             <div className="app-main-copy">{SECTION_COPY[route.section]}</div>
           </div>
-          {route.section === 'console' && ['validation', 'watchlist', 'scanner', 'research', 'orders'].includes(route.consoleTab) && (
-            <WorkspaceStageRail
-              current={route.consoleTab === 'validation'
-                ? 'validation'
-                : route.consoleTab === 'watchlist'
-                  ? 'watchlist'
-                  : route.consoleTab === 'scanner'
-                    ? 'scanner'
-                    : route.consoleTab === 'research'
-                      ? 'research'
-                      : 'orders'}
-            />
-          )}
         </header>
 
         <div className="app-main-content">

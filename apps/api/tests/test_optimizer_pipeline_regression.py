@@ -173,6 +173,39 @@ class OptimizerPipelineRegressionTests(unittest.TestCase):
         self.assertEqual([12.0], grid.stoch_k_min)
         self.assertEqual([88.0], grid.stoch_k_max)
 
+    def test_stage1_param_grid_reads_nested_strategy_params(self):
+        grid = build_stage1_param_grid({
+            "strategy_params": {
+                "rsi_min": 32,
+                "rsi_max": 60,
+                "adx_min": 16.0,
+                "volume_ratio_min": 1.35,
+                "stop_loss_pct": 6.5,
+                "take_profit_pct": 15.5,
+                "max_holding_days": 17,
+                "mfi_min": 22.0,
+                "mfi_max": 78.0,
+                "bb_pct_min": 0.07,
+                "bb_pct_max": 0.91,
+                "stoch_k_min": 12.0,
+                "stoch_k_max": 88.0,
+            }
+        })
+
+        self.assertEqual([32.0], grid.rsi_min)
+        self.assertEqual([60.0], grid.rsi_max)
+        self.assertEqual([16.0], grid.adx_min)
+        self.assertEqual([1.35], grid.volume_ratio_min)
+        self.assertEqual([4.5, 6.5, 8.5, 10.5], grid.stop_loss_pct)
+        self.assertEqual([11.5, 15.5, 19.5, 23.5], grid.take_profit_pct)
+        self.assertEqual([12, 17, 22], grid.max_holding_days)
+        self.assertEqual([22.0], grid.mfi_min)
+        self.assertEqual([78.0], grid.mfi_max)
+        self.assertEqual([0.07], grid.bb_pct_min)
+        self.assertEqual([0.91], grid.bb_pct_max)
+        self.assertEqual([12.0], grid.stoch_k_min)
+        self.assertEqual([88.0], grid.stoch_k_max)
+
     def test_stage1_param_grid_switches_focus_for_mean_reversion(self):
         grid = build_stage1_param_grid({
             "strategy_kind": "mean_reversion",

@@ -49,6 +49,8 @@ def _install_server_route_stubs() -> list[str]:
             "handle_research_ingest_bulk": lambda payload: (200, {"payload": payload}),
             "handle_research_latest_snapshot": lambda query: (200, {"query": query}),
             "handle_research_status": lambda query: (200, {"query": query}),
+            "handle_research_scanner_targets": lambda query: (200, {"query": query}),
+            "handle_research_scanner_enrich_targets": lambda query: (200, {"query": query}),
             "handle_research_snapshots": lambda query: (200, {"query": query}),
         },
         "routes.reports": {
@@ -75,10 +77,13 @@ def _install_server_route_stubs() -> list[str]:
             "handle_signals_rank": lambda query: (200, {"query": query}),
         },
         "routes.strategies": {
+            "handle_strategy_metadata": lambda: (200, {"ok": True}),
             "handle_strategies_list": lambda query: (200, {"query": query}),
             "handle_strategy_detail": lambda path: (200, {"path": path}),
             "handle_strategy_toggle": lambda payload: (200, {"payload": payload}),
             "handle_strategy_save": lambda payload: (200, {"payload": payload}),
+            "handle_strategy_delete": lambda payload: (200, {"payload": payload}),
+            "handle_strategy_seed_defaults": lambda: (200, {"ok": True}),
         },
         "routes.trading": {
             "handle_paper_account": lambda refresh=True: (200, {"refresh": refresh}),
@@ -93,6 +98,8 @@ def _install_server_route_stubs() -> list[str]:
             "handle_paper_orders": lambda query: (200, {"query": query}),
             "handle_paper_order": lambda payload: (200, {"payload": payload}),
             "handle_paper_reset": lambda payload: (200, {"payload": payload}),
+            "handle_paper_history_clear": lambda payload: (200, {"payload": payload, "ok": True}),
+            "handle_paper_workflow": lambda query: (200, {"query": query}),
         },
         "routes.system": {
             "handle_system_mode": lambda: (200, {"ok": True}),

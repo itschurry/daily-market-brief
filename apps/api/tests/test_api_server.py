@@ -76,6 +76,7 @@ def _install_server_route_stubs() -> list[str]:
             "handle_strategy_delete": lambda payload: (200, {"payload": payload}),
             "handle_strategy_toggle": lambda payload: (200, {"payload": payload}),
             "handle_strategy_save": lambda payload: (200, {"payload": payload}),
+            "handle_strategy_seed_defaults": lambda: (200, {"ok": True}),
         },
         "routes.trading": {
             "handle_paper_account": lambda refresh=True: (200, {"refresh": refresh}),
@@ -90,6 +91,8 @@ def _install_server_route_stubs() -> list[str]:
             "handle_paper_orders": lambda query: (200, {"query": query}),
             "handle_paper_order": lambda payload: (200, {"payload": payload}),
             "handle_paper_reset": lambda payload: (200, {"payload": payload}),
+            "handle_paper_history_clear": lambda payload: (200, {"payload": payload, "ok": True}),
+            "handle_paper_workflow": lambda query: (200, {"query": query}),
         },
         "routes.system": {
             "handle_system_mode": lambda: (200, {"ok": True}),
@@ -358,6 +361,14 @@ class ApiServerDispatchTests(unittest.TestCase):
         self.assertEqual((200, {"ok": True, "item": {"strategy_id": "kr"}}), save_result)
         mock_toggle.assert_called_once_with({"strategy_id": "kr", "enabled": False})
         mock_save.assert_called_once_with({"strategy_id": "kr"})
+
+    def test_dispatch_post_routes_paper_history_clear(self):
+        with patch("server.handle_paper_history_clear", return_value=(200, {"ok": True, "clear_count": {"order_events": 2}})) as mock_handler:
+            payload = {"clear_all": True}
+            result = dispatch_post("/api/paper/history/clear", payload)
+
+        self.assertEqual((200, {"ok": True, "clear_count": {"order_events": 2}}), result)
+        mock_handler.assert_called_once_with(payload)
 
     def test_dispatch_post_routes_quant_ops_actions(self):
         with patch("server.handle_quant_ops_revalidate", return_value=(200, {"ok": True})) as mock_handler:

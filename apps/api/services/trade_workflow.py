@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
+
+from market_utils import lookup_company_listing
 
 
 _SIGNAL_STAGE_PRIORITY = {
@@ -20,6 +23,48 @@ def _to_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+@lru_cache(maxsize=256)
+def _resolve_company_identity(code: str, market: str, name: str) -> tuple[str, str]:
+    normalized_code = str(code or "").strip().upper()
+    normalized_market = str(market or "").strip().upper()
+    normalized_name = str(name or "").strip()
+
+    if not normalized_code:
+        return normalized_name, normalized_market
+
+    resolved_name = normalized_name
+    resolved_market = normalized_market
+    if not resolved_name or resolved_name.upper() == normalized_code:
+        try:
+            listing = lookup_company_listing(code=normalized_code, market=normalized_market)
+        except Exception:
+            listing = None
+
+        if isinstance(listing, dict):
+            candidate_name = str(listing.get("name") or "").strip()
+            if candidate_name:
+                resolved_name = candidate_name
+            candidate_market = str(listing.get("market") or "").strip().upper()
+            if candidate_market:
+                resolved_market = candidate_market
+
+    return resolved_name, resolved_market
+
+
+def _enrich_symbol_meta(payload: dict[str, Any]) -> dict[str, Any]:
+    market = str(payload.get("market") or "").strip().upper()
+    code = str(payload.get("code") or "").strip().upper()
+    name = str(payload.get("name") or "").strip()
+    resolved_name, resolved_market = _resolve_company_identity(code=code, market=market, name=name)
+
+    enriched = dict(payload)
+    if resolved_name:
+        enriched["name"] = resolved_name
+    if resolved_market:
+        enriched["market"] = resolved_market
+    return enriched
 
 
 def _signal_key(payload: dict[str, Any]) -> str:
@@ -98,11 +143,11 @@ def derive_order_workflow(order: dict[str, Any]) -> dict[str, Any]:
 
 
 def enrich_signal_payload(signal: dict[str, Any]) -> dict[str, Any]:
-    return {**signal, **derive_signal_workflow(signal)}
+    return _enrich_symbol_meta({**signal, **derive_signal_workflow(signal)})
 
 
 def enrich_order_payload(order: dict[str, Any]) -> dict[str, Any]:
-    return {**order, **derive_order_workflow(order)}
+    return _enrich_symbol_meta({**order, **derive_order_workflow(order)})
 
 
 def build_workflow_summary(signals: list[dict[str, Any]], orders: list[dict[str, Any]]) -> dict[str, Any]:

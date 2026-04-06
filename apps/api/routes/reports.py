@@ -275,8 +275,15 @@ def _map_strategy_signal(item: dict[str, Any], rank: int) -> dict[str, Any]:
 
 def _strategy_recommendations_payload() -> dict[str, Any]:
     from services.strategy_engine import build_signal_book
+    from services.execution_service import get_execution_service
 
-    signal_book = build_signal_book(markets=["KOSPI", "NASDAQ"], cfg={})
+    _, execution_payload = get_execution_service().paper_engine_status()
+    account = execution_payload.get("account") if isinstance(execution_payload, dict) else {}
+    signal_book = build_signal_book(
+        markets=["KOSPI", "NASDAQ"],
+        cfg={},
+        account=account if isinstance(account, dict) else {},
+    )
     rows = [
         _map_strategy_signal(item, idx + 1)
         for idx, item in enumerate(signal_book.get("signals", []))

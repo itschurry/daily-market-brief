@@ -5,8 +5,7 @@ from services.strategy_engine import build_signal_book
 
 
 def _load_runtime_account() -> dict:
-    _, execution_payload = get_execution_service().paper_engine_status()
-    account = execution_payload.get("account") if isinstance(execution_payload, dict) else {}
+    _, account = get_execution_service().paper_account(True)
     return account if isinstance(account, dict) else {}
 
 

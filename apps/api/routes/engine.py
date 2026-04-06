@@ -9,7 +9,8 @@ from services.system_mode_service import get_mode_status
 def handle_engine_status() -> tuple[int, dict]:
     try:
         _, execution_payload = get_execution_service().paper_engine_status()
-        signal_book = build_signal_book(markets=["KOSPI", "NASDAQ"], cfg={})
+        account = execution_payload.get("account") if isinstance(execution_payload, dict) else {}
+        signal_book = build_signal_book(markets=["KOSPI", "NASDAQ"], cfg={}, account=account if isinstance(account, dict) else {})
 
         strategy_counts: dict[str, int] = {}
         for signal in signal_book.get("signals", []):

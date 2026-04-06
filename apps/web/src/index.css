@@ -4459,72 +4459,10 @@ body {
   padding: 10px 0 2px;
 }
 
-.workspace-stage-rail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: flex-end;
-  max-width: 820px;
-}
-
-.workspace-stage-chip {
-  display: inline-flex;
-  gap: 10px;
-  align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 10px 14px;
-  background: color-mix(in srgb, var(--bg-soft) 55%, transparent);
-  min-width: 0;
-}
-
-.workspace-stage-chip.is-active {
-  border-color: color-mix(in srgb, var(--brand-strong) 38%, var(--border));
-  background: color-mix(in srgb, var(--brand-soft) 24%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand-strong) 18%, transparent);
-}
-
-.workspace-stage-index {
-  display: inline-flex;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg) 76%, transparent);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-3);
-}
-
-.workspace-stage-chip.is-active .workspace-stage-index {
-  background: color-mix(in srgb, var(--brand-strong) 22%, transparent);
-  color: var(--text-1);
-}
-
-.workspace-stage-texts {
-  display: grid;
-  min-width: 0;
-}
-
-.workspace-stage-label {
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.workspace-stage-hint {
-  font-size: 10px;
-  color: var(--text-3);
-}
-
 @media (max-width: 1100px) {
   .workspace-two-column,
   .workspace-query-grid {
     grid-template-columns: 1fr;
-  }
-
-  .workspace-stage-rail {
-    justify-content: flex-start;
   }
 }
 
