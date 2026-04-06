@@ -19,18 +19,19 @@ export interface ValidationSettings {
 interface ValidationStoreState {
   draftQuery: BacktestQuery;
   savedQuery: BacktestQuery;
+  displayedQuery: BacktestQuery;
   draftSettings: ValidationSettings;
   savedSettings: ValidationSettings;
+  displayedSettings: ValidationSettings;
   lastSavedAt: string;
+  stateVersion: number;
+  stateSource: string;
   syncStatus: 'idle' | 'loading' | 'saving' | 'resetting' | 'ready' | 'error';
   syncMessage: string;
   serverLoaded: boolean;
 }
 
-const SAVED_SETTINGS_KEY = 'console_validation_settings_v1';
 const DRAFT_SETTINGS_KEY = 'console_validation_settings_draft_v1';
-const SAVED_QUERY_KEY = 'console_validation_saved_query_v1';
-const META_KEY = 'console_validation_settings_meta_v1';
 
 const listeners = new Set<() => void>();
 
@@ -149,17 +150,6 @@ function persistDraft(state: ValidationStoreState) {
   localStorage.setItem(DRAFT_SETTINGS_KEY, JSON.stringify(state.draftSettings));
 }
 
-function persistSaved(state: ValidationStoreState) {
-  localStorage.setItem(SAVED_SETTINGS_KEY, JSON.stringify(state.savedSettings));
-  localStorage.setItem(SAVED_QUERY_KEY, JSON.stringify(state.savedQuery));
-  localStorage.setItem(META_KEY, JSON.stringify({ lastSavedAt: state.lastSavedAt }));
-}
-
-function readMetaSavedAt(): string {
-  const meta = readJson<{ lastSavedAt?: string }>(META_KEY);
-  return meta?.lastSavedAt || '';
-}
-
 function hydrateState(): ValidationStoreState {
   if (typeof window === 'undefined') {
     const query = defaultBacktestQuery();
@@ -167,9 +157,13 @@ function hydrateState(): ValidationStoreState {
     return {
       draftQuery: query,
       savedQuery: query,
+      displayedQuery: query,
       draftSettings: settings,
       savedSettings: settings,
+      displayedSettings: settings,
       lastSavedAt: '',
+      stateVersion: 1,
+      stateSource: '',
       syncStatus: 'idle',
       syncMessage: '',
       serverLoaded: false,
@@ -177,19 +171,19 @@ function hydrateState(): ValidationStoreState {
   }
 
   const draftQuery = loadBacktestQuery();
-  const savedQuery = clampBacktestQuery(readJson<Partial<BacktestQuery>>(SAVED_QUERY_KEY) || draftQuery);
-  const savedSettings = clampValidationSettings(readJson<Partial<ValidationSettings>>(SAVED_SETTINGS_KEY));
-  const draftSettings = clampValidationSettings(
-    readJson<Partial<ValidationSettings>>(DRAFT_SETTINGS_KEY)
-      || readJson<Partial<ValidationSettings>>(SAVED_SETTINGS_KEY),
-  );
+  const draftSettings = clampValidationSettings(readJson<Partial<ValidationSettings>>(DRAFT_SETTINGS_KEY));
+  const baselineSettings = defaultValidationSettings();
 
   return {
     draftQuery,
-    savedQuery,
+    savedQuery: draftQuery,
+    displayedQuery: draftQuery,
     draftSettings,
-    savedSettings,
-    lastSavedAt: readMetaSavedAt(),
+    savedSettings: baselineSettings,
+    displayedSettings: baselineSettings,
+    lastSavedAt: '',
+    stateVersion: 1,
+    stateSource: '',
     syncStatus: 'idle',
     syncMessage: '',
     serverLoaded: false,
@@ -216,10 +210,20 @@ function hasUnsavedDraft(state: ValidationStoreState): boolean {
 }
 
 function normalizeServerPayload(payload: PersistedValidationSettingsResponse | null | undefined) {
+  const savedSnapshot = payload?.state?.saved;
+  const displayedSnapshot = payload?.state?.displayed;
+  const savedQueryRaw = (savedSnapshot?.query ?? payload?.query ?? null) as Partial<BacktestQuery> | null;
+  const savedSettingsRaw = (savedSnapshot?.settings ?? payload?.settings ?? null) as Partial<ValidationSettings> | null;
+  const displayedQueryRaw = (displayedSnapshot?.query ?? savedQueryRaw ?? null) as Partial<BacktestQuery> | null;
+  const displayedSettingsRaw = (displayedSnapshot?.settings ?? savedSettingsRaw ?? null) as Partial<ValidationSettings> | null;
   return {
-    query: clampBacktestQuery((payload?.query || null) as Partial<BacktestQuery> | null),
-    settings: clampValidationSettings((payload?.settings || null) as Partial<ValidationSettings> | null),
+    query: clampBacktestQuery(savedQueryRaw),
+    settings: clampValidationSettings(savedSettingsRaw),
+    displayedQuery: clampBacktestQuery(displayedQueryRaw),
+    displayedSettings: clampValidationSettings(displayedSettingsRaw),
     savedAt: payload?.saved_at || '',
+    version: payload?.version ?? savedSnapshot?.version ?? displayedSnapshot?.version ?? 1,
+    source: payload?.source || savedSnapshot?.source || displayedSnapshot?.source || '',
   };
 }
 
@@ -228,8 +232,12 @@ function applyServerPayload(payload: PersistedValidationSettingsResponse | null 
   storeState = {
     ...storeState,
     savedQuery: normalized.query,
+    displayedQuery: normalized.displayedQuery,
     savedSettings: normalized.settings,
+    displayedSettings: normalized.displayedSettings,
     lastSavedAt: normalized.savedAt,
+    stateVersion: normalized.version,
+    stateSource: normalized.source,
     syncStatus: 'ready',
     syncMessage: normalized.savedAt ? '서버 저장값을 동기화했습니다.' : '서버 기본값을 동기화했습니다.',
     serverLoaded: true,
@@ -238,7 +246,6 @@ function applyServerPayload(payload: PersistedValidationSettingsResponse | null 
       draftSettings: normalized.settings,
     } : {}),
   };
-  persistSaved(storeState);
   if (options?.replaceDraft) {
     persistDraft(storeState);
   }

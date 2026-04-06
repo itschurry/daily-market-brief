@@ -11,6 +11,7 @@ from services.signal_service import normalize_runtime_candidate_source_mode
 
 
 BACKTEST_VALIDATION_SETTINGS_PATH = LOGS_DIR / "backtest_validation_settings.json"
+STATE_SCHEMA_VERSION = 1
 
 _DEFAULT_QUERY: dict[str, Any] = {
     "market_scope": "kospi",
@@ -187,13 +188,53 @@ def _normalize_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _build_state_snapshot(
+    *,
+    query: dict[str, Any],
+    settings: dict[str, Any],
+    status: str,
+    updated_at: str,
+    source: str,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "query": query,
+        "settings": settings,
+        "version": STATE_SCHEMA_VERSION,
+        "updated_at": updated_at,
+        "source": source,
+    }
+
+
 def _build_response(query: dict[str, Any], settings: dict[str, Any], saved_at: str) -> dict[str, Any]:
+    source = str(BACKTEST_VALIDATION_SETTINGS_PATH)
+    updated_at = saved_at or ""
     return {
         "ok": True,
         "query": query,
         "settings": settings,
         "saved_at": saved_at,
-        "source": str(BACKTEST_VALIDATION_SETTINGS_PATH),
+        "source": source,
+        "version": STATE_SCHEMA_VERSION,
+        "updated_at": updated_at,
+        "state": {
+            "saved": _build_state_snapshot(
+                query=query,
+                settings=settings,
+                status="saved",
+                updated_at=updated_at,
+                source=source,
+            ),
+            "approved": None,
+            "applied": None,
+            "displayed": _build_state_snapshot(
+                query=query,
+                settings=settings,
+                status="displayed",
+                updated_at=updated_at,
+                source=source,
+            ),
+        },
     }
 
 

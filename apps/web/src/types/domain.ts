@@ -718,12 +718,31 @@ export interface ValidationDiagnosticsResponse {
   error?: string;
 }
 
+export interface ConfigStateSnapshotDto {
+  status?: 'draft' | 'saved' | 'approved' | 'applied' | 'displayed';
+  query?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+  version?: number;
+  updated_at?: string;
+  source?: string;
+}
+
+export interface ValidationConfigStateDto {
+  saved?: ConfigStateSnapshotDto | null;
+  approved?: ConfigStateSnapshotDto | null;
+  applied?: ConfigStateSnapshotDto | null;
+  displayed?: ConfigStateSnapshotDto | null;
+}
+
 export interface PersistedValidationSettingsResponse {
   ok?: boolean;
   query?: Record<string, unknown>;
   settings?: Record<string, unknown>;
   saved_at?: string;
+  version?: number;
+  updated_at?: string;
   source?: string;
+  state?: ValidationConfigStateDto;
   error?: string;
 }
 
