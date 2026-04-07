@@ -891,7 +891,7 @@ def _runtime_summary(runtime_payload: dict[str, Any] | None, state_runtime: dict
         "available": bool(runtime_payload),
         "status": "applied" if runtime_payload else "missing",
         "runtime_candidate_source_mode": normalize_runtime_candidate_source_mode(
-            runtime_payload.get("runtime_candidate_source_mode") or meta.get("runtime_candidate_source_mode") or "quant_only"
+            runtime_payload.get("runtime_candidate_source_mode") or meta.get("runtime_candidate_source_mode") or "runtime_candidates"
         ),
         "candidate_id": str(meta.get("applied_candidate_id") or state_runtime.get("candidate_id") or ""),
         "applied_at": str(runtime_payload.get("applied_at") or state_runtime.get("applied_at") or ""),

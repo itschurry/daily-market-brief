@@ -14,7 +14,7 @@ from services.live_layers import build_layer_c_snapshot, build_layer_d_snapshot,
 from services.live_signal_engine import build_live_signal_book
 from services.optimized_params_store import load_execution_optimized_params
 from services.reliability_policy import should_apply_symbol_overlay
-from services.signal_service import collect_pick_candidates, normalize_runtime_candidate_source_mode
+from services.signal_service import collect_pick_candidates
 from services.sizing_service import recommend_position_size
 from services.trade_workflow import enrich_signal_payload
 
@@ -58,7 +58,8 @@ def _normalize_live_signal_candidate(
     normalized["market"] = normalized_market
     normalized["candidate_runtime_source_mode"] = str(
         candidate.get("candidate_runtime_source_mode")
-        or normalize_runtime_candidate_source_mode(cfg.get("runtime_candidate_source_mode"))
+        or candidate.get("candidate_source")
+        or "live_scanner"
     )
     normalized.setdefault("candidate_source", "live_scanner")
     normalized.setdefault("candidate_source_label", "scanner")
@@ -310,8 +311,8 @@ def _build_signal_from_candidate(
             "liquidity_gate_status": "ok" if entry_allowed else "blocked",
             **(candidate.get("execution_realism") if isinstance(candidate.get("execution_realism"), dict) else {}),
         },
-        "candidate_source_mode": str(candidate.get("candidate_source_mode") or candidate.get("candidate_runtime_source_mode") or cfg.get("runtime_candidate_source_mode") or "quant_only"),
-        "candidate_runtime_source_mode": str(candidate.get("candidate_runtime_source_mode") or cfg.get("runtime_candidate_source_mode") or "quant_only"),
+        "candidate_source_mode": str(candidate.get("candidate_source_mode") or candidate.get("candidate_source") or candidate.get("candidate_runtime_source_mode") or "runtime_candidates"),
+        "candidate_runtime_source_mode": str(candidate.get("candidate_runtime_source_mode") or candidate.get("candidate_source") or "runtime_candidates"),
         "candidate_research_source": layer_c.get("provider"),
         "research_status": layer_c.get("provider_status"),
         "research_unavailable": layer_c.get("research_unavailable"),
@@ -353,10 +354,7 @@ def build_signal_book(
 
     for market in markets:
         candidates = collect_pick_candidates(market=market, cfg=cfg)
-        fallback_to_live = (
-            not candidates
-            and normalize_runtime_candidate_source_mode(cfg.get("runtime_candidate_source_mode")) == "hybrid"
-        )
+        fallback_to_live = not candidates
         if fallback_to_live:
             live_payload = build_live_signal_book(markets=[market], account=account, refresh=refresh)
             candidates = [

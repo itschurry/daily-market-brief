@@ -148,7 +148,7 @@ class RuntimeValidationGateTests(unittest.TestCase):
 
 
 class StrategyEngineRuntimePathTests(unittest.TestCase):
-    def test_build_signal_book_fallbacks_to_live_signals_when_hybrid_has_no_runtime_candidates(self):
+    def test_build_signal_book_fallbacks_to_live_signals_when_runtime_candidates_are_missing(self):
         live_candidate = {
             "code": "AAPL",
             "name": "애플",
@@ -180,7 +180,7 @@ class StrategyEngineRuntimePathTests(unittest.TestCase):
              ):
             book = strategy_svc.build_signal_book(
                 markets=["NASDAQ"],
-                cfg={"runtime_candidate_source_mode": "hybrid"},
+                cfg={},
                 account={"equity_krw": 10_000_000, "orders": [], "positions": [], "fx_rate": 1300.0},
             )
 
@@ -189,7 +189,7 @@ class StrategyEngineRuntimePathTests(unittest.TestCase):
         self.assertEqual("AAPL", book["signals"][0]["code"])
         self.assertEqual("NASDAQ", book["signals"][0]["market"])
         self.assertEqual("live_scanner", book["signals"][0]["candidate_source"])
-        self.assertEqual("hybrid", book["signals"][0]["candidate_runtime_source_mode"])
+        self.assertEqual("live_scanner", book["signals"][0]["candidate_runtime_source_mode"])
         self.assertEqual(1, book["entry_allowed_count"])
 
     def test_build_signal_book_attaches_layer_c_metadata_for_runtime_candidates(self):

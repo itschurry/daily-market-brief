@@ -8,7 +8,6 @@ import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import {
   formatValidationSettingsLabel,
   useValidationSettingsStore,
-  validationSourceModeLabel,
 } from '../hooks/useValidationSettingsStore';
 import { VALIDATION_TRANSFER_STORAGE_KEY } from '../lib/validationConfigStorage';
 import type { ValidationSettings } from '../hooks/useValidationSettingsStore';
@@ -779,17 +778,6 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                     <option value="수익 우선">수익 우선</option>
                     <option value="안정성 우선">안정성 우선</option>
                     <option value="균형">균형</option>
-                  </select>
-                </label>
-                <label style={{ display: 'grid', gap: 6 }}>
-                  <span>후보 소스</span>
-                  <select
-                    className="backtest-input-wrap"
-                    value={validationStore.draftSettings.runtimeCandidateSourceMode}
-                    onChange={(e) => validationStore.setDraftSettings((prev) => ({ ...prev, runtimeCandidateSourceMode: e.target.value as ValidationSettings['runtimeCandidateSourceMode'] }))}
-                  >
-                    <option value="quant_only">{validationSourceModeLabel('quant_only')}</option>
-                    <option value="hybrid">{validationSourceModeLabel('hybrid')}</option>
                   </select>
                 </label>
               </div>

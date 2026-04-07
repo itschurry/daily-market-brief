@@ -34,10 +34,7 @@ import type { BacktestData, BacktestQuery } from '../types';
 import type { ValidationSettings } from '../hooks/useValidationSettingsStore';
 
 function serializeValidationSettings(settings: ValidationSettings) {
-  return {
-    ...settings,
-    runtime_candidate_source_mode: settings.runtimeCandidateSourceMode,
-  };
+  return settings;
 }
 
 function buildValidationQueryParams(query?: BacktestQuery, settings?: ValidationSettings) {
@@ -72,7 +69,6 @@ function buildValidationQueryParams(query?: BacktestQuery, settings?: Validation
     params.set('walk_forward', settings.walkForward ? 'true' : 'false');
     params.set('validation_min_trades', String(settings.minTrades));
     params.set('objective', settings.objective);
-    params.set('runtime_candidate_source_mode', settings.runtimeCandidateSourceMode);
   }
   return params;
 }

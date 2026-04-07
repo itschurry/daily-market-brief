@@ -7,9 +7,6 @@ from typing import Any
 
 from config.settings import LOGS_DIR
 from schemas.strategy_metadata import portfolio_defaults, strategy_defaults
-from services.signal_service import normalize_runtime_candidate_source_mode
-
-
 BACKTEST_VALIDATION_SETTINGS_PATH = LOGS_DIR / "backtest_validation_settings.json"
 STATE_SCHEMA_VERSION = 1
 
@@ -45,7 +42,6 @@ _DEFAULT_SETTINGS: dict[str, Any] = {
     "walkForward": True,
     "minTrades": 20,
     "objective": "수익 우선",
-    "runtime_candidate_source_mode": "quant_only",
 }
 
 
@@ -198,9 +194,6 @@ def _normalize_settings(raw: dict[str, Any] | None) -> dict[str, Any]:
         "walkForward": bool(raw.get("walkForward")) if "walkForward" in raw else bool(_DEFAULT_SETTINGS["walkForward"]),
         "minTrades": _to_int(raw.get("minTrades"), int(_DEFAULT_SETTINGS["minTrades"]), minimum=1),
         "objective": str(raw.get("objective") or _DEFAULT_SETTINGS["objective"]),
-        "runtime_candidate_source_mode": normalize_runtime_candidate_source_mode(
-            raw.get("runtime_candidate_source_mode")
-        ),
     }
 
 

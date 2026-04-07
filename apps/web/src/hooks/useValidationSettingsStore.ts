@@ -5,8 +5,6 @@ import { CONFIG_DRAFT_SETTINGS_STORAGE_KEY, loadStoredJson, saveStoredJson } fro
 import type { BacktestQuery } from '../types';
 import type { PersistedValidationSettingsResponse } from '../types/domain';
 
-export type RuntimeCandidateSourceMode = 'quant_only' | 'hybrid';
-
 export interface ValidationSettings {
   strategy: string;
   trainingDays: number;
@@ -14,7 +12,6 @@ export interface ValidationSettings {
   walkForward: boolean;
   minTrades: number;
   objective: string;
-  runtimeCandidateSourceMode: RuntimeCandidateSourceMode;
 }
 
 export type ValidationSyncStatus = ValidationStoreState['syncStatus'];
@@ -48,20 +45,11 @@ function defaultValidationSettings(): ValidationSettings {
     walkForward: true,
     minTrades: 20,
     objective: '수익 우선',
-    runtimeCandidateSourceMode: 'quant_only',
   };
 }
 
 function clampValidationSettings(raw: Partial<ValidationSettings> | null | undefined): ValidationSettings {
   const fallback = defaultValidationSettings();
-  const runtimeCandidateSourceMode = raw?.runtimeCandidateSourceMode === 'hybrid'
-    || raw?.runtimeCandidateSourceMode === 'quant_only'
-    ? raw.runtimeCandidateSourceMode
-    : raw && 'runtime_candidate_source_mode' in raw
-      && ((raw as Partial<Record<'runtime_candidate_source_mode', unknown>>).runtime_candidate_source_mode === 'hybrid'
-        || (raw as Partial<Record<'runtime_candidate_source_mode', unknown>>).runtime_candidate_source_mode === 'quant_only')
-      ? ((raw as Partial<Record<'runtime_candidate_source_mode', RuntimeCandidateSourceMode>>).runtime_candidate_source_mode as RuntimeCandidateSourceMode)
-      : fallback.runtimeCandidateSourceMode;
   return {
     strategy: raw?.strategy || fallback.strategy,
     trainingDays: Math.max(30, Number(raw?.trainingDays) || fallback.trainingDays),
@@ -69,7 +57,6 @@ function clampValidationSettings(raw: Partial<ValidationSettings> | null | undef
     walkForward: typeof raw?.walkForward === 'boolean' ? raw.walkForward : fallback.walkForward,
     minTrades: Math.max(1, Number(raw?.minTrades) || fallback.minTrades),
     objective: raw?.objective || fallback.objective,
-    runtimeCandidateSourceMode,
   };
 }
 
@@ -368,14 +355,7 @@ export function formatValidationSettingsLabel(settings: ValidationSettings, quer
     `${strategyLabel} · regime ${query.regime_mode} · risk ${query.risk_profile}`,
     `${settings.strategy} · 검증 ${settings.validationDays}일${settings.trainingDays ? ` · UI 설정 학습 구간 ${settings.trainingDays}일` : ''}`,
     `${settings.walkForward ? 'Walk-forward 사용' : 'Walk-forward 미사용'} · 최소 거래수 ${settings.minTrades}건 · ${settings.objective}`,
-    `실행 후보 소스 ${validationSourceModeLabel(settings.runtimeCandidateSourceMode)}`,
   ];
-}
-
-export function validationSourceModeLabel(mode: RuntimeCandidateSourceMode): string {
-  return mode === 'quant_only'
-    ? '검증 후보 전용 · 퀀트 검증 후보만 사용'
-    : '결합 후보 · 퀀트와 리서치 후보를 함께 사용';
 }
 
 export function validationSyncStatusLabel(status: ValidationSyncStatus): string {

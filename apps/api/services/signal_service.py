@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from analyzer.candidate_selector import (
     normalize_candidate_selection_config,
@@ -11,11 +11,10 @@ from analyzer.candidate_selector import (
 from market_utils import lookup_company_listing, normalize_market, resolve_market
 from services.research_signal_service import get_recommendations as _get_recommendations, get_today_picks as _get_today_picks
 from services.optimized_params_store import load_execution_optimized_params
+from services.universe_builder import get_universe_snapshot
 
 DEFAULT_THEME_FOCUS = ["automotive", "robotics", "physical_ai"]
 _ALLOWED_THEME_FOCUS = set(DEFAULT_THEME_FOCUS)
-_RUNTIME_CANDIDATE_SOURCE_MODES = {"quant_only", "hybrid"}
-RuntimeCandidateSourceMode = Literal["quant_only", "hybrid"]
 
 
 try:
@@ -69,11 +68,8 @@ def parse_theme_gate_config(raw: dict | None = None) -> dict:
     }
 
 
-def normalize_runtime_candidate_source_mode(raw: Any) -> RuntimeCandidateSourceMode:
-    mode = str(raw or "quant_only").strip().lower()
-    if mode not in _RUNTIME_CANDIDATE_SOURCE_MODES:
-        return "quant_only"
-    return mode  # type: ignore[return-value]
+def normalize_runtime_candidate_source_mode(raw: Any) -> str:
+    return "runtime_candidates"
 
 
 def _research_candidate_config(cfg: dict | None) -> dict[str, Any]:
@@ -137,20 +133,10 @@ def _merge_runtime_technical_snapshot(item: dict[str, Any], fetched: dict[str, A
 
 
 
-def _runtime_source_meta(source: str, *, research_source: Any = None, mode: RuntimeCandidateSourceMode = "hybrid") -> dict[str, Any]:
+def _runtime_source_meta(source: str, *, research_source: Any = None) -> dict[str, Any]:
     normalized = str(source or "unknown").strip().lower()
     research_source_value = str(research_source or "").strip().lower() or None
 
-    if normalized == "hybrid":
-        return {
-            "source": "hybrid",
-            "source_label": "hybrid",
-            "source_detail": "quant + research",
-            "source_tier": "tier_1",
-            "source_priority": 100,
-            "runtime_candidate_source_mode": mode,
-            "research_source": research_source_value,
-        }
     if normalized == "quant_runtime":
         return {
             "source": "quant_runtime",
@@ -158,7 +144,7 @@ def _runtime_source_meta(source: str, *, research_source: Any = None, mode: Runt
             "source_detail": "runtime quant overlay",
             "source_tier": "tier_1",
             "source_priority": 90,
-            "runtime_candidate_source_mode": mode,
+            "runtime_candidate_source_mode": "runtime_candidates",
             "research_source": research_source_value,
         }
     return {
@@ -167,7 +153,7 @@ def _runtime_source_meta(source: str, *, research_source: Any = None, mode: Runt
         "source_detail": research_source_value or normalized or "research",
         "source_tier": "tier_2",
         "source_priority": 70,
-        "runtime_candidate_source_mode": mode,
+        "runtime_candidate_source_mode": "runtime_candidates",
         "research_source": research_source_value or normalized or None,
     }
 
@@ -178,7 +164,6 @@ def _build_quant_runtime_candidate(
     item: dict[str, Any],
     item_market: str,
     listing: dict[str, Any],
-    runtime_source_mode: RuntimeCandidateSourceMode,
 ) -> dict[str, Any]:
     fetched_snapshot = fetch_technical_snapshot(code, item_market)
     technical_snapshot = _merge_runtime_technical_snapshot(item, fetched_snapshot)
@@ -234,9 +219,22 @@ def _build_quant_runtime_candidate(
             "is_reliable": bool(item.get("is_reliable", reliability in {"high", "medium"})),
             "composite_score": item.get("composite_score"),
         },
-        **_runtime_source_meta("quant_runtime", mode=runtime_source_mode),
+        **_runtime_source_meta("quant_runtime"),
     }
 
+
+
+def _universe_code_set(market: str) -> set[str]:
+    """실거래 유니버스 스냅샷(storage/logs/universe_snapshots)에서 유효 종목 코드 집합을 반환한다.
+    스냅샷이 없거나 비어 있으면 빈 집합을 반환한다 (필터링 미적용).
+    """
+    rule = "kospi" if normalize_market(market) == "KOSPI" else "sp500"
+    snapshot = get_universe_snapshot(rule, market=market)
+    return {
+        str(sym.get("code") or "").upper()
+        for sym in (snapshot.get("symbols") or [])
+        if isinstance(sym, dict) and str(sym.get("code") or "").strip()
+    }
 
 
 def collect_quant_runtime_candidates(market: str, cfg: dict | None = None) -> list[dict]:
@@ -246,8 +244,10 @@ def collect_quant_runtime_candidates(market: str, cfg: dict | None = None) -> li
     if not per_symbol or not normalized_market:
         return []
 
+    # 실거래 유니버스를 소스로 사용한다. 유니버스에 없는 종목은 후보에서 제외.
+    universe_codes = _universe_code_set(normalized_market)
+
     raw_cfg = cfg or {}
-    runtime_source_mode = normalize_runtime_candidate_source_mode(raw_cfg.get("runtime_candidate_source_mode"))
     try:
         min_quant_score = float(raw_cfg.get("quant_min_score", 0.0))
     except (TypeError, ValueError):
@@ -258,6 +258,9 @@ def collect_quant_runtime_candidates(market: str, cfg: dict | None = None) -> li
         code = str(raw_code or "").strip().upper()
         item = raw_item if isinstance(raw_item, dict) else {}
         if not code:
+            continue
+        # 유니버스 스냅샷이 로드됐을 때만 유니버스 필터 적용 (스냅샷 없으면 pass-through)
+        if universe_codes and code not in universe_codes:
             continue
         item_market = resolve_market(code=code, market=str(item.get("market") or ""), scope="core")
         if normalize_market(item_market) != normalized_market:
@@ -272,7 +275,6 @@ def collect_quant_runtime_candidates(market: str, cfg: dict | None = None) -> li
                 item=item,
                 item_market=item_market,
                 listing=listing,
-                runtime_source_mode=runtime_source_mode,
             )
         )
 
@@ -284,43 +286,7 @@ def collect_quant_runtime_candidates(market: str, cfg: dict | None = None) -> li
 
 
 def collect_runtime_candidates(market: str, cfg: dict | None = None) -> list[dict]:
-    payload = cfg or {}
-    mode = normalize_runtime_candidate_source_mode(payload.get("runtime_candidate_source_mode"))
-    if mode == "quant_only":
-        return collect_quant_runtime_candidates(market, payload)
-
-    quant_candidates = collect_quant_runtime_candidates(market, payload)
-    research_candidates = collect_research_candidates(market, payload)
-    merged: dict[str, dict[str, Any]] = {}
-    for item in quant_candidates:
-        code = str(item.get("code") or "").upper()
-        if code:
-            merged[code] = dict(item)
-    for item in research_candidates:
-        code = str(item.get("code") or "").upper()
-        if not code:
-            continue
-        if code in merged:
-            combined = dict(merged[code])
-            combined.update(_runtime_source_meta("hybrid", research_source=item.get("source"), mode=mode))
-            combined["research_candidate"] = dict(item)
-            combined["priority_score"] = round(max(float(combined.get("priority_score") or 0.0), float(item.get("priority_score") or 0.0)), 2)
-            if not combined.get("technical_snapshot") and item.get("technical_snapshot"):
-                combined["technical_snapshot"] = item.get("technical_snapshot")
-            if not combined.get("ai_thesis") and item.get("ai_thesis"):
-                combined["ai_thesis"] = item.get("ai_thesis")
-            combined["reasons"] = list(dict.fromkeys([*(combined.get("reasons") or []), *(item.get("reasons") or []), "hybrid_candidate:quant+research"]))
-            merged[code] = combined
-            continue
-        merged[code] = {
-            **dict(item),
-            **_runtime_source_meta(item.get("source") or "research", research_source=item.get("source"), mode=mode),
-        }
-    return sorted(
-        merged.values(),
-        key=lambda item: (float(item.get("priority_score") or 0.0), float(item.get("score") or 0.0), str(item.get("code") or "")),
-        reverse=True,
-    )
+    return collect_quant_runtime_candidates(market, cfg or {})
 
 
 def collect_pick_candidates(market: str, cfg: dict) -> list[dict]:

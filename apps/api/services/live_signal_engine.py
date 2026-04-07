@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import random
 from typing import Any
 
 from analyzer.shared_strategy import profile_from_mapping, should_enter_from_snapshot, should_exit_from_snapshot
@@ -193,7 +194,9 @@ def scan_strategy(
     base_risk_state = build_strategy_risk_state(account=account_payload, strategy=strategy)
     candidates: list[dict[str, Any]] = []
 
-    for symbol in (universe.get("symbols") or [])[:_scan_limit(strategy)]:
+    symbols_pool = list(universe.get("symbols") or [])
+    random.shuffle(symbols_pool)
+    for symbol in symbols_pool[:_scan_limit(strategy)]:
         if not isinstance(symbol, dict):
             continue
         code = str(symbol.get("code") or "").upper()
@@ -259,7 +262,7 @@ def scan_strategy(
             "candidate_source_detail": str(strategy.get("universe_rule") or ""),
             "candidate_source_tier": "tier_1",
             "candidate_source_priority": 100,
-            "candidate_runtime_source_mode": "quant_only",
+            "candidate_runtime_source_mode": "live_scanner",
             "candidate_research_source": "openclaw_snapshot_store",
             "report_reasoning": {
                 "summary": ", ".join(reasons[:3]),

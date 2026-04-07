@@ -13,7 +13,7 @@ from services import signal_service as svc
 
 
 class RuntimeCandidatePolicyTests(unittest.TestCase):
-    def test_runtime_collection_defaults_to_quant_only(self):
+    def test_runtime_collection_ignores_research_candidates_without_runtime_overlay(self):
         with patch.object(svc, "load_execution_optimized_params", return_value=None), \
              patch.object(svc, "_get_today_picks", return_value={
                  "auto_candidates": [
@@ -29,27 +29,7 @@ class RuntimeCandidatePolicyTests(unittest.TestCase):
 
         self.assertEqual([], candidates)
 
-    def test_runtime_collection_can_use_research_only_mode(self):
-        with patch.object(svc, "load_execution_optimized_params", return_value=None), \
-             patch.object(svc, "_get_today_picks", return_value={"auto_candidates": []}), \
-             patch.object(svc, "_get_recommendations", return_value={
-                 "recommendations": [
-                     {"ticker": "AAPL", "market": "NASDAQ", "signal": "buy", "score": 77}
-                 ]
-             }):
-            candidates = svc.collect_runtime_candidates(
-                "NASDAQ",
-                cfg={
-                    "runtime_candidate_source_mode": "research_only",
-                    "allow_recommendation_fallback": True,
-                },
-            )
-
-        self.assertEqual(1, len(candidates))
-        self.assertEqual("AAPL", candidates[0]["code"])
-        self.assertEqual("recommendations", candidates[0]["source"])
-
-    def test_runtime_collection_can_use_quant_only_runtime_overlay(self):
+    def test_runtime_collection_uses_runtime_overlay_candidates(self):
         runtime_payload = {
             "per_symbol": {
                 "AAPL": {
@@ -79,9 +59,9 @@ class RuntimeCandidatePolicyTests(unittest.TestCase):
         self.assertEqual(201.5, candidates[0]["technical_snapshot"]["current_price"])
         self.assertEqual(201.5, candidates[0]["current_price"])
         self.assertEqual(1500000, candidates[0]["technical_snapshot"]["volume_avg20"])
-        self.assertEqual("quant_only", candidates[0]["runtime_candidate_source_mode"])
+        self.assertEqual("runtime_candidates", candidates[0]["runtime_candidate_source_mode"])
 
-    def test_runtime_collection_hybrid_merges_only_in_policy_layer(self):
+    def test_runtime_collection_does_not_merge_research_candidates(self):
         runtime_payload = {
             "per_symbol": {
                 "AAPL": {
@@ -110,15 +90,11 @@ class RuntimeCandidatePolicyTests(unittest.TestCase):
                  ]
              }), \
              patch.object(svc, "_get_recommendations", return_value={"recommendations": []}):
-            candidates = svc.collect_runtime_candidates(
-                "NASDAQ",
-                cfg={"runtime_candidate_source_mode": "hybrid"},
-            )
+            candidates = svc.collect_runtime_candidates("NASDAQ", cfg={})
 
         self.assertEqual(1, len(candidates))
-        self.assertEqual("hybrid", candidates[0]["source"])
-        self.assertEqual("today_picks", candidates[0]["research_source"])
-        self.assertEqual(200.0, candidates[0]["technical_snapshot"]["current_price"])
+        self.assertEqual("quant_runtime", candidates[0]["source"])
+        self.assertNotIn("research_candidate", candidates[0])
 
     def test_quant_runtime_candidates_ignore_research_min_score(self):
         runtime_payload = {
@@ -140,7 +116,6 @@ class RuntimeCandidatePolicyTests(unittest.TestCase):
             candidates = svc.collect_runtime_candidates(
                 "KOSPI",
                 cfg={
-                    "runtime_candidate_source_mode": "quant_only",
                     "min_score": 50,
                 },
             )
@@ -168,7 +143,6 @@ class RuntimeCandidatePolicyTests(unittest.TestCase):
             candidates = svc.collect_runtime_candidates(
                 "KOSPI",
                 cfg={
-                    "runtime_candidate_source_mode": "quant_only",
                     "min_score": 50,
                     "quant_min_score": 34,
                 },

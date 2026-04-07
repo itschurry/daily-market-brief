@@ -754,7 +754,6 @@ def _default_auto_trader_config() -> dict:
         "theme_min_news": 1,
         "theme_priority_bonus": 2.0,
         "theme_focus": list(_DEFAULT_THEME_FOCUS),
-        "runtime_candidate_source_mode": "hybrid",
         "daily_buy_limit": 100,
         "daily_sell_limit": 100,
         "max_orders_per_symbol_per_day": 3,
@@ -908,9 +907,6 @@ def _apply_quant_candidate_patch(cfg: dict[str, Any], candidate: dict[str, Any])
         candidate.get("patch"), dict) else {}
     settings = candidate.get("settings") if isinstance(
         candidate.get("settings"), dict) else {}
-    # runtime_candidate_source_mode 는 candidate 생성 소스를 나타내는 메타데이터이며
-    # 실거래 엔진의 신호 수집 모드를 제어해서는 안 된다.
-    # 실거래 모드는 _default_auto_trader_config()의 "hybrid" 기본값을 사용한다.
     decision = candidate.get("decision") if isinstance(candidate.get("decision"), dict) else {}
 
     for key, value in patch.items():

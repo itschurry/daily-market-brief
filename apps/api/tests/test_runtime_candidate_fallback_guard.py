@@ -33,8 +33,11 @@ class RuntimeCandidateFallbackGuardTests(unittest.TestCase):
 
         self.assertEqual([], candidates)
 
-    def test_runtime_collection_can_opt_in_to_recommendation_fallback(self):
-        with patch.object(svc, "_get_today_picks", return_value={"auto_candidates": []}), \
+    def test_runtime_collection_returns_empty_when_no_quant_params(self):
+        # research_only 모드 제거 후 quant 파라미터 없으면 항상 빈 목록 반환
+        # live scanner fallback은 strategy_engine.build_signal_book() 계층에서 처리
+        with patch.object(svc, "load_execution_optimized_params", return_value=None), \
+             patch.object(svc, "_get_today_picks", return_value={"auto_candidates": []}), \
              patch.object(
                  svc,
                  "_get_recommendations",
@@ -51,15 +54,10 @@ class RuntimeCandidateFallbackGuardTests(unittest.TestCase):
              ):
             candidates = svc.collect_pick_candidates(
                 "NASDAQ",
-                cfg={
-                    "runtime_candidate_source_mode": "research_only",
-                    "allow_recommendation_fallback": True,
-                },
+                cfg={"allow_recommendation_fallback": True},
             )
 
-        self.assertEqual(1, len(candidates))
-        self.assertEqual("AAPL", candidates[0]["code"])
-        self.assertEqual("recommendations", candidates[0]["source"])
+        self.assertEqual([], candidates)
 
 
 if __name__ == "__main__":
