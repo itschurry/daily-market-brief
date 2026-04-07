@@ -27,11 +27,11 @@ function stateTone(label: string) {
 function summarizeStrategy(snapshot: ConsoleSnapshot) {
   const items = snapshot.strategies.items || [];
   const applied = items.find((item) => item.enabled);
-  const approved = items.filter((item) => item.status === 'ready').length;
+  const approvedPending = items.filter((item) => item.status === 'ready' && !item.enabled).length;
   return {
     appliedName: applied?.name || applied?.strategy_id || '-',
     appliedVersion: applied?.version ? `v${applied.version}` : '-',
-    approvedCount: approved,
+    approvedPendingCount: approvedPending,
   };
 }
 
@@ -171,9 +171,9 @@ export function SettingsPage({
                 <div className="console-status-card-copy">{strategySummary.appliedVersion}</div>
               </div>
               <div className="console-status-card">
-                <div className="console-status-card-label">approved 대기</div>
-                <div className="console-status-card-value">{strategySummary.approvedCount}개</div>
-                <div className="console-status-card-copy">운영 반영 전 확인 필요</div>
+                <div className="console-status-card-label">미적용 승인 전략</div>
+                <div className="console-status-card-value">{strategySummary.approvedPendingCount}개</div>
+                <div className="console-status-card-copy">ready 상태이지만 아직 enabled 되지 않은 전략</div>
               </div>
               <div className="console-status-card">
                 <div className="console-status-card-label">동기화 메시지</div>
