@@ -33,9 +33,6 @@ def summarize_order_decision(signal: dict[str, Any]) -> dict[str, Any]:
       else:
           action = "hold"
           reason_code = "non_entry_signal"
-    elif not entry_allowed or final_action == "blocked":
-      action = "block"
-      reason_code = blocked_reason
     elif final_action == "review_for_entry":
       action = "buy" if order_qty > 0 else "hold"
       reason_code = "order_ready" if order_qty > 0 else "size_zero"
@@ -43,6 +40,9 @@ def summarize_order_decision(signal: dict[str, Any]) -> dict[str, Any]:
     elif final_action == "watch_only":
       action = "hold"
       reason_code = "operator_review"
+    elif not entry_allowed or final_action == "blocked":
+      action = "block"
+      reason_code = blocked_reason
     else:
       action = "hold"
       reason_code = "signal_detected"

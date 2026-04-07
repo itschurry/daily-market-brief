@@ -44,6 +44,22 @@ class TradeWorkflowTests(unittest.TestCase):
         self.assertEqual("blocked", result["workflow_stage"])
         self.assertEqual("DAILY_LOSS_LIMIT", result["blocked_reason"])
 
+    def test_watch_only_entry_signal_stays_operator_review(self):
+        result = derive_signal_workflow({
+            "market": "KOSPI",
+            "code": "001780",
+            "signal_state": "entry",
+            "entry_allowed": False,
+            "final_action": "watch_only",
+            "risk_check": {"reason_code": "ok", "message": "주문 가능"},
+            "size_recommendation": {"quantity": 1},
+        })
+        self.assertEqual("execution_decided", result["workflow_stage"])
+        self.assertEqual("operator_review", result["execution_status"])
+        self.assertFalse(result["orderable"])
+        self.assertEqual("", result["blocked_reason"])
+        self.assertEqual("", result["lifecycle_state"])
+
     def test_order_workflow_marks_success_as_filled(self):
         result = derive_order_workflow({
             "market": "NASDAQ",
