@@ -908,12 +908,9 @@ def _apply_quant_candidate_patch(cfg: dict[str, Any], candidate: dict[str, Any])
         candidate.get("patch"), dict) else {}
     settings = candidate.get("settings") if isinstance(
         candidate.get("settings"), dict) else {}
-    runtime_candidate_source_mode = str(
-        candidate.get("runtime_candidate_source_mode")
-        or settings.get("runtime_candidate_source_mode")
-        or merged.get("runtime_candidate_source_mode")
-        or "hybrid"
-    ).strip().lower()
+    # runtime_candidate_source_mode 는 candidate 생성 소스를 나타내는 메타데이터이며
+    # 실거래 엔진의 신호 수집 모드를 제어해서는 안 된다.
+    # 실거래 모드는 _default_auto_trader_config()의 "hybrid" 기본값을 사용한다.
     decision = candidate.get("decision") if isinstance(candidate.get("decision"), dict) else {}
 
     for key, value in patch.items():
@@ -937,8 +934,6 @@ def _apply_quant_candidate_patch(cfg: dict[str, Any], candidate: dict[str, Any])
     if settings.get("walkForward") is not None:
         merged["validation_gate_enabled"] = bool(
             merged.get("validation_gate_enabled", True))
-    if runtime_candidate_source_mode in {"quant_only", "research_only", "hybrid"}:
-        merged["runtime_candidate_source_mode"] = runtime_candidate_source_mode
 
     if str(decision.get("status") or "") == "limited_adopt":
         base_risk = float(merged.get("risk_per_trade_pct") or 0.35)
