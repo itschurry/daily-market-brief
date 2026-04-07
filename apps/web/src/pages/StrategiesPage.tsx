@@ -221,6 +221,33 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh, mod
     }
   }, [onRefresh, push, selectedStrategy]);
 
+  const SCAN_CYCLE_OPTIONS = ['1m', '5m', '10m', '15m', '30m', '1h'];
+
+  const handleEditScanCycle = useCallback(async () => {
+    if (!selectedStrategy) return;
+    const current = selectedStrategy.scan_cycle || '5m';
+    const options = SCAN_CYCLE_OPTIONS.join(' / ');
+    const next = window.prompt(`스캔 주기를 입력해줘. (${options})`, current);
+    if (!next || next.trim() === current) return;
+    const value = next.trim().toLowerCase();
+    if (!SCAN_CYCLE_OPTIONS.includes(value)) {
+      alert(`유효하지 않은 값이야. 다음 중 하나를 입력해줘: ${options}`);
+      return;
+    }
+    setPendingId(String(selectedStrategy.strategy_id || 'scan_cycle'));
+    try {
+      const response = await saveStrategyPreset({ ...selectedStrategy, scan_cycle: value });
+      if (!response.ok) {
+        push('error', '스캔 주기 변경에 실패했습니다.', '', 'engine');
+        return;
+      }
+      push('success', `스캔 주기를 ${value} 로 변경했어.`, undefined, 'engine');
+      onRefresh();
+    } finally {
+      setPendingId('');
+    }
+  }, [onRefresh, push, selectedStrategy]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="app-shell">
       <div className="page-frame">
@@ -410,7 +437,17 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh, mod
                 <div className="summary-metric-card">
                   <div className="summary-metric-label">시장 / 유니버스</div>
                   <div className="summary-metric-value">{selectedStrategy.market || '-'} / {selectedStrategy.universe_rule || '-'}</div>
-                  <div className="summary-metric-detail">scan cycle {selectedStrategy.scan_cycle || '-'}</div>
+                  <div className="summary-metric-detail" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    scan cycle {selectedStrategy.scan_cycle || '-'}
+                    {!readOnly && (
+                      <button
+                        className="ghost-button"
+                        style={{ fontSize: 11, padding: '1px 6px' }}
+                        onClick={() => { void handleEditScanCycle(); }}
+                        disabled={!!pendingId}
+                      >편집</button>
+                    )}
+                  </div>
                 </div>
                 <div className="summary-metric-card">
                   <div className="summary-metric-label">연구 성과</div>
