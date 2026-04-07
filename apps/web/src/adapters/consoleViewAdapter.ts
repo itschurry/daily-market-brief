@@ -60,6 +60,15 @@ export function isRiskBlockedSignal(signal: DomainSignal): boolean {
   return false;
 }
 
+export function isObserveOnlySignal(signal: DomainSignal): boolean {
+  if (signal.entry_allowed || isRiskBlockedSignal(signal)) {
+    return false;
+  }
+  const signalState = String((signal as { signal_state?: string }).signal_state || '').toLowerCase();
+  const finalAction = String(signal.final_action || signal.final_action_snapshot?.final_action || '').toLowerCase();
+  return signalState === 'watch' || finalAction === 'do_not_touch' || finalAction === 'watch_only';
+}
+
 function getSignalFinalAction(signal: DomainSignal): string {
   return String(signal.final_action || signal.final_action_snapshot?.final_action || '').toLowerCase();
 }
@@ -285,6 +294,7 @@ export function buildTodayReportView(snapshot: ConsoleSnapshot): TodayReportView
   const signals = snapshot.signals.signals || [];
   const signalBlockedCount = signals.filter(isRiskBlockedSignal).length;
   const signalAllowedCount = signals.filter((signal) => signal.entry_allowed).length;
+  const observeCount = signals.filter(isObserveOnlySignal).length;
   const allowedCount = Number((allocator.entry_allowed_count as number | undefined) ?? signalAllowedCount);
   const blockedCount = Number((allocator.blocked_count as number | undefined) ?? signalBlockedCount);
   const decision = classifyMode(snapshot);
@@ -304,7 +314,9 @@ export function buildTodayReportView(snapshot: ConsoleSnapshot): TodayReportView
       : '현재 신규 진입은 제한됩니다. 리스크 가드 사유를 먼저 해소하거나 관망 비중을 유지하세요.',
     blockedCount > 0
       ? `차단 신호 ${formatCount(blockedCount, '건')}은 사유를 확인한 뒤 제외 대상으로 유지합니다.`
-      : '현재 차단 신호가 많지 않아 허용 신호 중심으로 판단해도 됩니다.',
+      : observeCount > 0
+        ? `관찰 후보 ${formatCount(observeCount, '건')}은 아직 비진입 상태라 우선순위만 정리하면 됩니다.`
+        : '현재 차단 신호가 많지 않아 허용 신호 중심으로 판단해도 됩니다.',
   ]).slice(0, 3);
 
   const actionItems: TodayReportView['actionItems'] = [
@@ -347,8 +359,8 @@ export function buildTodayReportView(snapshot: ConsoleSnapshot): TodayReportView
         tone: 'neutral',
       },
       {
-        label: '허용 / 차단 신호',
-        value: `${formatCount(allowedCount, '건')} / ${formatCount(blockedCount, '건')}`,
+        label: '허용 / 차단 / 관찰',
+        value: `${formatCount(allowedCount, '건')} / ${formatCount(blockedCount, '건')} / ${formatCount(observeCount, '건')}`,
         tone: 'neutral',
       },
     ],
@@ -367,20 +379,23 @@ export function buildWatchDecisionView(snapshot: ConsoleSnapshot): WatchDecision
   const guardReasonCodes = asReasonCodeList((resolveRiskGuard(snapshot).reasons as string[]) || []);
   const allowedSignals = sortSignalsForWatch(signals.filter((signal) => signal.entry_allowed));
   const blockedSignals = sortSignalsForWatch(signals.filter(isRiskBlockedSignal));
+  const observeSignals = sortSignalsForWatch(signals.filter(isObserveOnlySignal));
   const repeatedBlockedReasons = dedupeKeepOrder(
-    blockedSignals.flatMap((signal) => translateReasons(resolveSignalReasonCodes(signal, guardReasonCodes))),
+    [...blockedSignals, ...observeSignals].flatMap((signal) => translateReasons(resolveSignalReasonCodes(signal, guardReasonCodes))),
   ).slice(0, 3);
 
   const focusCandidates = allowedSignals.slice(0, 3).map((signal, index) => buildWatchCandidate(signal, index));
-  const blockedCandidates = blockedSignals.slice(0, 3).map((signal, index) => buildWatchCandidate(signal, index, guardReasonCodes));
+  const observeCandidates = [...blockedSignals, ...observeSignals]
+    .slice(0, 3)
+    .map((signal, index) => buildWatchCandidate(signal, index, guardReasonCodes));
 
   const researchQueue = dedupeKeepOrder([
     ...decision.rationale,
     focusCandidates[0]
       ? `${focusCandidates[0].symbol} 등 허용 후보는 EV·승률·권장 수량이 같이 버티는지부터 확인합니다.`
       : '현재 허용 후보가 적어 관심 시나리오는 관찰/보류 중심으로 읽는 편이 안전합니다.',
-    blockedCandidates[0]
-      ? `${blockedCandidates[0].symbol} 등 막힌 후보는 ${blockedCandidates[0].primaryReason} 해소 전까지 관찰 전용으로 둡니다.`
+    observeCandidates[0]
+      ? `${observeCandidates[0].symbol} 등 관찰 후보는 ${observeCandidates[0].primaryReason} 기준이 바뀌기 전까지 우선순위만 유지합니다.`
       : '강하게 막힌 후보가 적어 오늘은 허용 후보 우선순위 정리에 집중하면 됩니다.',
     repeatedBlockedReasons.length > 0
       ? `반복 차단 사유: ${repeatedBlockedReasons.join(' · ')}`
@@ -391,8 +406,9 @@ export function buildWatchDecisionView(snapshot: ConsoleSnapshot): WatchDecision
     ...decision,
     allowedCount: allowedSignals.length,
     blockedCount: blockedSignals.length,
+    observeCount: observeSignals.length,
     focusCandidates,
-    blockedCandidates,
+    observeCandidates,
     researchQueue,
   };
 }

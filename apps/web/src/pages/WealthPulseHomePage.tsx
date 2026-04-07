@@ -120,7 +120,8 @@ export function WealthPulseHomePage({
   const blockedSignals = signals.filter(isRiskBlockedSignal);
   const totalAllowedSignals = Number(allocator.entry_allowed_count ?? allowedSignals.length);
   const totalBlockedSignals = Number(allocator.blocked_count ?? blockedSignals.length);
-  const totalSignalCount = Math.max(0, totalAllowedSignals + totalBlockedSignals);
+  const totalObserveSignals = Math.max(signals.length - totalAllowedSignals - totalBlockedSignals, 0);
+  const totalSignalCount = Math.max(0, totalAllowedSignals + totalBlockedSignals + totalObserveSignals);
   const topSignals = [...allowedSignals]
     .sort((left, right) => toNumber(right.ev_metrics?.expected_value) - toNumber(left.ev_metrics?.expected_value))
     .slice(0, 5);
@@ -201,7 +202,7 @@ export function WealthPulseHomePage({
             <article className="page-section wealth-kpi-card">
               <div className="wealth-kpi-label">보유 포지션</div>
               <div className="wealth-kpi-value">{formatNumber(positions.length, 0)}개</div>
-              <div className="wealth-kpi-copy">허용 신호 {formatNumber(totalAllowedSignals, 0)}건 · 차단 {formatNumber(totalBlockedSignals, 0)}건</div>
+              <div className="wealth-kpi-copy">허용 {formatNumber(totalAllowedSignals, 0)}건 · 차단 {formatNumber(totalBlockedSignals, 0)}건 · 관찰 {formatNumber(totalObserveSignals, 0)}건</div>
             </article>
           </section>
 
@@ -229,7 +230,7 @@ export function WealthPulseHomePage({
 
             <article className="page-section">
               <div className="section-title">오늘 신호 요약</div>
-              <div className="section-copy">진입 허용/차단 비율과 리스크 레벨을 함께 봅니다.</div>
+              <div className="section-copy">진입 허용/차단과 아직 비진입인 관찰 후보를 함께 봅니다.</div>
               <div className="wealth-bars">
                 <div className="wealth-bar-row">
                   <div className="wealth-bar-label">허용</div>
@@ -240,6 +241,11 @@ export function WealthPulseHomePage({
                   <div className="wealth-bar-label">차단</div>
                   <div className="wealth-bar-track"><div className="wealth-bar-fill is-blocked" style={{ width: ratioPercent(totalBlockedSignals, totalSignalCount || 1) }} /></div>
                   <div className="wealth-bar-value">{formatNumber(totalBlockedSignals, 0)}건</div>
+                </div>
+                <div className="wealth-bar-row">
+                  <div className="wealth-bar-label">관찰</div>
+                  <div className="wealth-bar-track"><div className="wealth-bar-fill" style={{ width: ratioPercent(totalObserveSignals, totalSignalCount || 1) }} /></div>
+                  <div className="wealth-bar-value">{formatNumber(totalObserveSignals, 0)}건</div>
                 </div>
               </div>
               <div className="wealth-home-muted" style={{ marginTop: 12 }}>장세 {allocator.regime || snapshot.signals.regime || '-'} · 위험도 {allocator.risk_level || snapshot.signals.risk_level || '-'}</div>

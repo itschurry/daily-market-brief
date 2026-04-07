@@ -125,7 +125,8 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
   const allocator = snapshot.engine.allocator || {};
   const allowedCount = Number(allocator.entry_allowed_count ?? signals.filter((signal) => signal.entry_allowed).length);
   const blockedCount = Number((allocator.blocked_count as number | undefined) ?? signals.filter(isRiskBlockedSignal).length);
-  const totalSignals = Math.max(allowedCount + blockedCount, 1);
+  const observeCount = Math.max(signals.length - allowedCount - blockedCount, 0);
+  const totalSignals = Math.max(allowedCount + blockedCount + observeCount, 1);
   const guardAllowed = isRiskEntryAllowed(snapshot);
   const riskLevel = String(snapshot.engine.allocator?.risk_level || snapshot.signals.risk_level || '-');
   const regime = String(snapshot.engine.allocator?.regime || snapshot.signals.regime || '-');
@@ -169,7 +170,7 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
             진입 {guardAllowed ? '가능' : '제한'}
           </div>
           <div className="report-decision-chip">위험도 {riskLevel}</div>
-          <div className="report-decision-chip">허용 {formatCount(allowedCount, '건')} / 차단 {formatCount(blockedCount, '건')}</div>
+          <div className="report-decision-chip">허용 {formatCount(allowedCount, '건')} / 차단 {formatCount(blockedCount, '건')} / 관찰 {formatCount(observeCount, '건')}</div>
         </div>
       </div>
 
@@ -327,13 +328,14 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
         </div>
 
         <div className="page-section report-visual-card">
-          <div className="report-card-title">허용 / 차단 신호</div>
-          <div className="report-card-value">{formatCount(allowedCount, '건')} / {formatCount(blockedCount, '건')}</div>
+          <div className="report-card-title">허용 / 차단 / 관찰 신호</div>
+          <div className="report-card-value">{formatCount(allowedCount, '건')} / {formatCount(blockedCount, '건')} / {formatCount(observeCount, '건')}</div>
           <div className="signal-balance-bar">
             <div className="signal-balance-segment is-good" style={{ width: ratioWidth(allowedCount, totalSignals) }} />
             <div className="signal-balance-segment is-bad" style={{ width: ratioWidth(blockedCount, totalSignals) }} />
+            <div className="signal-balance-segment" style={{ width: ratioWidth(observeCount, totalSignals) }} />
           </div>
-          <div className="report-card-copy">허용 {(allowedCount / totalSignals * 100).toFixed(0)}% · 차단 {(blockedCount / totalSignals * 100).toFixed(0)}%</div>
+          <div className="report-card-copy">허용 {(allowedCount / totalSignals * 100).toFixed(0)}% · 차단 {(blockedCount / totalSignals * 100).toFixed(0)}% · 관찰 {(observeCount / totalSignals * 100).toFixed(0)}%</div>
         </div>
 
         <div className="page-section report-visual-card">
@@ -471,6 +473,7 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
   const signals = snapshot.signals.signals || [];
   const allowedSignals = Number((allocator.entry_allowed_count as number | undefined) ?? signals.filter((item) => item.entry_allowed).length);
   const blockedSignals = Number((allocator.blocked_count as number | undefined) ?? signals.filter(isRiskBlockedSignal).length);
+  const observeSignals = Math.max(signals.length - allowedSignals - blockedSignals, 0);
   const failedOrders = Number(engineState.today_order_counts?.failed || 0);
   const orderFailureSummary = engineState.order_failure_summary || {};
   const repeatedCashRetries = orderFailureSummary.repeated_insufficient_cash || [];
@@ -605,7 +608,7 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
             <div className="inline-badge">실시간</div>
           </div>
           <div className="detail-list">
-            <div>허용 / 차단 신호: {formatCount(allowedSignals, '건')} / {formatCount(blockedSignals, '건')}</div>
+            <div>허용 / 차단 / 관찰 신호: {formatCount(allowedSignals, '건')} / {formatCount(blockedSignals, '건')} / {formatCount(observeSignals, '건')}</div>
             <div>다음 실행 시각: {formatDateTime(engineState.next_run_at || '')}</div>
             <div>최근 성공 시각: {formatDateTime(engineState.last_success_at || '')}</div>
             <div>오늘 실현손익: {formatKRW(Number(engineState.today_realized_pnl || 0), true)}</div>
@@ -650,7 +653,7 @@ function renderWatchDecision(snapshot: ConsoleSnapshot) {
         <div className="report-hero-title-row">
           <div>
             <div className="report-hero-title">관심 시나리오</div>
-            <div className="report-hero-copy">이제 이 탭은 짧은 모드 문장만 보여주는 화면이 아니라, 오늘 다시 볼 허용 후보와 막혀 있지만 계속 볼 후보를 나눠 두는 research queue로 읽으면 됩니다. 매수 확정판이 아니라 우선순위 정리판에 가깝습니다.</div>
+            <div className="report-hero-copy">이제 이 탭은 짧은 모드 문장만 보여주는 화면이 아니라, 오늘 다시 볼 허용 후보와 아직 비진입 관찰 후보를 나눠 두는 research queue로 읽으면 됩니다. 매수 확정판이 아니라 우선순위 정리판에 가깝습니다.</div>
           </div>
           <div className={`report-mode-chip is-${view.mode === '공격' ? 'good' : view.mode === '관망' ? 'bad' : 'neutral'}`}>
             {view.mode}
@@ -659,7 +662,7 @@ function renderWatchDecision(snapshot: ConsoleSnapshot) {
         <div className="report-decision-strip">
           <div className={`report-decision-chip ${guardAllowed ? 'is-good' : 'is-bad'}`}>신규 진입 {guardAllowed ? '가능' : '제한'}</div>
           <div className="report-decision-chip">위험도 {riskLevel}</div>
-          <div className="report-decision-chip">허용 {formatCount(view.allowedCount, '건')} / 차단 {formatCount(view.blockedCount, '건')}</div>
+          <div className="report-decision-chip">허용 {formatCount(view.allowedCount, '건')} / 차단 {formatCount(view.blockedCount, '건')} / 관찰 {formatCount(view.observeCount, '건')}</div>
         </div>
       </div>
 
@@ -675,9 +678,9 @@ function renderWatchDecision(snapshot: ConsoleSnapshot) {
           <div className="report-card-copy">진입 가능 신호 중 EV/점수 상위 후보만 먼저 올렸습니다.</div>
         </div>
         <div className="page-section report-visual-card">
-          <div className="report-card-title">막혀 있지만 계속 볼 후보</div>
-          <div className="report-card-value">{formatCount(view.blockedCandidates.length, '건')}</div>
-          <div className="report-card-copy">차단 사유가 뚜렷한 후보를 따로 남겨서 허용 후보와 섞이지 않게 했습니다.</div>
+          <div className="report-card-title">지켜볼 관찰 후보</div>
+          <div className="report-card-value">{formatCount(view.observeCandidates.length, '건')}</div>
+          <div className="report-card-copy">아직 비진입 상태라 바로 주문하지 않고 조건 변화만 추적할 후보입니다.</div>
         </div>
       </div>
 
@@ -722,13 +725,13 @@ function renderWatchDecision(snapshot: ConsoleSnapshot) {
         <div className="page-section report-visual-card">
           <div className="section-head-row">
             <div>
-              <div className="section-title">막혀 있지만 계속 볼 후보</div>
-              <div className="section-copy">막힌 이유를 먼저 확인하려고 남겨 둔 관찰 리스트입니다.</div>
+              <div className="section-title">지켜볼 관찰 후보</div>
+              <div className="section-copy">차단 또는 비진입 상태라 우선순위만 유지하는 관찰 리스트입니다.</div>
             </div>
-            <div className="inline-badge is-warning">{formatCount(view.blockedCandidates.length, '건')}</div>
+            <div className="inline-badge is-warning">{formatCount(view.observeCandidates.length, '건')}</div>
           </div>
           <div className="operator-note-grid">
-            {view.blockedCandidates.map((item) => (
+            {view.observeCandidates.map((item) => (
               <div key={item.key} className="operator-note-card watch-scenario-card is-bad">
                 <div className="scorecard-candidate-head">
                   <div>
@@ -741,15 +744,15 @@ function renderWatchDecision(snapshot: ConsoleSnapshot) {
                   {item.chips.map((chip) => <span key={`${item.key}-${chip}`} className="signal-meta-chip">{chip}</span>)}
                 </div>
                 <div className="operator-note-copy">
-                  <strong style={{ color: 'var(--text-1)' }}>막힌 이유</strong> {item.primaryReason}
+                  <strong style={{ color: 'var(--text-1)' }}>관찰 이유</strong> {item.primaryReason}
                   <br />
                   {item.secondaryDetail}
                 </div>
               </div>
             ))}
-            {view.blockedCandidates.length === 0 && (
+            {view.observeCandidates.length === 0 && (
               <div className="operator-note-card">
-                <div className="operator-note-label">강한 차단 후보 적음</div>
+                <div className="operator-note-label">관찰 후보 적음</div>
                 <div className="operator-note-copy">오늘은 허용 후보 우선순위만 빠르게 정리해도 충분합니다.</div>
               </div>
             )}

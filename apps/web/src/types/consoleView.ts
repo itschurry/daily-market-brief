@@ -87,8 +87,9 @@ export interface WatchDecisionView {
   stanceSummary: string;
   allowedCount: number;
   blockedCount: number;
+  observeCount: number;
   focusCandidates: WatchDecisionCandidate[];
-  blockedCandidates: WatchDecisionCandidate[];
+  observeCandidates: WatchDecisionCandidate[];
   researchQueue: string[];
 }
 
