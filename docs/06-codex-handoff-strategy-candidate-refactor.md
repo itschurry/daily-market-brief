@@ -183,7 +183,6 @@ optimizer 결과 저장 시 아래와 같은 `strategy_candidates` 구조를 함
 대상 파일 예시:
 - `apps/web/src/pages/BacktestValidationPage.tsx`
 - 필요 시 `apps/web/src/types/domain.ts`
-- 필요 시 `apps/web/src/hooks/useQuantOpsWorkflow.ts`
 - 필요 시 `apps/web/src/api/domain.ts`
 
 ### 해야 할 일

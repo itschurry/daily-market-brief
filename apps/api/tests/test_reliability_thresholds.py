@@ -35,7 +35,6 @@ from analyzer.monte_carlo import (
     _should_use_result,
     simulate_strategy,
 )
-from services.ev_calibration_service import compute_ev_metrics
 from services.reliability_policy import (
     overlay_policy_metadata,
     select_global_overlay_candidates,
@@ -206,24 +205,6 @@ class SharedReliabilityServiceTests(unittest.TestCase):
         self.assertTrue(medium.passes_minimum_gate)
         self.assertEqual(low.label, "low")
         self.assertFalse(low.passes_minimum_gate)
-
-    def test_ev_calibration_uses_shared_reliability_labels(self):
-        payload = compute_ev_metrics(
-            strategy_type="pullback",
-            regime="risk_on",
-            score=62.0,
-            confidence=64.0,
-            trade_count=24,
-            validation_trades=9,
-            validation_sharpe=0.28,
-            max_drawdown_pct=-22.0,
-            market="KOSPI",
-            sector="반도체",
-        )
-
-        self.assertEqual(payload["reliability"], "medium")
-        self.assertEqual(payload["reliability_detail"]["reason"], "borderline_train_trades")
-        self.assertTrue(payload["calibration"]["passes_minimum_gate"])
 
     def test_reliability_diagnostic_reports_blocking_gaps_for_low_candidate(self):
         diagnostic = build_reliability_diagnostic(

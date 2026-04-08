@@ -22,7 +22,7 @@
   - `apps/api/services/trade_workflow.py`
   - `apps/api/services/execution_service.py`
   - `apps/api/services/live_layers.py`
-  - `apps/api/services/signal_engine.py`
+  - `apps/api/services/live_signal_engine.py`
 - 관련 테스트:
   - `apps/api/tests/test_trade_workflow.py`
   - `apps/api/tests/test_execution_lifecycle.py`

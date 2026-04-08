@@ -56,7 +56,7 @@ class ExecutionEngine:
         return capital * 0.02  # 기본 2% 룰 (추후 확장)
 2.2 Signal Engine (분리 필요)
 📂 위치
-services/signal_engine.py
+apps/api/services/live_signal_engine.py
 🎯 역할
 runtime 전략 결과 → 실시간 signal 생성
 class SignalEngine:
