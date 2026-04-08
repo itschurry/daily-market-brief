@@ -55,6 +55,7 @@ function withDefaults(options: RequestOptions = {}): RequestInit {
   };
   const { noStore, ...rest } = options;
   return {
+    keepalive: true,
     cache: noStore ? 'no-store' : rest.cache,
     ...rest,
     headers,

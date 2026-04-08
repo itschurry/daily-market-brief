@@ -127,7 +127,7 @@ _DEFAULT_STRATEGIES: list[dict[str, Any]] = [
         "status": "ready",
         "market": "NASDAQ",
         "universe_rule": "sp500",
-        "scan_cycle": "15m",
+        "scan_cycle": "5m",
         "entry_rule": "bear or risk_off regime -> selective entry, short hold, strict guardrail",
         "exit_rule": "protect capital quickly",
         "params": {
@@ -211,7 +211,7 @@ def _normalize_strategy(payload: dict[str, Any]) -> dict[str, Any]:
             str(payload.get("universe_rule") or ("kospi" if market == "KOSPI" else "sp500")).strip().lower(),
             str(payload.get("universe_rule") or ("kospi" if market == "KOSPI" else "sp500")).strip() or ("kospi" if market == "KOSPI" else "sp500"),
         ),
-        "scan_cycle": str(payload.get("scan_cycle") or ("5m" if market == "KOSPI" else "15m")).strip() or ("5m" if market == "KOSPI" else "15m"),
+        "scan_cycle": str(payload.get("scan_cycle") or "5m").strip() or "5m",
         "entry_rule": str(payload.get("entry_rule") or "").strip(),
         "exit_rule": str(payload.get("exit_rule") or "").strip(),
         "params": merged_params,

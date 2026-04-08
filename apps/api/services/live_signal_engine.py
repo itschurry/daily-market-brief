@@ -33,9 +33,14 @@ def _now_iso() -> str:
 
 def _parse_scan_cycle_seconds(raw: Any) -> int:
     value = str(raw or "5m").strip().lower()
+    if value.endswith("s"):
+        try:
+            return max(10, int(value[:-1]))
+        except ValueError:
+            return 300
     if value.endswith("m"):
         try:
-            return max(60, int(value[:-1]) * 60)
+            return max(10, int(value[:-1]) * 60)
         except ValueError:
             return 300
     if value.endswith("h"):

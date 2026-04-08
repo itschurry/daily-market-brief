@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 
@@ -15,6 +17,7 @@ from server import dispatch_get, dispatch_post
 
 
 app = FastAPI(title="WealthPulse API", version="2.0.0")
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -38,26 +41,29 @@ async def health() -> dict[str, str]:
 
 @app.get("/api/{full_path:path}")
 async def legacy_get(full_path: str, request: Request) -> JSONResponse:
-    result = dispatch_get(f"/api/{full_path}", _query_params_from_request(request))
+    path = f"/api/{full_path}"
+    query = _query_params_from_request(request)
+    result = await asyncio.to_thread(dispatch_get, path, query)
     if result is None:
         return JSONResponse(status_code=404, content={})
     status, payload = result
-    return JSONResponse(status_code=status, content=normalize_legacy_response(f"/api/{full_path}", status, payload))
+    return JSONResponse(status_code=status, content=normalize_legacy_response(path, status, payload))
 
 
 @app.post("/api/{full_path:path}")
 async def legacy_post(full_path: str, request: Request) -> JSONResponse:
+    path = f"/api/{full_path}"
     try:
-        payload = await request.json()
+        body = await request.json()
     except Exception:
-        payload = {}
-    if not isinstance(payload, dict):
-        payload = {}
-    result = dispatch_post(f"/api/{full_path}", payload)
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    result = await asyncio.to_thread(dispatch_post, path, body)
     if result is None:
         return JSONResponse(status_code=404, content={})
     status, response = result
-    return JSONResponse(status_code=status, content=normalize_legacy_response(f"/api/{full_path}", status, response))
+    return JSONResponse(status_code=status, content=normalize_legacy_response(path, status, response))
 
 
 def main() -> None:

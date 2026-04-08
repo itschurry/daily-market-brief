@@ -42,7 +42,7 @@ function slugifyStrategyId(value: string): string {
 function strategyContextFromValidationLab() {
   const query = loadBacktestQuery();
   if (query.market_scope === 'nasdaq') {
-    return { market: 'NASDAQ', universe_rule: 'sp500', scan_cycle: '15m' };
+    return { market: 'NASDAQ', universe_rule: 'sp500', scan_cycle: '5m' };
   }
   if (query.market_scope === 'all') {
     return { market: 'KOSPI', universe_rule: 'multi_market', scan_cycle: '10m' };
@@ -221,19 +221,10 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh, mod
     }
   }, [onRefresh, push, selectedStrategy]);
 
-  const SCAN_CYCLE_OPTIONS = ['1m', '5m', '10m', '15m', '30m', '1h'];
+  const SCAN_CYCLE_OPTIONS = ['10s', '30s', '1m', '5m', '10m', '15m', '30m', '1h'];
 
-  const handleEditScanCycle = useCallback(async () => {
-    if (!selectedStrategy) return;
-    const current = selectedStrategy.scan_cycle || '5m';
-    const options = SCAN_CYCLE_OPTIONS.join(' / ');
-    const next = window.prompt(`스캔 주기를 입력해줘. (${options})`, current);
-    if (!next || next.trim() === current) return;
-    const value = next.trim().toLowerCase();
-    if (!SCAN_CYCLE_OPTIONS.includes(value)) {
-      alert(`유효하지 않은 값이야. 다음 중 하나를 입력해줘: ${options}`);
-      return;
-    }
+  const handleEditScanCycle = useCallback(async (value: string) => {
+    if (!selectedStrategy || value === (selectedStrategy.scan_cycle || '5m')) return;
     setPendingId(String(selectedStrategy.strategy_id || 'scan_cycle'));
     try {
       const response = await saveStrategyPreset({ ...selectedStrategy, scan_cycle: value });
@@ -438,14 +429,20 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh, mod
                   <div className="summary-metric-label">시장 / 유니버스</div>
                   <div className="summary-metric-value">{selectedStrategy.market || '-'} / {selectedStrategy.universe_rule || '-'}</div>
                   <div className="summary-metric-detail" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    scan cycle {selectedStrategy.scan_cycle || '-'}
-                    {!readOnly && (
-                      <button
-                        className="ghost-button"
-                        style={{ fontSize: 11, padding: '1px 6px' }}
-                        onClick={() => { void handleEditScanCycle(); }}
+                    scan cycle
+                    {!readOnly ? (
+                      <select
+                        value={selectedStrategy.scan_cycle || '5m'}
                         disabled={!!pendingId}
-                      >편집</button>
+                        onChange={(e) => { void handleEditScanCycle(e.target.value); }}
+                        style={{ fontSize: 11, padding: '1px 4px', marginLeft: 2 }}
+                      >
+                        {SCAN_CYCLE_OPTIONS.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span>{selectedStrategy.scan_cycle || '-'}</span>
                     )}
                   </div>
                 </div>
