@@ -51,7 +51,7 @@ def handle_paper_engine_status() -> tuple[int, dict]:
     if not isinstance(payload, dict):
         return status, payload
 
-    _, account_payload = get_execution_service().paper_account(True)
+    _, account_payload = get_execution_service().paper_account(False)
     if isinstance(account_payload, dict):
         payload["account"] = account_payload
     return status, payload
