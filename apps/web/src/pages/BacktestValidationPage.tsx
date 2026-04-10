@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { getJSON, postJSON } from '../api/client';
-import { fetchStrategyMetadata, fetchValidationBacktest, fetchValidationWalkForward, saveStrategyPreset } from '../api/domain';
+import {
+  applyQuantOpsRuntime,
+  fetchQuantOpsWorkflow,
+  fetchStrategyMetadata,
+  fetchValidationBacktest,
+  fetchValidationWalkForward,
+  revalidateQuantOpsCandidate,
+  saveQuantOpsCandidate,
+  saveStrategyPreset,
+} from '../api/domain';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { defaultBacktestQuery } from '../hooks/useBacktest';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
@@ -11,7 +20,14 @@ import {
 } from '../hooks/useValidationSettingsStore';
 import { VALIDATION_TRANSFER_STORAGE_KEY } from '../lib/validationConfigStorage';
 import type { BacktestData, BacktestQuery, StrategyKind } from '../types';
-import type { StrategyRegistryItem, ValidationResponse } from '../types/domain';
+import type {
+  QuantOpsCandidatePayload,
+  QuantOpsCandidateStatePayload,
+  QuantOpsRuntimeApplyPayload,
+  QuantOpsWorkflowResponse,
+  StrategyRegistryItem,
+  ValidationResponse,
+} from '../types/domain';
 import type { ActionBarAction, ConsoleSnapshot } from '../types/consoleView';
 import type { StrategiesMetadataResponse } from '../types/domain';
 import { formatCount, formatDateTime, formatKRW, formatNumber, formatPercent, formatUSD } from '../utils/format';
@@ -237,6 +253,27 @@ function syncQueryWithStrategy(
   }, params as Record<string, unknown>);
 }
 
+function quantOpsStateLabel(state?: QuantOpsCandidateStatePayload | null) {
+  if (!state) return '없음';
+  if (state.status === 'active') return '활성';
+  if (state.status === 'stale') return 'stale';
+  if (state.status === 'missing') return '없음';
+  return state.status || '알 수 없음';
+}
+
+function quantOpsCandidateSummary(candidate?: QuantOpsCandidatePayload | null) {
+  if (!candidate) return '후보 없음';
+  const decision = candidate.decision?.label || candidate.decision?.status || '-';
+  const reliability = candidate.metrics?.reliability || '-';
+  const trades = formatCount(candidate.metrics?.trade_count, '건');
+  return `${decision} · 신뢰도 ${reliability} · 거래 ${trades}`;
+}
+
+function quantOpsRuntimeSummary(runtimeApply?: QuantOpsRuntimeApplyPayload | null) {
+  if (!runtimeApply?.available) return '미반영';
+  return `${runtimeApply.status || 'applied'} · ${runtimeApply.runtime_candidate_source_mode || '-'} · 엔진 ${runtimeApply.engine_state || '-'}`;
+}
+
 export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefresh }: BacktestValidationPageProps) {
   const validationStore = useValidationSettingsStore();
   const { entries, push, clear } = useConsoleLogs();
@@ -251,6 +288,9 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   const [wfData, setWfData] = useState<ValidationResponse>({});
   const [wfStatus, setWfStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle');
   const [wfLastError, setWfLastError] = useState('');
+  const [quantOpsWorkflow, setQuantOpsWorkflow] = useState<QuantOpsWorkflowResponse | null>(null);
+  const [quantOpsLoading, setQuantOpsLoading] = useState(false);
+  const [quantOpsBusyAction, setQuantOpsBusyAction] = useState<'revalidate' | 'save' | 'apply' | null>(null);
 
   // Bug 1 fix: read transfer payload immediately on mount before any effects run,
   // then apply once metadata is available to avoid the race condition where
@@ -327,9 +367,25 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     }
   }, []);
 
+  const loadQuantOpsWorkflow = useCallback(async () => {
+    setQuantOpsLoading(true);
+    try {
+      const payload = await fetchQuantOpsWorkflow();
+      setQuantOpsWorkflow(payload);
+    } catch {
+      setQuantOpsWorkflow(null);
+    } finally {
+      setQuantOpsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchOptimizationArtifacts().catch(() => undefined);
   }, [fetchOptimizationArtifacts]);
+
+  useEffect(() => {
+    loadQuantOpsWorkflow().catch(() => undefined);
+  }, [loadQuantOpsWorkflow]);
 
   useEffect(() => {
     if (!optimizationRunning) return;
@@ -489,6 +545,73 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     }
   }, [fetchOptimizationArtifacts, push, validationStore.draftQuery, validationStore.draftSettings]);
 
+  const handleQuantOpsRevalidate = useCallback(async () => {
+    setQuantOpsBusyAction('revalidate');
+    try {
+      const response = await revalidateQuantOpsCandidate(validationStore.draftQuery, validationStore.draftSettings);
+      const payload = response.data;
+      if (!response.ok || payload.ok === false) {
+        push('error', '운영 후보 재검증에 실패했습니다.', payload.error || response.error?.message, 'quant-ops');
+      } else {
+        setQuantOpsWorkflow(payload.workflow || null);
+        push('success', '운영 후보를 재검증했습니다.', quantOpsCandidateSummary(payload.candidate), 'quant-ops');
+      }
+    } catch {
+      push('error', '운영 후보 재검증 요청에 실패했습니다.', undefined, 'quant-ops');
+    } finally {
+      setQuantOpsBusyAction(null);
+      loadQuantOpsWorkflow().catch(() => undefined);
+    }
+  }, [loadQuantOpsWorkflow, push, validationStore.draftQuery, validationStore.draftSettings]);
+
+  const handleQuantOpsSave = useCallback(async () => {
+    const candidateId = quantOpsWorkflow?.latest_candidate?.id;
+    if (!candidateId) {
+      push('warning', '저장할 최신 운영 후보가 없습니다.', undefined, 'quant-ops');
+      return;
+    }
+    setQuantOpsBusyAction('save');
+    try {
+      const response = await saveQuantOpsCandidate(candidateId);
+      const payload = response.data;
+      if (!response.ok || payload.ok === false) {
+        push('error', '운영 후보 저장에 실패했습니다.', payload.error || response.error?.message, 'quant-ops');
+      } else {
+        setQuantOpsWorkflow(payload.workflow || null);
+        push('success', '운영 후보를 저장했습니다.', quantOpsCandidateSummary(payload.candidate), 'quant-ops');
+      }
+    } catch {
+      push('error', '운영 후보 저장 요청에 실패했습니다.', undefined, 'quant-ops');
+    } finally {
+      setQuantOpsBusyAction(null);
+      loadQuantOpsWorkflow().catch(() => undefined);
+    }
+  }, [loadQuantOpsWorkflow, push, quantOpsWorkflow?.latest_candidate?.id]);
+
+  const handleQuantOpsApply = useCallback(async () => {
+    const candidateId = quantOpsWorkflow?.saved_candidate?.id;
+    if (!candidateId) {
+      push('warning', '런타임에 반영할 저장 후보가 없습니다.', undefined, 'quant-ops');
+      return;
+    }
+    setQuantOpsBusyAction('apply');
+    try {
+      const response = await applyQuantOpsRuntime(candidateId);
+      const payload = response.data;
+      if (!response.ok || payload.ok === false) {
+        push('error', '런타임 반영에 실패했습니다.', payload.error || response.error?.message, 'quant-ops');
+      } else {
+        setQuantOpsWorkflow(payload.workflow || null);
+        push('success', '저장 후보를 런타임에 반영했습니다.', quantOpsRuntimeSummary(payload.runtime_apply), 'quant-ops');
+      }
+    } catch {
+      push('error', '런타임 반영 요청에 실패했습니다.', undefined, 'quant-ops');
+    } finally {
+      setQuantOpsBusyAction(null);
+      loadQuantOpsWorkflow().catch(() => undefined);
+    }
+  }, [loadQuantOpsWorkflow, push, quantOpsWorkflow?.saved_candidate?.id]);
+
   const [presetSaving, setPresetSaving] = useState(false);
   const handleSaveAsPreset = useCallback(async () => {
     const q = validationStore.draftQuery;
@@ -574,7 +697,15 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       busy: optimizationRunning,
       busyLabel: '실행 중...',
     },
-  ]), [handleRunBacktest, handleRunOptimization, handleRunWalkForward, handleSave, optimizationRunning, status, validationStore.syncStatus, wfStatus]);
+    {
+      label: '운영후보 재검증',
+      tone: 'default',
+      onClick: handleQuantOpsRevalidate,
+      disabled: quantOpsBusyAction !== null,
+      busy: quantOpsBusyAction === 'revalidate',
+      busyLabel: '재검증 중...',
+    },
+  ]), [handleQuantOpsRevalidate, handleRunBacktest, handleRunOptimization, handleRunWalkForward, handleSave, optimizationRunning, quantOpsBusyAction, status, validationStore.syncStatus, wfStatus]);
 
   const summaryMetrics = displayedResult.performance_summary || {};
   const executionSummary = displayedResult.execution_summary || {};
@@ -588,6 +719,11 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
     }
     : undefined;
   const initialCashCurrency = currencyCode(validationStore.draftQuery.market_scope);
+  const latestCandidate = quantOpsWorkflow?.latest_candidate;
+  const latestCandidateState = quantOpsWorkflow?.latest_candidate_state;
+  const savedCandidate = quantOpsWorkflow?.saved_candidate;
+  const savedCandidateState = quantOpsWorkflow?.saved_candidate_state;
+  const runtimeApply = quantOpsWorkflow?.runtime_apply;
 
   return (
     <div className="app-shell">
@@ -1002,6 +1138,91 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                 )}
               </div>
             </div>
+          </section>
+
+          <section className="page-section console-card-section" style={{ display: 'grid', gap: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>운영 반영 워크플로우</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-4)' }}>
+                  검증 랩 결과를 latest → saved → runtime 순서로 넘겨야 실제 엔진에 반영됩니다.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="ghost-button" onClick={() => { void handleQuantOpsRevalidate(); }} disabled={quantOpsBusyAction !== null}>
+                  {quantOpsBusyAction === 'revalidate' ? '재검증 중...' : '현재 설정으로 재검증'}
+                </button>
+                <button
+                  className="ghost-button"
+                  onClick={() => { void handleQuantOpsSave(); }}
+                  disabled={quantOpsBusyAction !== null || !latestCandidate || latestCandidate?.guardrails?.can_save === false}
+                  title={!latestCandidate ? 'latest candidate가 없어서 저장할 수 없습니다.' : latestCandidate?.guardrails?.can_save === false ? (latestCandidate.guardrails?.reasons || []).join(', ') : ''}
+                >
+                  {quantOpsBusyAction === 'save' ? '저장 중...' : '최신 후보 저장'}
+                </button>
+                <button
+                  className="ghost-button"
+                  onClick={() => { void handleQuantOpsApply(); }}
+                  disabled={quantOpsBusyAction !== null || !savedCandidate || savedCandidate?.guardrails?.can_apply === false}
+                  title={!savedCandidate ? 'saved candidate가 없어서 반영할 수 없습니다.' : savedCandidate?.guardrails?.can_apply === false ? (savedCandidate.guardrails?.reasons || []).join(', ') : ''}
+                >
+                  {quantOpsBusyAction === 'apply' ? '반영 중...' : '저장 후보 런타임 반영'}
+                </button>
+              </div>
+            </div>
+
+            <div className="console-metric-grid">
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Search 결과</div>
+                <div style={{ marginTop: 6, fontWeight: 700 }}>{quantOpsWorkflow?.search_result?.available ? '있음' : '없음'}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-4)' }}>{quantOpsWorkflow?.search_result?.version || '-'}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Latest 후보</div>
+                <div style={{ marginTop: 6, fontWeight: 700 }}>{latestCandidate?.id || '-'}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-4)' }}>{quantOpsStateLabel(latestCandidateState)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Saved 후보</div>
+                <div style={{ marginTop: 6, fontWeight: 700 }}>{savedCandidate?.id || '-'}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-4)' }}>{quantOpsStateLabel(savedCandidateState)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Runtime 반영</div>
+                <div style={{ marginTop: 6, fontWeight: 700 }}>{runtimeApply?.candidate_id || '-'}</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-4)' }}>{quantOpsRuntimeSummary(runtimeApply)}</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: 10 }}>
+              <div style={{ padding: 12, background: 'var(--bg-soft)', borderRadius: 8, display: 'grid', gap: 6 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Latest candidate</div>
+                <div style={{ fontWeight: 700 }}>{quantOpsCandidateSummary(latestCandidate)}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{latestCandidate?.decision?.summary || (latestCandidateState?.reasons || []).join(', ') || '-'}</div>
+              </div>
+              <div style={{ padding: 12, background: 'var(--bg-soft)', borderRadius: 8, display: 'grid', gap: 6 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Saved candidate</div>
+                <div style={{ fontWeight: 700 }}>{quantOpsCandidateSummary(savedCandidate)}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{savedCandidateState?.reasons?.length ? savedCandidateState.reasons.join(', ') : savedCandidate?.save_note || '-'}</div>
+              </div>
+              <div style={{ padding: 12, background: 'var(--bg-soft)', borderRadius: 8, display: 'grid', gap: 6 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Runtime apply</div>
+                <div style={{ fontWeight: 700 }}>{quantOpsRuntimeSummary(runtimeApply)}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>
+                  applied_at {formatDateTime(runtimeApply?.applied_at || '') || '-'} · next_run_at {formatDateTime(runtimeApply?.next_run_at || '') || '-'}
+                </div>
+              </div>
+            </div>
+
+            {quantOpsWorkflow?.notes?.length ? (
+              <div style={{ display: 'grid', gap: 4 }}>
+                {quantOpsWorkflow.notes.map((note) => (
+                  <div key={note} style={{ fontSize: 12, color: 'var(--text-4)' }}>- {note}</div>
+                ))}
+              </div>
+            ) : quantOpsLoading ? (
+              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>quant-ops workflow 로딩 중...</div>
+            ) : null}
           </section>
         </div>
       </div>
