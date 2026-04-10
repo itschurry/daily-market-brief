@@ -286,7 +286,7 @@ export function useConsoleData(route: ConsoleDataRoute) {
       if (key === 'scanner') return fetchScannerStatus(scannerRefresh, scannerCacheOnly);
       if (key === 'universe') return fetchUniverse();
       if (key === 'performance') return fetchPerformanceSummary();
-      if (key === 'portfolio') return fetchPortfolioState();
+      if (key === 'portfolio') return fetchPortfolioState(false);
       if (key === 'research') return fetchResearchStatus();
       if (key === 'validation') return fetchValidationWalkForwardWithOptions(undefined, undefined, { cacheOnly: true });
       if (key === 'reports') return fetchReportsExplain();
@@ -329,11 +329,33 @@ export function useConsoleData(route: ConsoleDataRoute) {
 
   const refresh = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, hasError: false, errorMessage: '' }));
-    await fetchPartition(profile.initialTargets, false, true);
-    if (profile.initialTargets.includes('scanner')) {
-      void fetchPartition(['scanner'], true, false).catch(() => {});
+
+    const seen = new Set<SnapshotKey>();
+    const buckets: SnapshotKey[][] = [];
+    const addBucket = (keys: SnapshotKey[]) => {
+      const filtered = keys.filter((key) => profile.initialTargets.includes(key) && !seen.has(key));
+      if (filtered.length === 0) return;
+      filtered.forEach((key) => seen.add(key));
+      buckets.push(filtered);
+    };
+
+    addBucket(profile.fastTargets);
+    addBucket(profile.midTargets);
+    addBucket(profile.slowTargets);
+    addBucket(profile.initialTargets);
+
+    const [firstBucket, ...remainingBuckets] = buckets;
+    if (firstBucket) {
+      await fetchPartition(firstBucket, false, true);
     }
-  }, [fetchPartition, profile.initialTargets]);
+    remainingBuckets.forEach((keys) => {
+      void fetchPartition(keys, false, true).catch(() => undefined);
+    });
+
+    if (profile.initialTargets.includes('scanner')) {
+      void fetchPartition(['scanner'], true, false).catch(() => undefined);
+    }
+  }, [fetchPartition, profile.fastTargets, profile.initialTargets, profile.midTargets, profile.slowTargets]);
 
   useEffect(() => {
     void refresh();
