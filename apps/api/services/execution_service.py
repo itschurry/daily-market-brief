@@ -72,6 +72,7 @@ from services.signal_service import (
     parse_theme_gate_config as _signal_parse_theme_gate_config,
 )
 from services.strategy_engine import build_signal_book, select_entry_candidates
+from services.strategy_registry import list_strategies
 
 from broker.kis_client import KISClient
 from broker.execution_engine import (
@@ -163,7 +164,9 @@ def _order_failure_summary() -> dict[str, Any]:
     today = _today_kst_str()
     failures = [
         item for item in read_order_events(limit=300)
-        if str(item.get("timestamp") or "").startswith(today) and not bool(item.get("success"))
+        if str(item.get("timestamp") or "").startswith(today)
+        and not bool(item.get("success"))
+        and str(item.get("order_type") or "").lower() != "screened"
     ]
     if not failures:
         return {
@@ -896,6 +899,75 @@ def _sync_primary_strategy_fields(cfg: dict) -> dict:
     return cfg
 
 
+def _coerce_positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _resolve_strategy_position_cap(strategy: dict[str, Any]) -> int | None:
+    params = strategy.get("params") if isinstance(strategy.get("params"), dict) else {}
+    risk_limits = strategy.get("risk_limits") if isinstance(strategy.get("risk_limits"), dict) else {}
+    candidates = [
+        _coerce_positive_int(params.get("max_positions")),
+        _coerce_positive_int(risk_limits.get("max_positions")),
+    ]
+    resolved = [item for item in candidates if item is not None]
+    if not resolved:
+        return None
+    return min(resolved)
+
+
+def _strategy_position_cap_map(market: str) -> dict[str, int]:
+    normalized_market = normalize_strategy_market(market)
+    caps: dict[str, int] = {}
+    for strategy in list_strategies(live_only=True, market=normalized_market):
+        if not isinstance(strategy, dict):
+            continue
+        strategy_id = str(strategy.get("strategy_id") or "").strip()
+        if not strategy_id:
+            continue
+        cap = _resolve_strategy_position_cap(strategy)
+        if cap is not None:
+            caps[strategy_id] = cap
+    return caps
+
+
+def _infer_strategy_position_counts(account: dict[str, Any], market: str) -> dict[str, int]:
+    normalized_market = normalize_strategy_market(market)
+    held_codes = {
+        str(position.get("code") or "").upper()
+        for position in account.get("positions", [])
+        if str(position.get("market") or "").upper() == normalized_market
+    }
+    if not held_codes:
+        return {}
+
+    code_to_strategy: dict[str, str] = {}
+    for item in reversed(read_order_events(limit=500)):
+        if not isinstance(item, dict) or not bool(item.get("success")):
+            continue
+        if str(item.get("market") or "").upper() != normalized_market:
+            continue
+        code = str(item.get("code") or "").upper()
+        if not code:
+            continue
+        side = str(item.get("side") or "").lower()
+        if side == "buy":
+            code_to_strategy[code] = str(item.get("strategy_id") or "").strip()
+        elif side == "sell":
+            code_to_strategy.pop(code, None)
+
+    counts: dict[str, int] = {}
+    for code in held_codes:
+        strategy_id = code_to_strategy.get(code, "")
+        if strategy_id:
+            counts[strategy_id] = counts.get(strategy_id, 0) + 1
+    return counts
+
+
 def _apply_quant_candidate_patch(cfg: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     merged = dict(cfg or _default_auto_trader_config())
     patch = candidate.get("patch") if isinstance(
@@ -1300,6 +1372,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
             for position in account.get("positions", [])
             if str(position.get("market") or "").upper() == market
         }
+        strategy_position_counts = _infer_strategy_position_counts(account, market)
+        strategy_position_caps = _strategy_position_cap_map(market)
         market_position_count = len(held_codes)
         profile = _auto_trader_profile(cfg, market)
         max_positions = int(profile.max_positions)
@@ -1335,31 +1409,6 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 for reason in merged_reasons:
                     key = str(reason or "unknown")
                     blocked_reason_counts[key] = blocked_reason_counts.get(key, 0) + 1
-                _record_execution_order({
-                    "timestamp": _now_iso(),
-                    "success": False,
-                    "side": "buy",
-                    "code": candidate.get("code"),
-                    "market": candidate.get("market") or market,
-                    "strategy_id": candidate.get("strategy_id"),
-                    "strategy_name": candidate.get("strategy_name"),
-                    "quantity": decision["order_quantity"],
-                    "order_type": "screened",
-                    "submitted_at": started_at,
-                    "filled_at": "",
-                    "filled_price_local": None,
-                    "filled_price_krw": None,
-                    "notional_krw": None,
-                    "failure_reason": reason_code,
-                    "reason_code": reason_code,
-                    "message": (
-                        str(risk_check.get("message") or "")
-                        if str(risk_check.get("reason_code") or "") not in ("", "ok")
-                        else ""
-                    ) or reason_code or "screened",
-                    "originating_cycle_id": cycle_id,
-                    "originating_signal_key": f"{market}:{candidate.get('code')}",
-                })
             candidate["entry_allowed"] = entry_allowed
             candidate["reason_codes"] = merged_reasons
             if entry_allowed:
@@ -1421,9 +1470,23 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 break
             code = str(candidate.get("code") or "").upper()
             cand_name = str(candidate.get("name") or code)
+            strategy_id = str(candidate.get("strategy_id") or "").strip()
+            strategy_name = str(candidate.get("strategy_name") or strategy_id or "")
             if not code or code in held_codes:
                 continue
             if _symbol_order_count(market, "buy", code) >= max_orders_per_symbol:
+                continue
+            strategy_cap = strategy_position_caps.get(strategy_id)
+            strategy_position_count = strategy_position_counts.get(strategy_id, 0)
+            if strategy_cap is not None and strategy_position_count >= strategy_cap:
+                skipped.append({
+                    "code": code,
+                    "name": cand_name,
+                    "market": market,
+                    "strategy_id": strategy_id,
+                    "strategy_name": strategy_name,
+                    "reason": "strategy_max_positions_reached",
+                })
                 continue
 
             size_recommendation = candidate.get("size_recommendation") if isinstance(
@@ -1456,6 +1519,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 buy_count += 1
                 slots -= 1
                 held_codes.add(code)
+                if strategy_id:
+                    strategy_position_counts[strategy_id] = strategy_position_counts.get(strategy_id, 0) + 1
                 event = result.get("event") or {}
                 ev_metrics = candidate.get("ev_metrics") if isinstance(
                     candidate.get("ev_metrics"), dict) else {}
