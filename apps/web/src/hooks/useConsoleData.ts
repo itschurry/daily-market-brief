@@ -156,16 +156,6 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
     };
   }
 
-  if (route.page === 'settings') {
-    return {
-      signalLimit: 0,
-      initialTargets: ['engine', 'strategies', 'validation', 'research'],
-      fastTargets: ['engine'],
-      midTargets: ['strategies'],
-      slowTargets: ['validation', 'research'],
-    };
-  }
-
   return {
     signalLimit: 0,
     initialTargets: ['engine', 'strategies', 'research'],
