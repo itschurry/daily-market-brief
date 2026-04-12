@@ -12,6 +12,7 @@ import {
   saveStrategyPreset,
 } from '../api/domain';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
+import { FreshnessBadge, GradeBadge } from '../components/QualityBadge';
 import { defaultBacktestQuery } from '../hooks/useBacktest';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import {
@@ -978,6 +979,15 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
             )}
             {(wfStatus === 'ok' || wfStatus === 'loading') && (
               <>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <FreshnessBadge value={String(wfData.freshness || 'missing')} />
+                  <GradeBadge value={String(wfData.validation?.grade || '-')} />
+                  {wfData.validation?.reason ? <span className="inline-badge">{String(wfData.validation.reason)}</span> : null}
+                  {wfData.source ? <span className="inline-badge">source {String(wfData.source)}</span> : null}
+                </div>
+                {wfData.validation?.exclusion_reason ? (
+                  <div style={{ fontSize: 12, color: 'var(--tone-bad)' }}>검증 숫자는 신뢰도 부족 상태야: {String(wfData.validation.exclusion_reason)}</div>
+                ) : null}
                 <div className="console-metric-grid">
                   <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>윈도우 수</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatCount(wfData.summary?.windows, '개')}</div></div>
                   <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>양호 비율</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatPercent(wfData.summary?.positive_window_ratio, 1, true)}</div></div>
@@ -996,7 +1006,14 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                         const components = scorecard?.components || {};
                         return (
                           <div key={seg} style={{ display: 'grid', gap: 4, padding: 10, background: 'var(--bg-soft)', borderRadius: 6 }}>
-                            <div style={{ fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{seg}</div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                              <div style={{ fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{seg}</div>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                <FreshnessBadge value={String(s.freshness || 'missing')} />
+                                <GradeBadge value={String(s.validation?.grade || '-')} />
+                              </div>
+                            </div>
+                            {s.validation?.reason ? <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{String(s.validation.reason)}</div> : null}
                             {scorecard ? (
                               <>
                                 <div style={{ fontSize: 12 }}>Score {formatNumber(score, 2)}</div>

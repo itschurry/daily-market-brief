@@ -84,6 +84,38 @@ function classNameForFinalAction(action: string | undefined) {
   return 'inline-badge';
 }
 
+function researchGrade(candidate: ScannerCandidate | undefined): string {
+  return String(candidate?.layer_c?.validation?.grade || '').toUpperCase() || '-';
+}
+
+function researchFreshness(candidate: ScannerCandidate | undefined): string {
+  return String(candidate?.layer_c?.freshness || candidate?.layer_c?.freshness_detail?.status || '').toLowerCase() || 'missing';
+}
+
+function researchScoreDisplay(candidate: ScannerCandidate | undefined): string {
+  if (researchGrade(candidate) === 'D') return '—';
+  const score = candidate?.research_score ?? candidate?.layer_c?.research_score;
+  return score == null ? '-' : formatNumber(score, 2);
+}
+
+function researchGradeBadge(candidate: ScannerCandidate | undefined): { label: string; className: string } {
+  const grade = researchGrade(candidate);
+  if (grade === 'A') return { label: 'Grade A', className: 'inline-badge is-success' };
+  if (grade === 'B') return { label: 'Grade B', className: 'inline-badge' };
+  if (grade === 'C') return { label: 'Grade C', className: 'inline-badge is-danger' };
+  if (grade === 'D') return { label: 'Grade D', className: 'inline-badge is-danger' };
+  return { label: 'Grade -', className: 'inline-badge' };
+}
+
+function researchFreshnessBadge(candidate: ScannerCandidate | undefined): { label: string; className: string } {
+  const freshness = researchFreshness(candidate);
+  if (freshness === 'fresh') return { label: 'fresh', className: 'inline-badge is-success' };
+  if (freshness === 'stale') return { label: 'stale', className: 'inline-badge is-danger' };
+  if (freshness === 'invalid') return { label: 'invalid', className: 'inline-badge is-danger' };
+  if (freshness === 'missing') return { label: 'missing', className: 'inline-badge' };
+  return { label: freshness || 'unknown', className: 'inline-badge' };
+}
+
 function translatedCodes(items: string[] | undefined) {
   const values = (items || []).map((item) => reasonCodeToKorean(item)).filter(Boolean);
   return values.length > 0 ? values.join(', ') : '-';
@@ -228,8 +260,12 @@ export function ScannerPage({ snapshot, loading, errorMessage, onRefresh }: Scan
                             </td>
                             <td style={{ padding: 12, fontSize: 12 }}>
                               <div className={classNameForHanna(hannaState)}>{HANNA_STATE_LABEL[hannaState]}</div>
+                              <div className="workspace-chip-row" style={{ marginTop: 6 }}>
+                                <span className={researchFreshnessBadge(candidate).className}>{researchFreshnessBadge(candidate).label}</span>
+                                <span className={researchGradeBadge(candidate).className}>{researchGradeBadge(candidate).label}</span>
+                              </div>
                               <div className="signal-cell-copy" style={{ marginTop: 6 }}>
-                                score {candidate.research_score == null ? '-' : formatNumber(candidate.research_score, 2)}
+                                score {researchScoreDisplay(candidate)}
                               </div>
                             </td>
                             <td style={{ padding: 12, fontSize: 12 }}>
@@ -274,6 +310,7 @@ export function ScannerPage({ snapshot, loading, errorMessage, onRefresh }: Scan
                         <div className="operator-note-copy">rule {selectedCandidate.layer_a?.universe_rule || '-'}</div>
                         <div className="operator-note-copy">scan {formatDateTime(selectedCandidate.layer_a?.scan_time || selectedCandidate.last_scanned_at)}</div>
                         <div className="operator-note-copy">inclusion {selectedCandidate.layer_a?.inclusion_reason || '-'}</div>
+                        <div className="operator-note-copy">universe freshness {String((snapshot.universe.items || []).find((row) => String(row.rule_name || '') === String(selectedCandidate.layer_a?.universe_rule || ''))?.freshness || 'missing')}</div>
                       </div>
 
                       <div className="operator-note-card" style={{ display: 'grid', gap: 6 }}>
@@ -281,14 +318,20 @@ export function ScannerPage({ snapshot, loading, errorMessage, onRefresh }: Scan
                         <div className="operator-note-copy">quant_score {selectedCandidate.layer_b?.quant_score == null ? '-' : formatNumber(selectedCandidate.layer_b?.quant_score, 2)}</div>
                         <div className="operator-note-copy">strategy {selectedCandidate.layer_b?.strategy_id || selectedCandidate.strategy_id || '-'}</div>
                         <div className="operator-note-copy">tags {translatedCodes(selectedCandidate.layer_b?.quant_tags)}</div>
+                        <div className="operator-note-copy">quote {selectedCandidate.layer_b?.technical_snapshot?.current_price ?? '-'} · {String(selectedCandidate.layer_b?.technical_snapshot?.freshness || 'missing')} · Grade {String(selectedCandidate.layer_b?.technical_snapshot?.validation?.grade || '-')}</div>
                       </div>
 
                       <div className="operator-note-card" style={{ display: 'grid', gap: 6 }}>
                         <div className="operator-note-label">Layer C · Hanna</div>
-                        <div className="operator-note-copy">research_score {selectedCandidate.layer_c?.research_score == null ? '-' : formatNumber(selectedCandidate.layer_c?.research_score, 2)}</div>
+                        <div className="workspace-chip-row">
+                          <span className={researchFreshnessBadge(selectedCandidate).className}>{researchFreshnessBadge(selectedCandidate).label}</span>
+                          <span className={researchGradeBadge(selectedCandidate).className}>{researchGradeBadge(selectedCandidate).label}</span>
+                          {selectedCandidate.layer_c?.validation?.reason ? <span className="inline-badge">{selectedCandidate.layer_c.validation.reason}</span> : null}
+                        </div>
+                        <div className="operator-note-copy">research_score {researchScoreDisplay(selectedCandidate)}</div>
                         <div className="operator-note-copy">warnings {translatedCodes(selectedCandidate.layer_c?.warnings)}</div>
                         <div className="operator-note-copy">tags {(selectedCandidate.layer_c?.tags || []).join(', ') || '-'}</div>
-                        <div className="operator-note-copy">summary {selectedCandidate.layer_c?.summary || '-'}</div>
+                        <div className="operator-note-copy">summary {researchGrade(selectedCandidate) === 'D' ? (selectedCandidate.layer_c?.validation?.exclusion_reason || '검증 제외') : (selectedCandidate.layer_c?.summary || '-')}</div>
                       </div>
 
                       <div className="operator-note-card" style={{ display: 'grid', gap: 6 }}>

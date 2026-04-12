@@ -95,6 +95,23 @@ export interface LayerBSnapshot {
     volume_ratio?: number;
     rsi14?: number;
     atr14_pct?: number;
+    quote_source?: string;
+    quote_fetched_at?: string;
+    freshness?: 'fresh' | 'stale' | 'invalid' | 'missing' | string;
+    freshness_detail?: {
+      status?: 'fresh' | 'stale' | 'invalid' | 'missing' | string;
+      is_stale?: boolean;
+      reason?: string;
+      fetched_at?: string;
+    };
+    validation?: {
+      grade?: 'A' | 'B' | 'C' | 'D' | string;
+      source?: string;
+      source_count?: number;
+      reason?: string;
+      notes?: string[];
+      exclusion_reason?: string | null;
+    };
   };
 }
 
@@ -110,6 +127,25 @@ export interface LayerCSnapshot {
   summary?: string;
   ttl_minutes?: number;
   generated_at?: string;
+  freshness?: 'fresh' | 'stale' | 'invalid' | 'missing' | string;
+  freshness_detail?: {
+    status?: 'fresh' | 'stale' | 'invalid' | 'missing' | string;
+    is_stale?: boolean;
+    ttl_minutes?: number;
+    generated_at?: string;
+    ingested_at?: string;
+    stale_at?: string;
+    age_minutes?: number | null;
+    reason?: string;
+  };
+  validation?: {
+    grade?: 'A' | 'B' | 'C' | 'D' | string;
+    source?: string;
+    source_count?: number;
+    reason?: string;
+    notes?: string[];
+    exclusion_reason?: string | null;
+  };
 }
 
 export interface LayerDSnapshot {
@@ -182,6 +218,21 @@ export interface DomainSignal {
     validation_sharpe?: number;
     max_drawdown_pct?: number | null;
     strategy_reliability?: string;
+    reliability_reason?: string;
+    freshness?: 'derived' | 'fresh' | 'stale' | 'invalid' | 'missing' | string;
+    freshness_detail?: {
+      status?: string;
+      is_stale?: boolean;
+      reason?: string;
+    };
+    validation?: {
+      grade?: 'A' | 'B' | 'C' | 'D' | string;
+      source?: string;
+      source_count?: number;
+      reason?: string;
+      notes?: string[];
+      exclusion_reason?: string | null;
+    };
   };
   execution_realism?: {
     slippage_model_version?: string;
@@ -328,6 +379,24 @@ export interface UniverseSnapshot {
   updated_at?: string;
   symbol_count?: number;
   excluded_count?: number;
+  freshness?: 'fresh' | 'stale' | 'invalid' | 'missing' | string;
+  is_stale?: boolean;
+  freshness_detail?: {
+    status?: 'fresh' | 'stale' | 'invalid' | 'missing' | string;
+    is_stale?: boolean;
+    max_age_minutes?: number;
+    generated_at?: string;
+    age_minutes?: number | null;
+    reason?: string;
+  };
+  validation?: {
+    grade?: 'A' | 'B' | 'C' | 'D' | string;
+    source?: string;
+    source_count?: number;
+    reason?: string;
+    notes?: string[];
+    exclusion_reason?: string | null;
+  };
   symbols?: Array<{
     code?: string;
     name?: string;
@@ -371,6 +440,26 @@ export interface ResearchSnapshotItem {
   tags?: string[];
   summary?: string;
   ttl_minutes?: number;
+  freshness?: 'fresh' | 'stale' | 'invalid' | 'missing' | string;
+  is_stale?: boolean;
+  freshness_detail?: {
+    status?: 'fresh' | 'stale' | 'invalid' | 'missing' | string;
+    is_stale?: boolean;
+    ttl_minutes?: number;
+    generated_at?: string;
+    ingested_at?: string;
+    stale_at?: string;
+    age_minutes?: number | null;
+    reason?: string;
+  };
+  validation?: {
+    grade?: 'A' | 'B' | 'C' | 'D' | string;
+    source?: string;
+    source_count?: number;
+    reason?: string;
+    notes?: string[];
+    exclusion_reason?: string | null;
+  };
 }
 
 export interface ResearchSnapshotsResponse {
@@ -392,6 +481,8 @@ export interface ResearchStatusResponse {
   provider?: string;
   status?: string;
   freshness?: string;
+  source?: string;
+  source_of_truth?: string;
   last_received_at?: string;
   last_generated_at?: string;
   last_run_id?: string;
@@ -706,10 +797,29 @@ export interface ValidationResponse {
   metrics?: Record<string, number | string | Record<string, unknown>>;
   scorecard?: StrategyScorecardPayload;
   reliability_diagnostic?: ReliabilityDiagnosticPayload;
+  source?: string;
+  generated_at?: string;
+  served_at?: string;
+  freshness?: 'fresh' | 'stale' | 'derived' | 'missing' | string;
+  freshness_detail?: {
+    status?: string;
+    is_stale?: boolean;
+    reason?: string;
+    generated_at?: string;
+    served_at?: string;
+  };
+  validation?: {
+    grade?: 'A' | 'B' | 'C' | 'D' | string;
+    source?: string;
+    source_count?: number;
+    reason?: string;
+    notes?: string[];
+    exclusion_reason?: string;
+  };
   segments?: {
-    train?: ValidationSegmentPayload;
-    validation?: ValidationSegmentPayload;
-    oos?: ValidationSegmentPayload;
+    train?: ValidationSegmentPayload & ValidationResponse;
+    validation?: ValidationSegmentPayload & ValidationResponse;
+    oos?: ValidationSegmentPayload & ValidationResponse;
   };
   summary?: {
     windows?: number;
@@ -719,6 +829,9 @@ export interface ValidationResponse {
     composite_score?: number;
     reliability_diagnostic?: ReliabilityDiagnosticPayload;
     exit_reason_analysis?: ValidationWalkForwardExitReasonPayload;
+    validation?: ValidationResponse['validation'];
+    freshness?: ValidationResponse['freshness'];
+    freshness_detail?: ValidationResponse['freshness_detail'];
   };
 }
 

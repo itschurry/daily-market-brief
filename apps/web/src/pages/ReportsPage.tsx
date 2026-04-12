@@ -8,6 +8,7 @@ import {
   isRiskEntryAllowed,
 } from '../adapters/consoleViewAdapter';
 import type { ReactNode } from 'react';
+import { FreshnessBadge, GradeBadge } from '../components/QualityBadge';
 import { UI_TEXT, reasonCodeToKorean, reliabilityToKorean } from '../constants/uiText';
 import type { DomainSignal } from '../types/domain';
 import { formatCount, formatDateTime, formatDateTimeWithAge, formatKRW, formatNumber, formatPercent, formatSymbol } from '../utils/format';
@@ -63,10 +64,80 @@ function ratioWidth(value: number, total: number) {
 }
 
 function riskScore(value: string): number {
-  if (value === '높음') return 88;
-  if (value === '중간') return 58;
-  if (value === '낮음') return 28;
-  return 46;
+    if (value === '높음') return 88;
+    if (value === '중간') return 58;
+    if (value === '낮음') return 28;
+    return 46;
+}
+
+function signalResearchGrade(signal: DomainSignal | undefined): string {
+  return String(signal?.layer_c?.validation?.grade || '').toUpperCase() || '-';
+}
+
+function signalResearchFreshness(signal: DomainSignal | undefined): string {
+  return String(signal?.layer_c?.freshness || signal?.layer_c?.freshness_detail?.status || '').toLowerCase() || 'missing';
+}
+
+function signalResearchScoreDisplay(signal: DomainSignal | undefined): string {
+  if (signalResearchGrade(signal) === 'D') return '—';
+  const score = signal?.research_score ?? signal?.layer_c?.research_score;
+  return score == null ? '-' : formatNumber(Number(score), 2);
+}
+
+function buildValidationNarrativeGate(snapshot: ConsoleSnapshot): {
+  freshness: string;
+  grade: string;
+  reason: string;
+  exclusionReason: string;
+  qualityFlags: string[];
+  gateMessage: string | null;
+  actionLine: string | null;
+  severityFloor: number;
+} {
+  const validationRoot = snapshot.validation || {};
+  const summary = validationRoot.summary || {};
+  const validation = validationRoot.validation || summary.validation || {};
+  const freshness = String(validationRoot.freshness || summary.freshness || validationRoot.freshness_detail?.status || summary.freshness_detail?.status || '').toLowerCase() || 'missing';
+  const grade = String(validation.grade || '').toUpperCase() || '-';
+  const reason = String(validation.reason || '').trim();
+  const exclusionReason = String(validation.exclusion_reason || '').trim();
+  const qualityFlags: string[] = [];
+  if (freshness === 'stale') qualityFlags.push('validation_stale');
+  if (grade === 'D') qualityFlags.push('validation_grade_d');
+  if (grade === 'D') {
+    return {
+      freshness,
+      grade,
+      reason,
+      exclusionReason,
+      qualityFlags,
+      gateMessage: `Validation Grade D · ${exclusionReason || reason || '검증 근거 부족'} · 지금 숫자는 승인 근거로 쓰면 안 됩니다.`,
+      actionLine: 'Validation이 Grade D면 승인/적용보다 재검증을 먼저 돌려야 합니다.',
+      severityFloor: 2,
+    };
+  }
+  if (freshness === 'stale') {
+    return {
+      freshness,
+      grade,
+      reason,
+      exclusionReason,
+      qualityFlags,
+      gateMessage: `Validation stale · ${reason || 'cached_validation_payload'} · 이전 결과 기준이라 최신 재실행을 먼저 보는 편이 안전합니다.`,
+      actionLine: 'Validation 결과가 stale이면 승인 전에 다시 실행해서 최신 표본으로 맞추세요.',
+      severityFloor: 2,
+    };
+  }
+  return {
+    freshness,
+    grade,
+    reason,
+    exclusionReason,
+    qualityFlags,
+    gateMessage: null,
+    actionLine: null,
+    severityFloor: 0,
+  };
 }
 
 function tabHeadline(tab: Extract<ResearchTab, 'today-report' | 'alerts' | 'watch-decision'>): string {
@@ -182,6 +253,15 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
         <div className="page-section report-visual-card">
           <div className="section-title">Mode 02 · Hanna Research</div>
           <div className="section-copy">Hanna 같은 외부 scorer가 structured DTO로만 붙는 리서치 레이어입니다. research timeout이어도 live path는 멈추지 않습니다.</div>
+          <div className="workspace-chip-row" style={{ marginTop: 10 }}>
+            <span className={String(snapshot.research.freshness || '').toLowerCase() === 'fresh' ? 'inline-badge is-success' : String(snapshot.research.freshness || '').toLowerCase() === 'stale' ? 'inline-badge is-danger' : 'inline-badge'}>
+              {String(snapshot.research.freshness || 'missing')}
+            </span>
+            <span className="inline-badge">provider {String(snapshot.research.source || snapshot.research.status || '-')}</span>
+            <span className={String(snapshot.research.status || '') === 'healthy' ? 'inline-badge is-success' : 'inline-badge is-danger'}>
+              status {String(snapshot.research.status || '-')}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -227,6 +307,11 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
                       <div>
                         <div className="operator-note-label">{item.symbol}</div>
                         <div className="operator-note-copy">{item.signal.strategy_type || 'strategy'} · {item.signal.entry_allowed ? '진입 가능' : '차단'}</div>
+                        <div className="workspace-chip-row" style={{ marginTop: 8 }}>
+                          <FreshnessBadge value={signalResearchFreshness(item.signal)} />
+                          <GradeBadge value={signalResearchGrade(item.signal)} />
+                          {item.signal.layer_c?.validation?.reason ? <span className="inline-badge">{String(item.signal.layer_c.validation.reason)}</span> : null}
+                        </div>
                       </div>
                       <div className={`report-decision-chip ${item.signal.entry_allowed ? 'is-good' : 'is-bad'}`}>{item.decision.label}</div>
                     </div>
@@ -235,6 +320,10 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
                       <div className="scorecard-kpi">
                         <span className="scorecard-kpi-label">복합 점수</span>
                         <span className="scorecard-kpi-value">{formatNumber(item.compositeScore, 1)}점</span>
+                      </div>
+                      <div className="scorecard-kpi">
+                        <span className="scorecard-kpi-label">리서치 점수</span>
+                        <span className="scorecard-kpi-value">{signalResearchScoreDisplay(item.signal)}</span>
                       </div>
                       <div className="scorecard-kpi">
                         <span className="scorecard-kpi-label">꼬리손실</span>
@@ -257,6 +346,12 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
                           {row.label} {formatPercent(row.value, 1)}
                         </div>
                       ))}
+                    </div>
+
+                    <div className="operator-note-copy" style={{ marginTop: 10 }}>
+                      {signalResearchGrade(item.signal) === 'D'
+                        ? (item.signal.layer_c?.validation?.exclusion_reason || '리서치 점수는 검증 불가라 숨겼습니다.')
+                        : (item.signal.layer_c?.summary || '리서치 요약 없음')}
                     </div>
 
                     <div className="operator-note-copy">
@@ -484,6 +579,7 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
   const guardBlocked = !guardAllowed;
   const validationGateEnabled = Boolean(engineState.validation_policy?.validation_gate_enabled);
   const reliability = reliabilityToKorean(String(validationSummary.oos_reliability || '').toLowerCase());
+  const validationNarrativeGate = buildValidationNarrativeGate(snapshot);
   const latestSignals = signals.filter(isRiskBlockedSignal).slice(0, 5);
 
   const alerts = [
@@ -527,8 +623,11 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
       key: 'validation',
       label: 'Validation Gate',
       value: validationGateEnabled ? '활성' : '비활성',
-      detail: `OOS 신뢰도 ${reliability || '-'} · min trades ${formatCount(Number(engineState.validation_policy?.validation_min_trades || 0), '건')}`,
-      severity: validationGateEnabled && String(validationSummary.oos_reliability || '').toLowerCase() === 'low' ? 2 : 0,
+      detail: validationNarrativeGate.gateMessage || `OOS 신뢰도 ${reliability || '-'} · min trades ${formatCount(Number(engineState.validation_policy?.validation_min_trades || 0), '건')}`,
+      severity: Math.max(
+        validationGateEnabled && String(validationSummary.oos_reliability || '').toLowerCase() === 'low' ? 2 : 0,
+        validationNarrativeGate.severityFloor,
+      ),
     },
   ];
 
@@ -536,6 +635,7 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
     !isRunning ? '엔진이 멈춰 있으면 모의투자 화면에서 상태를 확인하고 시작 여부를 결정하세요.' : '',
     guardBlocked ? '리스크 가드 차단 사유를 먼저 해소하거나 오늘은 신규 진입 없이 운영하세요.' : '',
     staleOptimized ? '최적화 파라미터가 stale 상태면 검증 화면에서 최적화를 다시 돌리는 편이 안전합니다.' : '',
+    validationNarrativeGate.actionLine || '',
     repeatedCashRetries.length > 0 ? '같은 종목에서 현금 부족 실패가 반복되면 자동 재시도보다 수량/예산 조정이 먼저입니다.' : '',
     failedOrders > 0 ? '실패 주문이 있으면 최근 체결 내역과 엔진 이벤트 로그를 먼저 확인하세요.' : '',
   ].filter(Boolean);

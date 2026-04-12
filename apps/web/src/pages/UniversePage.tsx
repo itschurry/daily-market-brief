@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
+import { FreshnessBadge, GradeBadge } from '../components/QualityBadge';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import type { ConsoleSnapshot } from '../types/consoleView';
 import { formatDateTime } from '../utils/format';
@@ -49,6 +50,11 @@ export function UniversePage({ snapshot, loading, errorMessage, onRefresh }: Uni
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{item.rule_name}</div>
                   <div className="signal-cell-copy" style={{ marginTop: 4 }}>{item.market || '-'} · 종목 {item.symbol_count || 0}개 · 제외 {item.excluded_count || 0}개</div>
+                  <div className="workspace-chip-row" style={{ marginTop: 8 }}>
+                    <FreshnessBadge value={String(item.freshness || item.freshness_detail?.status || 'missing')} />
+                    <GradeBadge value={String(item.validation?.grade || '-')} />
+                    {item.validation?.reason ? <span className="inline-badge">{item.validation.reason}</span> : null}
+                  </div>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-3)', textAlign: 'right' }}>
                   <div>생성 {formatDateTime(item.created_at)}</div>
@@ -68,7 +74,7 @@ export function UniversePage({ snapshot, loading, errorMessage, onRefresh }: Uni
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: 'var(--text-4)', marginBottom: 8 }}>주요 제외 사유</div>
-                  <div style={{ fontSize: 12 }}>{(item.excluded || []).slice(0, 6).map((symbol) => `${symbol.code}(${symbol.reason})`).join(', ') || '제외 없음'}</div>
+                  <div style={{ fontSize: 12 }}>{item.validation?.grade === 'D' ? (item.validation?.exclusion_reason || '유니버스 스냅샷 없음') : ((item.excluded || []).slice(0, 6).map((symbol) => `${symbol.code}(${symbol.reason})`).join(', ') || '제외 없음')}</div>
                 </div>
               </div>
             </section>

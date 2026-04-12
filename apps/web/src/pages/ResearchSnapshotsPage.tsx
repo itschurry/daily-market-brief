@@ -19,7 +19,37 @@ const MARKET_OPTIONS = [
   { label: 'NASDAQ', value: 'NASDAQ' },
 ];
 
+function snapshotGrade(item: ResearchSnapshotItem): string {
+  return String(item.validation?.grade || '').toUpperCase() || '-';
+}
+
+function scoreDisplay(item: ResearchSnapshotItem): string {
+  if (snapshotGrade(item) === 'D') return '—';
+  return item.research_score != null ? formatNumber(item.research_score, 1) : '점수 대기';
+}
+
+function freshnessBadge(item: ResearchSnapshotItem): { label: string; tone: string } {
+  const freshness = String(item.freshness || item.freshness_detail?.status || '').toLowerCase();
+  if (freshness === 'fresh') return { label: 'fresh', tone: 'inline-badge is-success' };
+  if (freshness === 'stale') return { label: 'stale', tone: 'inline-badge is-danger' };
+  if (freshness === 'invalid') return { label: 'invalid', tone: 'inline-badge is-danger' };
+  if (freshness === 'missing') return { label: 'missing', tone: 'inline-badge' };
+  return { label: 'unknown', tone: 'inline-badge' };
+}
+
+function gradeBadge(item: ResearchSnapshotItem): { label: string; tone: string } {
+  const grade = snapshotGrade(item);
+  if (grade === 'A') return { label: 'Grade A', tone: 'inline-badge is-success' };
+  if (grade === 'B') return { label: 'Grade B', tone: 'inline-badge' };
+  if (grade === 'C') return { label: 'Grade C', tone: 'inline-badge is-danger' };
+  if (grade === 'D') return { label: 'Grade D', tone: 'inline-badge is-danger' };
+  return { label: 'Grade -', tone: 'inline-badge' };
+}
+
 function snapshotStatus(item: ResearchSnapshotItem): { label: string; tone: string } {
+  const grade = snapshotGrade(item);
+  if (grade === 'D') return { label: '검증 제외', tone: 'inline-badge is-danger' };
+  if (String(item.freshness || '').toLowerCase() === 'stale') return { label: 'stale research', tone: 'inline-badge is-danger' };
   const score = Number(item.research_score);
   if (!Number.isFinite(score)) return { label: '점수 대기', tone: 'inline-badge' };
   if (score >= 0.8) return { label: '우선 검토', tone: 'inline-badge is-success' };
@@ -45,6 +75,8 @@ function SnapshotCard({ item }: { item: ResearchSnapshotItem }) {
   const warnings = Array.isArray(item.warnings) ? item.warnings : [];
   const tags = Array.isArray(item.tags) ? item.tags : [];
   const status = snapshotStatus(item);
+  const freshness = freshnessBadge(item);
+  const grade = gradeBadge(item);
 
   return (
     <div className="page-section workspace-analysis-section" style={{ padding: 16 }}>
@@ -55,9 +87,13 @@ function SnapshotCard({ item }: { item: ResearchSnapshotItem }) {
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 24, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-            {item.research_score != null ? formatNumber(item.research_score, 1) : '점수 대기'}
+            {scoreDisplay(item)}
           </div>
-          <div className={status.tone} style={{ marginTop: 6 }}>{status.label}</div>
+          <div className="workspace-chip-row" style={{ marginTop: 6, justifyContent: 'flex-end' }}>
+            <span className={status.tone}>{status.label}</span>
+            <span className={freshness.tone}>{freshness.label}</span>
+            <span className={grade.tone}>{grade.label}</span>
+          </div>
         </div>
       </div>
 
@@ -71,7 +107,7 @@ function SnapshotCard({ item }: { item: ResearchSnapshotItem }) {
 
       <div className="workspace-summary-card" style={{ marginTop: 12 }}>
         <div className="workspace-summary-title">요약</div>
-        <div className="workspace-summary-copy">{item.summary || '요약 없음'}</div>
+        <div className="workspace-summary-copy">{item.validation?.grade === 'D' ? (item.validation?.exclusion_reason || '검증 불가라 점수를 표시하지 않았습니다.') : (item.summary || '요약 없음')}</div>
       </div>
 
       {(warnings.length > 0 || tags.length > 0) && (
@@ -286,6 +322,7 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
                       <th>생성 시각</th>
                       <th>점수</th>
                       <th>상태</th>
+                      <th>신뢰도</th>
                       <th>요약</th>
                     </tr>
                   </thead>
@@ -306,9 +343,15 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
                         >
                           <td><SymbolIdentity code={item.symbol} name={item.name} market={item.market} /></td>
                           <td>{formatDateTime(item.generated_at || item.bucket_ts)}</td>
-                          <td>{item.research_score != null ? formatNumber(item.research_score, 1) : '점수 대기'}</td>
+                          <td>{scoreDisplay(item)}</td>
                           <td><span className={status.tone}>{status.label}</span></td>
-                          <td>{item.summary ? (item.summary.length > 84 ? `${item.summary.slice(0, 84)}…` : item.summary) : '요약 없음'}</td>
+                          <td>
+                            <div className="workspace-chip-row">
+                              <span className={freshnessBadge(item).tone}>{freshnessBadge(item).label}</span>
+                              <span className={gradeBadge(item).tone}>{gradeBadge(item).label}</span>
+                            </div>
+                          </td>
+                          <td>{item.validation?.grade === 'D' ? (item.validation?.exclusion_reason || '검증 제외') : (item.summary ? (item.summary.length > 84 ? `${item.summary.slice(0, 84)}…` : item.summary) : '요약 없음')}</td>
                         </tr>
                       );
                     })}
@@ -342,6 +385,7 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
                       <th>기준 시각</th>
                       <th>점수</th>
                       <th>상태</th>
+                      <th>신뢰도</th>
                       <th>요약</th>
                       <th>경고</th>
                     </tr>
@@ -356,15 +400,26 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
                         <>
                           <tr key={`${item.bucket_ts}-${idx}`} style={{ cursor: 'pointer' }} onClick={() => setExpandedIdx(isExpanded ? null : idx)}>
                             <td>{formatDateTime(item.bucket_ts)}</td>
-                            <td>{item.research_score != null ? formatNumber(item.research_score, 1) : '점수 대기'}</td>
+                            <td>{scoreDisplay(item)}</td>
                             <td><span className={status.tone}>{status.label}</span></td>
-                            <td>{item.summary ? (item.summary.length > 88 ? `${item.summary.slice(0, 88)}…` : item.summary) : '요약 없음'}</td>
+                            <td>
+                              <div className="workspace-chip-row">
+                                <span className={freshnessBadge(item).tone}>{freshnessBadge(item).label}</span>
+                                <span className={gradeBadge(item).tone}>{gradeBadge(item).label}</span>
+                              </div>
+                            </td>
+                            <td>{item.validation?.grade === 'D' ? (item.validation?.exclusion_reason || '검증 제외') : (item.summary ? (item.summary.length > 88 ? `${item.summary.slice(0, 88)}…` : item.summary) : '요약 없음')}</td>
                             <td>{warnings.length > 0 ? warnings.join(', ') : '경고 없음'}</td>
                           </tr>
                           {isExpanded && (
                             <tr>
-                              <td colSpan={5}>
+                              <td colSpan={6}>
                                 <div className="workspace-expanded-panel">
+                                  <div className="workspace-chip-row" style={{ marginBottom: 12 }}>
+                                    <span className={freshnessBadge(item).tone}>{freshnessBadge(item).label}</span>
+                                    <span className={gradeBadge(item).tone}>{gradeBadge(item).label}</span>
+                                    {item.validation?.reason ? <span className="inline-badge">{item.validation.reason}</span> : null}
+                                  </div>
                                   {Object.keys(components).length > 0 && (
                                     <div className="workspace-score-grid" style={{ marginBottom: 12 }}>
                                       {Object.entries(components).map(([key, value]) => (
