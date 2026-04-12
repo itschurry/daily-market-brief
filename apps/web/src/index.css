@@ -1461,6 +1461,7 @@ button:disabled {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  justify-content: flex-end;
 }
 
 .section-filter-row {
@@ -1468,18 +1469,23 @@ button:disabled {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .section-table-meta {
   font-size: 12px;
   color: var(--text-4);
   line-height: 1.6;
+  padding: 0 2px;
 }
 
 .section-title {
   font-size: 15px;
   font-weight: 800;
   color: var(--text-1);
+  letter-spacing: -0.01em;
 }
 
 .section-kicker {
@@ -1501,7 +1507,8 @@ button:disabled {
   margin-top: 6px;
   font-size: 12px;
   color: var(--text-3);
-  line-height: 1.7;
+  line-height: 1.65;
+  max-width: 72ch;
 }
 
 .settings-panel-grid {
@@ -3069,10 +3076,17 @@ button:disabled {
   gap: 12px;
   padding: 14px;
   border-top: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(18, 30, 46, 0.92), rgba(13, 24, 38, 0.94));
+  box-shadow: var(--shadow-sm);
 }
 
 .responsive-card:first-child {
   border-top: 0;
+}
+
+.responsive-card + .responsive-card {
+  margin-top: 10px;
 }
 
 .responsive-card-head {
@@ -3085,14 +3099,15 @@ button:disabled {
 .responsive-card-title {
   font-size: 14px;
   font-weight: 700;
-  line-height: 1.4;
+  line-height: 1.35;
   color: var(--text-1);
+  letter-spacing: -0.01em;
 }
 
 .responsive-card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px 10px;
 }
 
 .responsive-card-label {
