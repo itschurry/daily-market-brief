@@ -324,28 +324,31 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
           </section>
 
           <section className="page-section workspace-table-section">
-              <div className="workspace-card-head">
+              <div className="workspace-card-head section-head-row">
                 <div>
                   <div className="section-title">최신 스냅샷 목록</div>
                   <div className="section-copy">한국장과 미국장을 분리해서 보면 어떤 시장의 리서치가 비는지 훨씬 빨리 읽힙니다.</div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {(['ALL', 'KOSPI', 'NASDAQ'] as const).map((view) => (
-                    <button
-                      key={view}
-                      type="button"
-                      className={recentMarket === view ? 'ghost-button is-active' : 'ghost-button'}
-                      onClick={() => setRecentMarket(view)}
-                    >
-                      {view === 'ALL' ? `전체 ${recentMarketCounts.ALL}개` : `${view} ${recentMarketCounts[view]}개`}
-                    </button>
-                  ))}
+                <div className="section-toolbar">
+                  <div className="section-filter-row">
+                    {(['ALL', 'KOSPI', 'NASDAQ'] as const).map((view) => (
+                      <button
+                        key={view}
+                        type="button"
+                        className={recentMarket === view ? 'ghost-button is-active' : 'ghost-button'}
+                        onClick={() => setRecentMarket(view)}
+                      >
+                        {view === 'ALL' ? `전체 ${recentMarketCounts.ALL}개` : `${view} ${recentMarketCounts[view]}개`}
+                      </button>
+                    ))}
+                  </div>
                   <div className="inline-badge">{recentLoading ? '불러오는 중...' : `${displayedRecentSnapshots.length}개`}</div>
                 </div>
               </div>
             {displayedRecentSnapshots.length === 0 ? (
               <div className="workspace-empty-state">{recentSnapshots.length === 0 ? '표시할 최신 snapshot이 없다.' : `${recentMarket} 시장 최신 snapshot이 없다.`}</div>
             ) : (
+              <>
               <div style={{ overflow: 'auto' }}>
                 <table className="workspace-table" style={{ minWidth: 840 }}>
                   <thead>
@@ -390,6 +393,38 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
                   </tbody>
                 </table>
               </div>
+              <div className="responsive-card-list">
+                {displayedRecentSnapshots.map((item, idx) => {
+                  const status = snapshotStatus(item);
+                  return (
+                    <article
+                      key={`${item.market}-${item.symbol}-${item.bucket_ts || idx}-card`}
+                      className="responsive-card"
+                      onClick={() => {
+                        const nextSymbol = item.symbol || '';
+                        const nextMarket = item.market || 'KOSPI';
+                        setSymbol(nextSymbol);
+                        setMarket(nextMarket);
+                        void runQuery(nextSymbol, nextMarket);
+                      }}
+                    >
+                      <div className="responsive-card-head">
+                        <div>
+                          <div className="responsive-card-title">{item.name || item.symbol || '-'}</div>
+                          <div className="signal-cell-copy">{item.market || '-'} · {formatDateTime(item.generated_at || item.bucket_ts)}</div>
+                        </div>
+                        <span className={status.tone}>{status.label}</span>
+                      </div>
+                      <div className="responsive-card-grid">
+                        <div><div className="responsive-card-label">점수</div><div className="responsive-card-value">{scoreDisplay(item)}</div></div>
+                        <div><div className="responsive-card-label">신뢰도</div><div className="responsive-card-value">{freshnessBadge(item).label} · {gradeBadge(item).label}</div></div>
+                        <div style={{ gridColumn: '1 / -1' }}><div className="responsive-card-label">요약</div><div className="responsive-card-value">{item.validation?.grade === 'D' ? (item.validation?.exclusion_reason || '검증 제외') : (item.summary || '요약 없음')}</div></div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+              </>
             )}
           </section>
 
@@ -403,12 +438,15 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
 
           {history.length > 0 && (
             <section className="page-section workspace-table-section">
-              <div className="workspace-card-head">
+              <div className="workspace-card-head section-head-row">
                 <div>
                   <div className="section-title">스냅샷 이력</div>
                   <div className="section-copy">클릭해서 상세 컴포넌트와 경고를 펼쳐봅니다.</div>
                 </div>
-                <div className="inline-badge">{history.length}개</div>
+                <div className="section-toolbar">
+                  <div className="section-table-meta">선택 종목 {symbol.trim().toUpperCase() || '-'} · 시장 {market}</div>
+                  <div className="inline-badge">{history.length}개</div>
+                </div>
               </div>
               <div style={{ overflow: 'auto' }}>
                 <table className="workspace-table" style={{ minWidth: 760 }}>

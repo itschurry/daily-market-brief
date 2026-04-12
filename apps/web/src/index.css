@@ -1456,6 +1456,26 @@ button:disabled {
   align-items: flex-start;
 }
 
+.section-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.section-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.section-table-meta {
+  font-size: 12px;
+  color: var(--text-4);
+  line-height: 1.6;
+}
+
 .section-title {
   font-size: 15px;
   font-weight: 800;

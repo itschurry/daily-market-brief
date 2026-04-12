@@ -75,7 +75,17 @@ export function PerformancePage({ snapshot, loading, errorMessage, onRefresh }: 
           />
 
           <section className="page-section console-card-section" style={{ display: 'grid', gap: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>오늘 운용</div>
+            <div className="section-head-row">
+              <div>
+                <div className="section-title">오늘 운용</div>
+                <div className="section-copy">오늘 발생한 신호·주문·거절만 짧게 보고, 상세 체결은 아래 목록으로 내려가면 돼.</div>
+              </div>
+              <div className="section-toolbar">
+                <span className="inline-badge">신호 {live.today_signal_count ?? 0}건</span>
+                <span className="inline-badge">주문 {live.today_order_count ?? 0}건</span>
+                <span className={`inline-badge ${(live.today_reject_count ?? 0) > 0 ? 'is-danger' : ''}`}>거절 {live.today_reject_count ?? 0}건</span>
+              </div>
+            </div>
             <div className="console-metric-grid">
               <div>
                 <div style={{ fontSize: 12, color: 'var(--text-4)' }}>신호 수</div>
@@ -97,7 +107,16 @@ export function PerformancePage({ snapshot, loading, errorMessage, onRefresh }: 
           </section>
 
           <section className="page-section console-card-section" style={{ display: 'grid', gap: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>누적 운용 성과</div>
+            <div className="section-head-row">
+              <div>
+                <div className="section-title">누적 운용 성과</div>
+                <div className="section-copy">총 손익·체결 수·포지션 수를 같은 톤으로 보고, 수익률은 실제 퍼센트 값 그대로 표시합니다.</div>
+              </div>
+              <div className="section-toolbar">
+                <span className={`inline-badge ${totalReturn != null && totalReturn >= 0 ? 'is-success' : totalReturn != null ? 'is-danger' : ''}`}>총 수익률 {totalReturn != null ? formatPercent(totalReturn, 2) : '-'}</span>
+                <span className="inline-badge">포지션 {live.positions ?? 0}건</span>
+              </div>
+            </div>
             <div className="console-metric-grid">
               <div>
                 <div style={{ fontSize: 12, color: 'var(--text-4)' }}>총 수익률</div>
@@ -140,12 +159,12 @@ export function PerformancePage({ snapshot, loading, errorMessage, onRefresh }: 
 
           <section className="page-section console-data-section" style={{ padding: 0 }}>
             <div style={{ padding: 16, display: 'grid', gap: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div className="section-head-row">
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>체결 내역</div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-4)' }}>한국장과 미국장을 분리해서 보면 체결 흐름이 훨씬 읽기 쉽습니다.</div>
+                  <div className="section-title">체결 내역</div>
+                  <div className="section-copy">성과 화면, 리서치 스냅샷, 주문/체결 화면 모두 같은 필터 톤으로 맞추는 3차 패스 기준을 여기에 적용했어.</div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <div className="section-filter-row">
                   {(['ALL', 'KOSPI', 'NASDAQ'] as const).map((view) => (
                     <button
                       key={view}
@@ -158,7 +177,7 @@ export function PerformancePage({ snapshot, loading, errorMessage, onRefresh }: 
                   ))}
                 </div>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>
+              <div className="section-table-meta">
                 미국장은 달러 기준 체결가를 먼저 보여주고, 괄호에 원화 환산 금액을 같이 붙였습니다.
               </div>
             </div>
@@ -203,6 +222,29 @@ export function PerformancePage({ snapshot, loading, errorMessage, onRefresh }: 
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className="responsive-card-list">
+              {filteredHistory.map((row, i) => {
+                const currency = row.currency === 'USD' || currencyByMarket(row.market) === 'USD' ? 'USD' : 'KRW';
+                return (
+                  <article key={`${row.logged_at ?? ''}-${i}-card`} className="responsive-card">
+                    <div className="responsive-card-head">
+                      <div>
+                        <div className="responsive-card-title">{row.code ?? '-'}</div>
+                        <div className="signal-cell-copy">{row.market ?? '-'} · {formatDateTime(row.logged_at)}</div>
+                      </div>
+                      <span className={row.side === 'buy' ? 'inline-badge is-success' : 'inline-badge is-danger'}>{row.side === 'buy' ? '매수' : '매도'}</span>
+                    </div>
+                    <div className="responsive-card-grid">
+                      <div><div className="responsive-card-label">수량</div><div className="responsive-card-value">{row.quantity != null ? formatNumber(row.quantity, 0) : '-'}주</div></div>
+                      <div><div className="responsive-card-label">체결가</div><div className="responsive-card-value">{formatLocalAmountWithKRW(row.filled_price_local, row.filled_price_krw, currency)}</div></div>
+                      <div><div className="responsive-card-label">금액</div><div className="responsive-card-value">{formatLocalAmountWithKRW(row.notional_local, row.notional_krw, currency)}</div></div>
+                      <div><div className="responsive-card-label">시장</div><div className="responsive-card-value">{row.market ?? '-'}</div></div>
+                    </div>
+                  </article>
+                );
+              })}
+              {filteredHistory.length === 0 && <div style={{ padding: 14, fontSize: 12, color: 'var(--text-4)' }}>{marketView === 'ALL' ? '체결된 거래가 없습니다.' : `${marketView} 체결 내역이 없습니다.`}</div>}
             </div>
           </section>
         </div>
