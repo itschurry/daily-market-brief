@@ -69,6 +69,9 @@ def build_layer_c_snapshot(*, symbol: str, market: str, timestamp: str, strategy
         "summary": result.summary,
         "ttl_minutes": result.ttl_minutes,
         "generated_at": result.generated_at,
+        "freshness": result.freshness,
+        "freshness_detail": result.freshness_detail,
+        "validation": result.validation,
     }
 
 
@@ -111,7 +114,7 @@ def build_layer_e_snapshot(*, signal_state: str, quant_score: float, research: d
     elif signal_state != "entry":
         final_action = "do_not_touch" if normalized_quant < 0.45 else "watch_only"
         decision_reason = "non_entry_signal"
-    elif normalized_quant >= 0.7 and (research_score is None or float(research_score) >= 0.45) and not warnings:
+    elif normalized_quant >= 0.5 and (research_score is None or float(research_score) >= 0.45) and not warnings:
         final_action = "review_for_entry"
         decision_reason = "quant_confirmed"
     elif normalized_quant >= 0.58:

@@ -4,12 +4,17 @@ import datetime
 
 from services.paper_runtime_store import list_strategy_scans
 from services.research_store import (
+    DEFAULT_RESEARCH_PROVIDER,
     ingest_research_snapshots,
     list_latest_research_snapshots,
     load_latest_research_snapshot,
     load_provider_status,
     load_research_snapshots,
 )
+
+
+def _query_provider(query: dict[str, list[str]]) -> str:
+    return ((query.get("provider") or [DEFAULT_RESEARCH_PROVIDER])[0] or DEFAULT_RESEARCH_PROVIDER).strip().lower()
 
 
 def handle_research_ingest_bulk(payload: dict) -> tuple[int, dict]:
@@ -22,7 +27,7 @@ def handle_research_ingest_bulk(payload: dict) -> tuple[int, dict]:
 
 
 def handle_research_status(query: dict[str, list[str]]) -> tuple[int, dict]:
-    provider = (query.get("provider") or ["openclaw"])[0] or "openclaw"
+    provider = _query_provider(query)
     try:
         return 200, load_provider_status(provider)
     except Exception as exc:
@@ -32,7 +37,7 @@ def handle_research_status(query: dict[str, list[str]]) -> tuple[int, dict]:
 def handle_research_latest_snapshot(query: dict[str, list[str]]) -> tuple[int, dict]:
     symbol = ((query.get("symbol") or [""])[0] or "").strip().upper()
     market = ((query.get("market") or [""])[0] or "").strip().upper()
-    provider = ((query.get("provider") or ["openclaw"])[0] or "openclaw").strip().lower()
+    provider = _query_provider(query)
     if not symbol or not market:
         return 400, {"ok": False, "error": "symbol_market_required"}
     try:
@@ -144,7 +149,7 @@ def _collect_research_scanner_targets(provider: str, markets: set[str]) -> list[
 
 
 def handle_research_scanner_targets(query: dict[str, list[str]]) -> tuple[int, dict]:
-    provider = ((query.get("provider") or ["openclaw"])[0] or "openclaw").strip().lower()
+    provider = _query_provider(query)
     markets = {str(item or "").strip().upper() for item in (query.get("market") or []) if str(item or "").strip()}
     limit = _parse_limit_query((query.get("limit") or [None])[0], default_value=100)
 
@@ -167,7 +172,7 @@ def handle_research_scanner_targets(query: dict[str, list[str]]) -> tuple[int, d
 
 
 def handle_research_scanner_enrich_targets(query: dict[str, list[str]]) -> tuple[int, dict]:
-    provider = ((query.get("provider") or ["openclaw"])[0] or "openclaw").strip().lower()
+    provider = _query_provider(query)
     markets = {str(item or "").strip().upper() for item in (query.get("market") or []) if str(item or "").strip()}
     limit = _parse_limit_query((query.get("limit") or [None])[0], default_value=30)
     mode = ((query.get("mode") or ["missing_or_stale"])[0] or "missing_or_stale").strip().lower()
@@ -210,7 +215,7 @@ def handle_research_scanner_enrich_targets(query: dict[str, list[str]]) -> tuple
 def handle_research_snapshots(query: dict[str, list[str]]) -> tuple[int, dict]:
     symbol = ((query.get("symbol") or [""])[0] or "").strip().upper()
     market = ((query.get("market") or [""])[0] or "").strip().upper()
-    provider = ((query.get("provider") or ["openclaw"])[0] or "openclaw").strip().lower()
+    provider = _query_provider(query)
     bucket_start = ((query.get("bucket_start") or [""])[0] or "").strip() or None
     bucket_end = ((query.get("bucket_end") or [""])[0] or "").strip() or None
     limit = _parse_limit_query((query.get("limit") or [None])[0], default_value=50)

@@ -43,16 +43,19 @@ class ResearchStoreTests(unittest.TestCase):
             self.addCleanup(item.stop)
 
     def test_ingest_bulk_persists_latest_snapshot_and_status(self):
+        now = datetime.datetime.now(datetime.timezone.utc).astimezone()
+        bucket_ts = now.replace(second=0, microsecond=0)
+        generated_at = (bucket_ts + datetime.timedelta(seconds=5)).isoformat()
         status_code, payload = handle_research_ingest_bulk({
             "provider": "openclaw",
             "schema_version": "v1",
             "run_id": "cron-1",
-            "generated_at": "2026-04-03T09:30:05+09:00",
+            "generated_at": generated_at,
             "items": [
                 {
                     "symbol": "005930",
                     "market": "KR",
-                    "bucket_ts": "2026-04-03T09:30:00+09:00",
+                    "bucket_ts": bucket_ts.isoformat(),
                     "research_score": 0.61,
                     "components": {"freshness_score": 0.8},
                     "warnings": ["already_extended_intraday"],
@@ -70,6 +73,10 @@ class ResearchStoreTests(unittest.TestCase):
         latest = store.load_latest_research_snapshot("005930", "KR", provider="openclaw")
         self.assertIsNotNone(latest)
         self.assertEqual(0.61, latest["research_score"])
+        self.assertEqual("fresh", latest["freshness"])
+        self.assertFalse(latest["is_stale"])
+        self.assertEqual("C", latest["validation"]["grade"])
+        self.assertEqual("warning_codes_present", latest["validation"]["reason"])
 
         status_code, status_payload = handle_research_status({"provider": ["openclaw"]})
         self.assertEqual(200, status_code)
@@ -488,4 +495,11 @@ class ResearchStoreTests(unittest.TestCase):
         self.assertEqual("stale", status_payload["freshness"])
         self.assertEqual(2, status_payload["coverage_count"])
         self.assertEqual(1, status_payload["stale_symbol_count"])
+
+        stale_snapshot = store.load_latest_research_snapshot("005930", "KR", provider="openclaw")
+        self.assertIsNotNone(stale_snapshot)
+        self.assertEqual("stale", stale_snapshot["freshness"])
+        self.assertTrue(stale_snapshot["is_stale"])
+        self.assertEqual("C", stale_snapshot["validation"]["grade"])
+        self.assertEqual("stale_snapshot", stale_snapshot["validation"]["reason"])
         self.assertEqual(1, status_payload["fresh_symbol_count"])

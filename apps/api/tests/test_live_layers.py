@@ -52,6 +52,9 @@ class LiveLayerTests(unittest.TestCase):
                 "summary": "snapshot ok",
                 "ttl_minutes": 120,
                 "generated_at": "2026-04-02T17:00:00+09:00",
+                "freshness": "fresh",
+                "freshness_detail": {"status": "fresh", "is_stale": False, "reason": "within_ttl"},
+                "validation": {"grade": "B", "reason": "warning_codes_present"},
             },
         ):
             result = scorer.score(ResearchScoreRequest(symbol="AAA", market="KOSPI", timestamp="2026-04-02T17:30:00+09:00"))
@@ -61,6 +64,9 @@ class LiveLayerTests(unittest.TestCase):
         self.assertEqual(0.61, result.research_score)
         self.assertEqual(["already_extended_intraday"], result.warnings)
         self.assertEqual("openclaw", result.source)
+        self.assertEqual("fresh", result.freshness)
+        self.assertFalse(result.freshness_detail["is_stale"])
+        self.assertEqual("B", result.validation["grade"])
 
     def test_stored_research_scorer_marks_stale_snapshot_unavailable(self):
         scorer = StoredResearchScorer(provider="openclaw")

@@ -143,12 +143,35 @@ def _ev_to_signal_label(expected_value: float) -> str:
 
 def _coalesce(*values: Any) -> Any:
     for value in values:
-        if value is None:
-            continue
-        if isinstance(value, str) and not value.strip():
-            continue
-        return value
+        if value is not None:
+            return value
     return None
+
+
+def _research_quality_gate(item: dict[str, Any]) -> dict[str, Any]:
+    layer_c = item.get("layer_c") if isinstance(item.get("layer_c"), dict) else {}
+    validation = layer_c.get("validation") if isinstance(layer_c.get("validation"), dict) else {}
+    freshness = str(layer_c.get("freshness") or layer_c.get("freshness_detail", {}).get("status") or "").lower()
+    grade = str(validation.get("grade") or "").upper()
+    exclusion_reason = str(validation.get("exclusion_reason") or "").strip() or None
+
+    raw_score = _coalesce(item.get("research_score"), layer_c.get("research_score"))
+    safe_score = raw_score
+    quality_flags: list[str] = []
+
+    if freshness == "stale":
+        quality_flags.append("research_stale")
+    if grade == "D":
+        safe_score = None
+        quality_flags.append("research_grade_d_hidden")
+
+    return {
+        "research_score": safe_score,
+        "research_freshness": freshness or None,
+        "research_validation": validation,
+        "research_quality_flags": quality_flags,
+        "research_exclusion_reason": exclusion_reason,
+    }
 
 
 def _load_optimized_params_payload() -> dict[str, Any] | None:
@@ -179,6 +202,7 @@ def _map_strategy_signal(item: dict[str, Any], rank: int) -> dict[str, Any]:
     execution_realism = item.get("execution_realism") if isinstance(item.get("execution_realism"), dict) else {}
     reasoning = item.get("signal_reasoning") if isinstance(item.get("signal_reasoning"), dict) else {}
 
+    research_gate = _research_quality_gate(item)
     score = max(0.0, min(100.0, 50.0 + (expected_value * 8.0)))
     confidence = max(1, min(99, int(round(win_probability * 100.0))))
     final_action = str(item.get("final_action") or ("review_for_entry" if bool(item.get("entry_allowed")) else "blocked"))
@@ -266,7 +290,12 @@ def _map_strategy_signal(item: dict[str, Any], rank: int) -> dict[str, Any]:
         "candidate_research_source": item.get("candidate_research_source"),
         "research_status": item.get("research_status"),
         "research_unavailable": item.get("research_unavailable"),
-        "research_score": item.get("research_score"),
+        "research_score": research_gate["research_score"],
+        "research_freshness": research_gate["research_freshness"],
+        "research_validation": research_gate["research_validation"],
+        "research_quality_flags": research_gate["research_quality_flags"],
+        "research_exclusion_reason": research_gate["research_exclusion_reason"],
+        "layer_c": item.get("layer_c"),
         "final_action": final_action,
         "final_action_snapshot": item.get("final_action_snapshot"),
         "layer_events": item.get("layer_events"),
@@ -375,6 +404,7 @@ def _fallback_today_picks(date: str | None = None) -> dict:
 
         signal_label = str(item.get("signal_label") or item.get("signal") or "")
         reasons = item.get("reasons", [])
+        research_gate = _research_quality_gate(item)
         candidate = {
             "name": item.get("name"),
             "code": code,
@@ -397,7 +427,13 @@ def _fallback_today_picks(date: str | None = None) -> dict:
             "gate_status": item.get("gate_status", "passed"),
             "gate_reasons": item.get("gate_reasons", []),
             "playbook_alignment": item.get("playbook_alignment"),
-            "ai_thesis": item.get("ai_thesis"),
+            "ai_thesis": item.get("ai_thesis") if research_gate["research_score"] is not None else (research_gate["research_exclusion_reason"] or item.get("ai_thesis")),
+            "research_score": research_gate["research_score"],
+            "research_freshness": research_gate["research_freshness"],
+            "research_validation": research_gate["research_validation"],
+            "research_quality_flags": research_gate["research_quality_flags"],
+            "research_exclusion_reason": research_gate["research_exclusion_reason"],
+            "layer_c": item.get("layer_c"),
             "reliability": reliability.label,
             "strategy_reliability": reliability.label,
             "validation_trades": validation_trades,

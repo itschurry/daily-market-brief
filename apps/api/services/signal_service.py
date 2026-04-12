@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 from typing import Any
 
 from analyzer.candidate_selector import (
@@ -15,6 +16,10 @@ from services.universe_builder import get_universe_snapshot
 
 DEFAULT_THEME_FOCUS = ["automotive", "robotics", "physical_ai"]
 _ALLOWED_THEME_FOCUS = set(DEFAULT_THEME_FOCUS)
+
+
+def _now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
 def _to_bool(raw: Any, default: bool) -> bool:
@@ -146,6 +151,30 @@ def _merge_runtime_technical_snapshot(item: dict[str, Any], fetched: dict[str, A
             if value not in (None, ""):
                 snapshot["current_price"] = value
                 break
+
+    quote_source = str(snapshot.get("quote_source") or snapshot.get("source") or ("kis_daily_history" if fetched else "runtime_payload_fallback"))
+    quote_fetched_at = str(snapshot.get("quote_fetched_at") or snapshot.get("fetched_at") or _now_iso())
+    freshness = "fresh" if fetched else ("stale" if snapshot.get("current_price") not in (None, "") else "missing")
+    validation_grade = "B" if fetched and snapshot.get("current_price") not in (None, "") else "C" if snapshot.get("current_price") not in (None, "") else "D"
+    validation_reason = "quote_live_fetch" if fetched and snapshot.get("current_price") not in (None, "") else "quote_fallback" if snapshot.get("current_price") not in (None, "") else "quote_missing"
+    exclusion_reason = None if snapshot.get("current_price") not in (None, "") else "current price unavailable"
+    snapshot["quote_source"] = quote_source
+    snapshot["quote_fetched_at"] = quote_fetched_at
+    snapshot["freshness"] = freshness
+    snapshot["freshness_detail"] = {
+        "status": freshness,
+        "is_stale": freshness != "fresh",
+        "reason": "live_quote" if fetched else "fallback_quote" if snapshot.get("current_price") not in (None, "") else "quote_missing",
+        "fetched_at": quote_fetched_at,
+    }
+    snapshot["validation"] = {
+        "grade": validation_grade,
+        "source": quote_source,
+        "source_count": 1,
+        "reason": validation_reason,
+        "notes": ["live_quote" if fetched else "fallback_quote"],
+        "exclusion_reason": exclusion_reason,
+    }
     return snapshot
 
 
@@ -235,6 +264,20 @@ def _build_quant_runtime_candidate(
             "passes_minimum_gate": bool(item.get("validation_trades") or item.get("trade_count")),
             "is_reliable": bool(item.get("is_reliable", reliability in {"high", "medium"})),
             "composite_score": item.get("composite_score"),
+            "freshness": "derived",
+            "freshness_detail": {
+                "status": "derived",
+                "is_stale": False,
+                "reason": "runtime_overlay",
+            },
+            "validation": {
+                "grade": "A" if reliability == "high" else "B" if reliability == "medium" else "C" if int(item.get("validation_trades") or item.get("trade_count") or 0) > 0 else "D",
+                "source": "quant_runtime",
+                "source_count": 1,
+                "reason": str(item.get("reliability_reason") or "runtime_overlay"),
+                "notes": [f"reliability:{reliability}", f"validation_trades:{int(item.get('validation_trades') or item.get('trade_count') or 0)}"],
+                "exclusion_reason": None if int(item.get("validation_trades") or item.get("trade_count") or 0) > 0 else "validation evidence unavailable",
+            },
         },
         **_runtime_source_meta("quant_runtime"),
     }
@@ -281,10 +324,16 @@ def collect_quant_runtime_candidates(market: str, cfg: dict | None = None) -> li
         # 유니버스 스냅샷이 로드됐을 때만 유니버스 필터 적용 (스냅샷 없으면 pass-through)
         if universe_codes and code not in universe_codes:
             continue
-        item_market = resolve_market(code=code, market=str(item.get("market") or ""), scope="core")
+        try:
+            item_market = resolve_market(code=code, market=str(item.get("market") or ""), scope="core")
+        except Exception:
+            item_market = str(item.get("market") or normalized_market)
         if normalize_market(item_market) != normalized_market:
             continue
-        listing = lookup_company_listing(code=code, market=item_market, scope="core") or {}
+        try:
+            listing = lookup_company_listing(code=code, market=item_market, scope="core") or {}
+        except Exception:
+            listing = {}
         score = _quant_candidate_score(item)
         if score < min_quant_score:
             continue

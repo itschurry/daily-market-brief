@@ -25,13 +25,11 @@ def _print_payload(status_code: int, payload: dict) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    query = {"provider": [args.provider]}
-    return _print_payload(*handle_research_status(query))
+    return _print_payload(*handle_research_status({}))
 
 
 def cmd_scanner_targets(args: argparse.Namespace) -> int:
     query: dict[str, list[str]] = {
-        "provider": [args.provider],
         "limit": [str(args.limit)],
     }
     if args.market:
@@ -41,7 +39,6 @@ def cmd_scanner_targets(args: argparse.Namespace) -> int:
 
 def cmd_enrich_targets(args: argparse.Namespace) -> int:
     query: dict[str, list[str]] = {
-        "provider": [args.provider],
         "limit": [str(args.limit)],
         "mode": [args.mode],
     }
@@ -52,7 +49,6 @@ def cmd_enrich_targets(args: argparse.Namespace) -> int:
 
 def cmd_latest(args: argparse.Namespace) -> int:
     query = {
-        "provider": [args.provider],
         "symbol": [args.symbol],
         "market": [args.market],
     }
@@ -61,7 +57,6 @@ def cmd_latest(args: argparse.Namespace) -> int:
 
 def cmd_snapshots(args: argparse.Namespace) -> int:
     query = {
-        "provider": [args.provider],
         "limit": [str(args.limit)],
         "descending": ["true" if args.descending else "false"],
     }
@@ -88,21 +83,18 @@ def cmd_ingest_bulk(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Research ops helper for WealthPulse Hanna/OpenClaw flows")
+    parser = argparse.ArgumentParser(description="Research ops helper for WealthPulse research flows")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    status = sub.add_parser("status", help="Show provider status")
-    status.add_argument("--provider", default="openclaw")
+    status = sub.add_parser("status", help="Show research status")
     status.set_defaults(func=cmd_status)
 
     scanner_targets = sub.add_parser("scanner-targets", help="List scanner-linked research targets")
-    scanner_targets.add_argument("--provider", default="openclaw")
     scanner_targets.add_argument("--market", action="append", default=[])
     scanner_targets.add_argument("--limit", type=int, default=100)
     scanner_targets.set_defaults(func=cmd_scanner_targets)
 
     enrich_targets = sub.add_parser("enrich-targets", help="List missing/stale scanner research targets")
-    enrich_targets.add_argument("--provider", default="openclaw")
     enrich_targets.add_argument("--market", action="append", default=[])
     enrich_targets.add_argument("--limit", type=int, default=30)
     enrich_targets.add_argument(
@@ -115,11 +107,9 @@ def build_parser() -> argparse.ArgumentParser:
     latest = sub.add_parser("latest", help="Show latest snapshot for one symbol")
     latest.add_argument("symbol")
     latest.add_argument("market")
-    latest.add_argument("--provider", default="openclaw")
     latest.set_defaults(func=cmd_latest)
 
     snapshots = sub.add_parser("snapshots", help="Show snapshot history or latest directory listing")
-    snapshots.add_argument("--provider", default="openclaw")
     snapshots.add_argument("--symbol")
     snapshots.add_argument("--market")
     snapshots.add_argument("--bucket-start")

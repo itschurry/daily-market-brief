@@ -83,6 +83,10 @@ class RuntimeCandidatePolicyTests(unittest.TestCase):
         self.assertEqual(201.5, candidates[0]["current_price"])
         self.assertEqual(1500000, candidates[0]["technical_snapshot"]["volume_avg20"])
         self.assertEqual("runtime_candidates", candidates[0]["runtime_candidate_source_mode"])
+        self.assertEqual("fresh", candidates[0]["technical_snapshot"]["freshness"])
+        self.assertEqual("B", candidates[0]["technical_snapshot"]["validation"]["grade"])
+        self.assertEqual("derived", candidates[0]["validation_snapshot"]["freshness"])
+        self.assertIn(candidates[0]["validation_snapshot"]["validation"]["grade"], {"A", "B", "C", "D"})
 
     def test_runtime_collection_does_not_merge_research_candidates(self):
         runtime_payload = {

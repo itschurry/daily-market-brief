@@ -101,6 +101,9 @@ class LiveRuntimeArchitectureTests(unittest.TestCase):
         self.assertEqual("kospi", snapshot["rule_name"])
         self.assertEqual("KOSPI", snapshot["market"])
         self.assertGreaterEqual(snapshot["symbol_count"], 1)
+        self.assertIn(snapshot.get("freshness"), {"fresh", "stale", "missing", "invalid"})
+        self.assertIn("validation", snapshot)
+        self.assertIn("grade", snapshot["validation"])
 
     def test_live_signal_book_scans_registry_strategy(self):
         strategy = {

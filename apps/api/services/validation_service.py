@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from dataclasses import replace
 from functools import lru_cache
@@ -295,9 +296,92 @@ def _store_cached_walk_forward(cache_key: str, payload: dict[str, Any]) -> None:
                 _WALK_FORWARD_CACHE.pop(oldest_key, None)
 
 
+def _now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def _validation_grade(*, trade_count: int, reliability_label: str) -> str:
+    normalized_label = str(reliability_label or "").strip().lower()
+    if trade_count <= 0:
+        return "D"
+    if normalized_label == "high":
+        return "A"
+    if normalized_label == "medium":
+        return "B"
+    return "C"
+
+
+def _validation_freshness(source: str) -> tuple[str, str]:
+    normalized = str(source or "").strip().lower()
+    if normalized == "cache":
+        return "stale", "cached_validation_payload"
+    if normalized in {"live", "backtest_live", "walk_forward_live", "diagnostics_live"}:
+        return "fresh", normalized
+    return "derived", normalized or "derived_validation_payload"
+
+
+def _attach_validation_meta(
+    payload: dict[str, Any],
+    *,
+    source: str,
+    trade_count: int,
+    reliability_label: str,
+    reason: str,
+    exclusion_reason: str | None = None,
+) -> dict[str, Any]:
+    response = dict(payload)
+    generated_at = str(response.get("generated_at") or _now_iso())
+    served_at = _now_iso()
+    freshness, freshness_reason = _validation_freshness(source)
+    grade = _validation_grade(trade_count=trade_count, reliability_label=reliability_label)
+    safe_exclusion_reason = exclusion_reason or ("validation evidence unavailable" if grade == "D" else None)
+
+    response["generated_at"] = generated_at
+    response["served_at"] = served_at
+    response["source"] = source
+    response["freshness"] = freshness
+    response["freshness_detail"] = {
+        "status": freshness,
+        "is_stale": freshness != "fresh",
+        "reason": freshness_reason,
+        "generated_at": generated_at,
+        "served_at": served_at,
+    }
+    response["validation"] = {
+        "grade": grade,
+        "source": source,
+        "source_count": 1,
+        "reason": str(reason or "validation_payload"),
+        "notes": [
+            f"reliability:{str(reliability_label or 'low')}",
+            f"trade_count:{int(trade_count or 0)}",
+        ],
+        "exclusion_reason": safe_exclusion_reason,
+    }
+    return response
+
+
 def _annotate_walk_forward_source(payload: dict[str, Any], *, source: str) -> dict[str, Any]:
     response = dict(payload)
     response["source"] = source
+    freshness, freshness_reason = _validation_freshness(source)
+    response["served_at"] = _now_iso()
+    response["freshness"] = freshness
+    response["freshness_detail"] = {
+        **(response.get("freshness_detail") if isinstance(response.get("freshness_detail"), dict) else {}),
+        "status": freshness,
+        "is_stale": freshness != "fresh",
+        "reason": freshness_reason,
+        "generated_at": str(response.get("generated_at") or ""),
+        "served_at": response["served_at"],
+    }
+    validation = response.get("validation") if isinstance(response.get("validation"), dict) else {}
+    if validation:
+        response["validation"] = {
+            **validation,
+            "source": source,
+            "reason": str(validation.get("reason") or freshness_reason or "validation_payload"),
+        }
     return response
 
 
@@ -1280,7 +1364,14 @@ def run_backtest_with_extended_metrics(query: dict[str, list[str]], *, auto_opti
         target_label="medium",
     )
     payload["scorecard"] = _build_strategy_scorecard(payload["metrics"], trades)
-    return payload
+    reliability_label = str(((payload.get("reliability_diagnostic") or {}).get("current") or {}).get("label") or "low")
+    return _attach_validation_meta(
+        payload,
+        source="backtest_live",
+        trade_count=int(payload["metrics"].get("trade_count", 0) or 0),
+        reliability_label=reliability_label,
+        reason="backtest_extended_metrics",
+    )
 
 
 def _build_light_validation_payload(backtest_payload: dict[str, Any]) -> dict[str, Any]:
@@ -1289,40 +1380,62 @@ def _build_light_validation_payload(backtest_payload: dict[str, Any]) -> dict[st
     reliability_diagnostic = backtest_payload.get("reliability_diagnostic") if isinstance(backtest_payload.get("reliability_diagnostic"), dict) else {}
     trade_count = int(metrics.get("trade_count", 0) or 0)
     positive_window_ratio = 1.0 if trade_count > 0 and _to_float(metrics.get("total_return_pct"), 0.0) > 0.0 else 0.0
-    return {
-        "ok": True,
-        "config": {
-            "mode": "light",
-            "walk_forward": False,
-        },
-        "segments": {
-            "oos": {
-                **metrics,
-                "strategy_scorecard": scorecard,
-                "exit_reason_analysis": metrics.get("exit_reason_analysis") if isinstance(metrics.get("exit_reason_analysis"), dict) else {},
-            },
-        },
-        "rolling_windows": [],
-        "summary": {
-            "windows": 1 if trade_count > 0 else 0,
-            "positive_windows": 1 if positive_window_ratio > 0 else 0,
-            "positive_window_ratio": positive_window_ratio,
-            "oos_reliability": classify_walk_forward_reliability(
-                trade_count=trade_count,
-                profit_factor=_to_float(metrics.get("profit_factor"), 0.0),
-                sharpe=_to_float(metrics.get("sharpe"), 0.0),
-                total_return_pct=_to_float(metrics.get("total_return_pct"), 0.0),
-                positive_window_ratio=positive_window_ratio,
-            ).label,
-            "reliability_diagnostic": reliability_diagnostic,
-            "composite_score": scorecard.get("composite_score"),
-            "exit_reason_stats": metrics.get("exit_reason_stats") if isinstance(metrics.get("exit_reason_stats"), dict) else {},
+    oos_reliability = classify_walk_forward_reliability(
+        trade_count=trade_count,
+        profit_factor=_to_float(metrics.get("profit_factor"), 0.0),
+        sharpe=_to_float(metrics.get("sharpe"), 0.0),
+        total_return_pct=_to_float(metrics.get("total_return_pct"), 0.0),
+        positive_window_ratio=positive_window_ratio,
+    ).label
+    oos_segment = _attach_validation_meta(
+        {
+            **metrics,
+            "strategy_scorecard": scorecard,
             "exit_reason_analysis": metrics.get("exit_reason_analysis") if isinstance(metrics.get("exit_reason_analysis"), dict) else {},
-            "regime_stats": metrics.get("regime_stats") if isinstance(metrics.get("regime_stats"), dict) else {},
         },
-        "scorecard": scorecard,
-        "source": "backtest_light",
+        source="backtest_light",
+        trade_count=trade_count,
+        reliability_label=oos_reliability,
+        reason="light_validation_oos_segment",
+    )
+    summary = {
+        "windows": 1 if trade_count > 0 else 0,
+        "positive_windows": 1 if positive_window_ratio > 0 else 0,
+        "positive_window_ratio": positive_window_ratio,
+        "oos_reliability": oos_reliability,
+        "reliability_diagnostic": reliability_diagnostic,
+        "composite_score": scorecard.get("composite_score"),
+        "exit_reason_stats": metrics.get("exit_reason_stats") if isinstance(metrics.get("exit_reason_stats"), dict) else {},
+        "exit_reason_analysis": metrics.get("exit_reason_analysis") if isinstance(metrics.get("exit_reason_analysis"), dict) else {},
+        "regime_stats": metrics.get("regime_stats") if isinstance(metrics.get("regime_stats"), dict) else {},
     }
+    summary = _attach_validation_meta(
+        summary,
+        source="backtest_light",
+        trade_count=trade_count,
+        reliability_label=oos_reliability,
+        reason="light_validation_summary",
+    )
+    return _attach_validation_meta(
+        {
+            "ok": True,
+            "config": {
+                "mode": "light",
+                "walk_forward": False,
+            },
+            "segments": {
+                "oos": oos_segment,
+            },
+            "rolling_windows": [],
+            "summary": summary,
+            "scorecard": scorecard,
+            "source": "backtest_light",
+        },
+        source="backtest_light",
+        trade_count=trade_count,
+        reliability_label=oos_reliability,
+        reason="light_validation_payload",
+    )
 
 
 def run_validation_diagnostics(query: dict[str, list[str]], *, mode: str = "full") -> dict[str, Any]:
@@ -1489,34 +1602,49 @@ def _compute_walk_forward_payload(base_cfg, query: dict[str, list[str]]) -> dict
         target_label="medium",
     )
 
-    return {
-        "ok": True,
-        "config": {
-            "markets": list(base_cfg.markets),
-            "lookback_days": base_cfg.lookback_days,
-            "training_days": requested_training_days,
-            "validation_days": requested_validation_days,
-            "walk_forward": walk_forward_enabled,
-            "effective_window": {
-                "available_points": n,
-                "training_days": effective_training_days,
-                "validation_days": effective_validation_days,
-                "oos_days": oos_days,
-                "clipped": clipped,
-                "clipping_reason": clipping_reason,
-            },
-            "walk_forward_window": {
-                "window_size": (effective_training_days + effective_validation_days) if walk_forward_enabled else len(oos_curve),
-                "step": max(20, effective_validation_days) if walk_forward_enabled else len(oos_curve),
-            },
-        },
-        "segments": {
-            "train": {**train_metrics, "strategy_scorecard": train_scorecard, "exit_reason_analysis": train_exit_reason_analysis},
-            "validation": {**validation_metrics, "strategy_scorecard": validation_scorecard, "exit_reason_analysis": validation_exit_reason_analysis},
-            "oos": {**oos_metrics, "strategy_scorecard": oos_scorecard, "exit_reason_analysis": oos_exit_reason_analysis},
-        },
-        "rolling_windows": windows,
-        "summary": {
+    segment_reliability = {
+        "train": str(((build_reliability_diagnostic(
+            trade_count=int(train_metrics.get("trade_count", 0) or 0),
+            validation_signals=int(train_metrics.get("trade_count", 0) or 0),
+            validation_sharpe=_to_float(train_metrics.get("sharpe"), 0.0),
+            max_drawdown_pct=_to_float(train_metrics.get("max_drawdown_pct"), 0.0),
+            target_label="medium",
+        ).get("current") or {}).get("label") or "low")),
+        "validation": str(((build_reliability_diagnostic(
+            trade_count=int(validation_metrics.get("trade_count", 0) or 0),
+            validation_signals=int(validation_metrics.get("trade_count", 0) or 0),
+            validation_sharpe=_to_float(validation_metrics.get("sharpe"), 0.0),
+            max_drawdown_pct=_to_float(validation_metrics.get("max_drawdown_pct"), 0.0),
+            target_label="medium",
+        ).get("current") or {}).get("label") or "low")),
+        "oos": str(((reliability_diagnostic.get("current") or {}).get("label") or reliability or "low")),
+    }
+
+    segments = {
+        "train": _attach_validation_meta(
+            {**train_metrics, "strategy_scorecard": train_scorecard, "exit_reason_analysis": train_exit_reason_analysis},
+            source="walk_forward_live",
+            trade_count=int(train_metrics.get("trade_count", 0) or 0),
+            reliability_label=segment_reliability["train"],
+            reason="walk_forward_train_segment",
+        ),
+        "validation": _attach_validation_meta(
+            {**validation_metrics, "strategy_scorecard": validation_scorecard, "exit_reason_analysis": validation_exit_reason_analysis},
+            source="walk_forward_live",
+            trade_count=int(validation_metrics.get("trade_count", 0) or 0),
+            reliability_label=segment_reliability["validation"],
+            reason="walk_forward_validation_segment",
+        ),
+        "oos": _attach_validation_meta(
+            {**oos_metrics, "strategy_scorecard": oos_scorecard, "exit_reason_analysis": oos_exit_reason_analysis},
+            source="walk_forward_live",
+            trade_count=int(oos_metrics.get("trade_count", 0) or 0),
+            reliability_label=segment_reliability["oos"],
+            reason="walk_forward_oos_segment",
+        ),
+    }
+    summary = _attach_validation_meta(
+        {
             "windows": len(windows),
             "positive_windows": positive_oos_windows,
             "positive_window_ratio": positive_window_ratio,
@@ -1527,8 +1655,44 @@ def _compute_walk_forward_payload(base_cfg, query: dict[str, list[str]]) -> dict
             "exit_reason_analysis": walk_forward_exit_reason_analysis,
             "regime_stats": _regime_stats_from_curve(equity_curve),
         },
-        "scorecard": oos_scorecard,
-    }
+        source="walk_forward_live",
+        trade_count=int(oos_metrics.get("trade_count", 0) or 0),
+        reliability_label=segment_reliability["oos"],
+        reason="walk_forward_summary",
+    )
+
+    return _attach_validation_meta(
+        {
+            "ok": True,
+            "config": {
+                "markets": list(base_cfg.markets),
+                "lookback_days": base_cfg.lookback_days,
+                "training_days": requested_training_days,
+                "validation_days": requested_validation_days,
+                "walk_forward": walk_forward_enabled,
+                "effective_window": {
+                    "available_points": n,
+                    "training_days": effective_training_days,
+                    "validation_days": effective_validation_days,
+                    "oos_days": oos_days,
+                    "clipped": clipped,
+                    "clipping_reason": clipping_reason,
+                },
+                "walk_forward_window": {
+                    "window_size": (effective_training_days + effective_validation_days) if walk_forward_enabled else len(oos_curve),
+                    "step": max(20, effective_validation_days) if walk_forward_enabled else len(oos_curve),
+                },
+            },
+            "segments": segments,
+            "rolling_windows": windows,
+            "summary": summary,
+            "scorecard": oos_scorecard,
+        },
+        source="walk_forward_live",
+        trade_count=int(oos_metrics.get("trade_count", 0) or 0),
+        reliability_label=segment_reliability["oos"],
+        reason="walk_forward_payload",
+    )
 
 
 def run_walk_forward_validation(query: dict[str, list[str]], refresh: bool = False, cache_only: bool = False) -> dict[str, Any]:

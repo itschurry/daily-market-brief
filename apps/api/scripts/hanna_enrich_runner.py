@@ -17,6 +17,7 @@ from routes.research import (  # noqa: E402
     handle_research_scanner_enrich_targets,
     handle_research_status,
 )
+from services.research_store import DEFAULT_RESEARCH_PROVIDER  # noqa: E402
 
 
 def _now_local() -> dt.datetime:
@@ -83,7 +84,7 @@ def _score_target(item: dict[str, Any]) -> tuple[float, dict[str, float], list[s
     return research_score, components, warnings, tags, summary
 
 
-def _build_ingest_payload(items: list[dict[str, Any]], provider: str) -> dict[str, Any]:
+def _build_ingest_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
     now = _now_local()
     generated_at = _generated_now(now)
     bucket_ts = _bucket_now(now)
@@ -111,7 +112,7 @@ def _build_ingest_payload(items: list[dict[str, Any]], provider: str) -> dict[st
         )
 
     return {
-        "provider": provider,
+        "provider": DEFAULT_RESEARCH_PROVIDER,
         "schema_version": "v1",
         "run_id": f"hanna-enrich-{uuid.uuid4().hex[:12]}",
         "generated_at": generated_at,
@@ -119,9 +120,8 @@ def _build_ingest_payload(items: list[dict[str, Any]], provider: str) -> dict[st
     }
 
 
-def run(provider: str, markets: list[str], limit: int, mode: str) -> tuple[int, dict[str, Any]]:
+def run(markets: list[str], limit: int, mode: str) -> tuple[int, dict[str, Any]]:
     query: dict[str, list[str]] = {
-        "provider": [provider],
         "limit": [str(limit)],
         "mode": [mode],
     }
@@ -142,11 +142,11 @@ def run(provider: str, markets: list[str], limit: int, mode: str) -> tuple[int, 
         target_items = []
 
     if not target_items:
-        _, provider_status = handle_research_status({"provider": [provider]})
+        _, provider_status = handle_research_status({})
         return 200, {
             "ok": True,
             "stage": "noop",
-            "provider": provider,
+            "provider": DEFAULT_RESEARCH_PROVIDER,
             "markets": markets,
             "mode": mode,
             "selected_count": 0,
@@ -154,14 +154,14 @@ def run(provider: str, markets: list[str], limit: int, mode: str) -> tuple[int, 
             "provider_status": provider_status,
         }
 
-    ingest_payload = _build_ingest_payload(target_items, provider)
+    ingest_payload = _build_ingest_payload(target_items)
     ingest_status, ingest_result = handle_research_ingest_bulk(ingest_payload)
-    _, provider_status = handle_research_status({"provider": [provider]})
+    _, provider_status = handle_research_status({})
 
     result = {
         "ok": 200 <= ingest_status < 300,
         "stage": "ingested",
-        "provider": provider,
+        "provider": DEFAULT_RESEARCH_PROVIDER,
         "markets": markets,
         "mode": mode,
         "selected_count": len(target_items),
@@ -183,7 +183,6 @@ def run(provider: str, markets: list[str], limit: int, mode: str) -> tuple[int, 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Deterministic Hanna scanner enrich runner")
-    parser.add_argument("--provider", default="openclaw")
     parser.add_argument("--market", action="append", default=[])
     parser.add_argument("--limit", type=int, default=30)
     parser.add_argument(
@@ -194,7 +193,6 @@ def main() -> int:
     args = parser.parse_args()
 
     status_code, payload = run(
-        provider=args.provider,
         markets=list(args.market),
         limit=max(1, int(args.limit)),
         mode=args.mode,

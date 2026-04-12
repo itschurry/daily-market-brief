@@ -268,7 +268,7 @@ def scan_strategy(
             "candidate_source_tier": "tier_1",
             "candidate_source_priority": 100,
             "candidate_runtime_source_mode": "live_scanner",
-            "candidate_research_source": "openclaw_snapshot_store",
+            "candidate_research_source": "research_snapshot_store",
             "report_reasoning": {
                 "summary": ", ".join(reasons[:3]),
                 "gate_status": signal_state,
@@ -285,6 +285,20 @@ def scan_strategy(
                 "trade_count": 0,
                 "validation_sharpe": None,
                 "strategy_reliability": "approved" if bool(strategy.get("enabled")) else "draft",
+                "freshness": "derived",
+                "freshness_detail": {
+                    "status": "derived",
+                    "is_stale": False,
+                    "reason": "strategy_registry_snapshot",
+                },
+                "validation": {
+                    "grade": "D",
+                    "source": "strategy_registry",
+                    "source_count": 1,
+                    "reason": "validation_snapshot_missing",
+                    "notes": ["validation_trades:0"],
+                    "exclusion_reason": "validation evidence unavailable",
+                },
             },
             "execution_realism": {
                 "liquidity_gate_status": "pending",

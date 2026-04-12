@@ -149,6 +149,9 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
         self.assertIn("metrics", result)
         self.assertIn("scorecard", result)
         self.assertIn("reliability_diagnostic", result)
+        self.assertIn("freshness", result)
+        self.assertIn("validation", result)
+        self.assertEqual("fresh", result["freshness"])
         self.assertEqual(1.23, result["metrics"]["legacy_metric"])
         self.assertIn("exit_reason_stats", result["metrics"])
         self.assertIn("exit_reason_analysis", result["metrics"])
@@ -172,7 +175,7 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
         stub = _StubBacktestService(payload_for_optional=base_payload, payload_for_run=walk_payload)
 
         with patch("services.validation_service.get_backtest_service", return_value=stub):
-            result = run_walk_forward_validation({})
+            result = run_walk_forward_validation({}, refresh=True)
 
         self.assertTrue(result["ok"])
         self.assertIn("segments", result)
@@ -186,6 +189,8 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
             self.assertIn("strategy_scorecard", segment_payload)
             self.assertIn("tail_risk", segment_payload["strategy_scorecard"])
             self.assertIn("exit_reason_analysis", segment_payload)
+            self.assertIn("validation", segment_payload)
+            self.assertIn("freshness", segment_payload)
             self.assertIn("reasons", segment_payload["exit_reason_analysis"])
             self.assertIn("symbol_weaknesses", segment_payload["exit_reason_analysis"])
             self.assertIn("sector_weaknesses", segment_payload["exit_reason_analysis"])
@@ -195,6 +200,8 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
         self.assertIn("oos_reliability", summary)
         self.assertIn("positive_window_ratio", summary)
         self.assertIn("reliability_diagnostic", summary)
+        self.assertIn("validation", summary)
+        self.assertEqual("fresh", result["freshness"])
         self.assertIn("blocking_factors", summary["reliability_diagnostic"])
         self.assertIn("uplift_search", summary["reliability_diagnostic"])
         self.assertIn("exit_reason_analysis", summary)
@@ -229,7 +236,7 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
             result = run_walk_forward_validation({
                 "training_days": ["180"],
                 "validation_days": ["60"],
-            })
+            }, refresh=True)
 
         self.assertTrue(result["ok"])
         self.assertEqual(180, result["config"]["training_days"])
@@ -279,6 +286,8 @@ class ValidationPipelineRegressionTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual("backtest_light", result["validation"]["source"])
         self.assertEqual(False, result["validation"]["config"]["walk_forward"])
+        self.assertEqual("derived", result["validation"]["freshness"])
+        self.assertIn("validation", result["validation"]["summary"])
         self.assertEqual(0, result["research"]["trial_limit"])
         self.assertEqual([], result["research"]["suggestions"])
         self.assertIn("summary_lines", result["diagnosis"])

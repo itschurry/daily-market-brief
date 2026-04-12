@@ -2,4 +2,4 @@
 set -euo pipefail
 
 cd /home/user/wealth-pulse
-exec .venv/bin/python apps/api/scripts/hanna_enrich_runner.py --provider openclaw --market NASDAQ --limit 30 --mode missing_or_stale
+exec .venv/bin/python apps/api/scripts/hanna_enrich_runner.py --market NASDAQ --limit 30 --mode missing_or_stale

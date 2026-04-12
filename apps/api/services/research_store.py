@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from config.settings import LOGS_DIR
-from services.json_utils import json_dump_compact, json_dump_text, read_json_file_cached
+from services.json_utils import clear_json_file_cache, json_dump_compact, json_dump_text, read_json_file_cached
 from services.research_contract import normalize_and_validate_warning_codes, normalize_tags
 from market_utils import normalize_market
 
@@ -15,8 +15,24 @@ RESEARCH_DIR = LOGS_DIR / "research_snapshots"
 RESEARCH_LATEST_DIR = RESEARCH_DIR / "latest"
 RESEARCH_INGEST_LOG_PATH = RESEARCH_DIR / "ingest_history.jsonl"
 RESEARCH_PROVIDER_STATE_PATH = RESEARCH_DIR / "provider_state.json"
-OPENCLAW_PROVIDER = "openclaw"
-OPENCLAW_SCHEMA_VERSION = "v1"
+DEFAULT_RESEARCH_PROVIDER = "default"
+LEGACY_RESEARCH_PROVIDER_ALIASES = {"openclaw"}
+RESEARCH_SCHEMA_VERSION = "v1"
+
+
+def _normalize_provider(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw or raw in LEGACY_RESEARCH_PROVIDER_ALIASES:
+        return DEFAULT_RESEARCH_PROVIDER
+    return raw
+
+
+def _provider_aliases(value: Any) -> list[str]:
+    normalized = _normalize_provider(value)
+    aliases = [normalized]
+    if normalized == DEFAULT_RESEARCH_PROVIDER:
+        aliases.extend(sorted(LEGACY_RESEARCH_PROVIDER_ALIASES))
+    return list(dict.fromkeys(alias for alias in aliases if alias))
 
 
 def _now_iso() -> str:
@@ -40,6 +56,7 @@ def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     _ensure_parent(path)
     path.write_text(json_dump_text(payload, indent=2), encoding="utf-8")
+    clear_json_file_cache(path)
 
 
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
@@ -104,7 +121,7 @@ def _parse_score(value: Any, *, field: str) -> float | None:
 def _snapshot_history_key(item: dict[str, Any]) -> str:
     return "|".join(
         [
-            str(item.get("provider") or "").strip().lower(),
+            _normalize_provider(item.get("provider")),
             str(item.get("symbol") or "").strip().upper(),
             _normalize_market_input(str(item.get("market") or "")),
             str(item.get("bucket_ts") or ""),
@@ -188,6 +205,136 @@ def _history_sort_key(item: dict[str, Any]) -> tuple[datetime.datetime, datetime
     bucket_dt = _parse_datetime(item.get("bucket_ts")) or datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
     ingested_dt = _parse_datetime(item.get("ingested_at")) or bucket_dt
     return (bucket_dt, ingested_dt, str(item.get("run_id") or ""))
+
+
+def _build_snapshot_freshness(snapshot: dict[str, Any], *, reference_dt: datetime.datetime | None = None) -> dict[str, Any]:
+    generated_dt = _parse_datetime(snapshot.get("generated_at"))
+    ingested_dt = _parse_datetime(snapshot.get("ingested_at"))
+    ttl_minutes_raw = snapshot.get("ttl_minutes")
+    try:
+        ttl_minutes = int(ttl_minutes_raw or 0)
+    except (TypeError, ValueError):
+        ttl_minutes = 0
+
+    effective_reference = reference_dt or datetime.datetime.now(datetime.timezone.utc)
+    if generated_dt is None:
+        return {
+            "status": "invalid",
+            "is_stale": True,
+            "ttl_minutes": ttl_minutes,
+            "generated_at": str(snapshot.get("generated_at") or ""),
+            "stale_at": "",
+            "age_minutes": None,
+            "reason": "generated_at_missing",
+        }
+
+    age_minutes = max(0.0, round((effective_reference - generated_dt).total_seconds() / 60.0, 2))
+    stale_at = generated_dt + datetime.timedelta(minutes=ttl_minutes) if ttl_minutes > 0 else None
+    if ttl_minutes <= 0:
+        return {
+            "status": "invalid",
+            "is_stale": True,
+            "ttl_minutes": ttl_minutes,
+            "generated_at": generated_dt.isoformat(),
+            "ingested_at": ingested_dt.isoformat() if ingested_dt else "",
+            "stale_at": "",
+            "age_minutes": age_minutes,
+            "reason": "ttl_missing",
+        }
+
+    is_stale = effective_reference > stale_at
+    return {
+        "status": "stale" if is_stale else "fresh",
+        "is_stale": is_stale,
+        "ttl_minutes": ttl_minutes,
+        "generated_at": generated_dt.isoformat(),
+        "ingested_at": ingested_dt.isoformat() if ingested_dt else "",
+        "stale_at": stale_at.isoformat() if stale_at else "",
+        "age_minutes": age_minutes,
+        "reason": "ttl_expired" if is_stale else "within_ttl",
+    }
+
+
+def _build_snapshot_validation(snapshot: dict[str, Any], freshness: dict[str, Any]) -> dict[str, Any]:
+    warnings = [str(item) for item in (snapshot.get("warnings") or []) if str(item)]
+    tags = [str(item) for item in (snapshot.get("tags") or []) if str(item)]
+    score = snapshot.get("research_score")
+    components = snapshot.get("components") if isinstance(snapshot.get("components"), dict) else {}
+    source = str(snapshot.get("provider") or DEFAULT_RESEARCH_PROVIDER)
+
+    grade = "D"
+    reason = "snapshot_invalid"
+    exclusion_reason = "research snapshot metadata is incomplete"
+
+    if freshness.get("status") == "stale":
+        grade = "C"
+        reason = "stale_snapshot"
+        exclusion_reason = None
+    elif freshness.get("status") == "fresh":
+        if score is None:
+            grade = "D"
+            reason = "research_score_missing"
+            exclusion_reason = "research score missing from snapshot"
+        else:
+            try:
+                numeric_score = float(score)
+            except (TypeError, ValueError):
+                numeric_score = None
+            freshness_component = components.get("freshness_score")
+            try:
+                freshness_component_num = float(freshness_component) if freshness_component is not None else None
+            except (TypeError, ValueError):
+                freshness_component_num = None
+
+            if numeric_score is None:
+                grade = "D"
+                reason = "research_score_invalid"
+                exclusion_reason = "research score is not numeric"
+            elif warnings:
+                grade = "B" if numeric_score >= 0.65 else "C"
+                reason = "warning_codes_present"
+                exclusion_reason = None
+            elif numeric_score >= 0.75 and (freshness_component_num is None or freshness_component_num >= 0.75):
+                grade = "A"
+                reason = "fresh_high_score"
+                exclusion_reason = None
+            elif numeric_score >= 0.45:
+                grade = "B"
+                reason = "fresh_usable_score"
+                exclusion_reason = None
+            else:
+                grade = "C"
+                reason = "fresh_low_score"
+                exclusion_reason = None
+
+    notes: list[str] = []
+    if freshness.get("status") == "stale":
+        notes.append("ttl_expired")
+    notes.extend(warnings)
+    if tags:
+        notes.extend(f"tag:{tag}" for tag in tags[:5])
+
+    return {
+        "grade": grade,
+        "source": source,
+        "source_count": 1,
+        "reason": reason,
+        "notes": list(dict.fromkeys(notes)),
+        "exclusion_reason": exclusion_reason,
+    }
+
+
+def _enrich_snapshot(snapshot: dict[str, Any] | None, *, reference_dt: datetime.datetime | None = None) -> dict[str, Any] | None:
+    if not isinstance(snapshot, dict):
+        return None
+    enriched = _attach_snapshot_name(snapshot)
+    freshness = _build_snapshot_freshness(enriched, reference_dt=reference_dt)
+    validation = _build_snapshot_validation(enriched, freshness)
+    enriched["freshness"] = freshness.get("status")
+    enriched["is_stale"] = bool(freshness.get("is_stale"))
+    enriched["freshness_detail"] = freshness
+    enriched["validation"] = validation
+    return enriched
 
 
 def _attach_snapshot_name(item: dict[str, Any]) -> dict[str, Any]:
@@ -284,22 +431,10 @@ def _normalize_item(
 
 
 def ingest_research_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
-    provider = str(payload.get("provider") or OPENCLAW_PROVIDER).strip().lower() or OPENCLAW_PROVIDER
-    schema_version = str(payload.get("schema_version") or OPENCLAW_SCHEMA_VERSION).strip() or OPENCLAW_SCHEMA_VERSION
+    provider = _normalize_provider(payload.get("provider"))
+    schema_version = str(payload.get("schema_version") or RESEARCH_SCHEMA_VERSION).strip() or RESEARCH_SCHEMA_VERSION
 
-    if provider != OPENCLAW_PROVIDER:
-        return {
-            "ok": False,
-            "provider": provider,
-            "run_id": "",
-            "accepted": 0,
-            "received_valid": 0,
-            "deduped_count": 0,
-            "rejected": 1,
-            "errors": [{"index": -1, "error": "provider_mismatch"}],
-        }
-
-    if schema_version != OPENCLAW_SCHEMA_VERSION:
+    if schema_version != RESEARCH_SCHEMA_VERSION:
         return {
             "ok": False,
             "provider": provider,
@@ -445,29 +580,38 @@ def _resolve_market_aliases(market: str) -> list[str]:
 
 def _history_candidate_paths(provider: str, symbol: str, market: str) -> list[Path]:
     paths: list[Path] = []
-    for normalized_market in _resolve_market_aliases(market):
-        paths.append(_history_snapshot_path(provider, normalized_market, symbol))
+    for provider_key in _provider_aliases(provider):
+        for normalized_market in _resolve_market_aliases(market):
+            paths.append(_history_snapshot_path(provider_key, normalized_market, symbol))
     return list(dict.fromkeys(paths))
 
 
 def _latest_snapshot_candidates(provider: str, symbol: str, market: str) -> list[Path]:
     paths: list[Path] = []
-    for normalized_market in _resolve_market_aliases(market):
-        paths.append(_latest_snapshot_path(provider, normalized_market, symbol))
+    for provider_key in _provider_aliases(provider):
+        for normalized_market in _resolve_market_aliases(market):
+            paths.append(_latest_snapshot_path(provider_key, normalized_market, symbol))
     return list(dict.fromkeys(paths))
 
 
-def load_provider_status(provider: str = OPENCLAW_PROVIDER) -> dict[str, Any]:
+def load_provider_status(provider: str = DEFAULT_RESEARCH_PROVIDER) -> dict[str, Any]:
     """Compute provider status from latest snapshot files and provider ingest metadata."""
-    provider_key = str(provider).strip().lower() or OPENCLAW_PROVIDER
+    provider_key = _normalize_provider(provider)
+    provider_aliases = set(_provider_aliases(provider_key))
     payload = _read_json(RESEARCH_PROVIDER_STATE_PATH, {"providers": {}})
     providers = payload.get("providers") if isinstance(payload.get("providers"), dict) else {}
     state = providers.get(provider_key)
+    if not isinstance(state, dict):
+        for alias in provider_aliases:
+            alias_state = providers.get(alias)
+            if isinstance(alias_state, dict):
+                state = alias_state
+                break
 
     latest_snapshot_candidates_map: dict[str, dict[str, Any]] = {}
     for path in RESEARCH_LATEST_DIR.glob("*.json"):
         payload = _read_json(path, {})
-        if str(payload.get("provider") or "").strip().lower() != provider_key:
+        if _normalize_provider(payload.get("provider")) != provider_key:
             continue
         if str(payload.get("symbol") or "").strip() == "":
             continue
@@ -475,7 +619,7 @@ def load_provider_status(provider: str = OPENCLAW_PROVIDER) -> dict[str, Any]:
         if not normalized_market:
             continue
         key = (
-            str(payload.get("provider") or "").strip().lower()
+            _normalize_provider(payload.get("provider"))
             + "|"
             + str(payload.get("symbol") or "").strip().upper()
             + "|"
@@ -566,8 +710,8 @@ def load_provider_status(provider: str = OPENCLAW_PROVIDER) -> dict[str, Any]:
     }
 
 
-def load_latest_research_snapshot(symbol: str, market: str, *, provider: str = "openclaw") -> dict[str, Any] | None:
-    provider = str(provider or "").strip().lower() or OPENCLAW_PROVIDER
+def load_latest_research_snapshot(symbol: str, market: str, *, provider: str = DEFAULT_RESEARCH_PROVIDER) -> dict[str, Any] | None:
+    provider = _normalize_provider(provider)
     symbol = str(symbol or "").strip().upper()
     selected: dict[str, Any] | None = None
     for path in _latest_snapshot_candidates(provider, symbol, market):
@@ -578,23 +722,23 @@ def load_latest_research_snapshot(symbol: str, market: str, *, provider: str = "
             selected = payload
     if selected is None:
         return None
-    return _attach_snapshot_name(selected)
+    return _enrich_snapshot(selected)
 
 
 def list_latest_research_snapshots(
     *,
-    provider: str = OPENCLAW_PROVIDER,
+    provider: str = DEFAULT_RESEARCH_PROVIDER,
     market: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    provider_key = str(provider or "").strip().lower() or OPENCLAW_PROVIDER
+    provider_key = _normalize_provider(provider)
     normalized_market = _normalize_market_input(market or "") if market else ""
     newest_by_symbol_market: dict[tuple[str, str, str], dict[str, Any]] = {}
     for path in RESEARCH_LATEST_DIR.glob("*.json"):
         payload = _read_json(path, {})
         if not payload:
             continue
-        payload_provider = str(payload.get("provider") or "").strip().lower()
+        payload_provider = _normalize_provider(payload.get("provider"))
         payload_symbol = str(payload.get("symbol") or "").strip().upper()
         payload_market = _normalize_market_input(str(payload.get("market") or ""))
         if payload_provider != provider_key:
@@ -611,7 +755,8 @@ def list_latest_research_snapshots(
             newest_by_symbol_market[dedupe_key] = normalized_payload
 
     rows = list(newest_by_symbol_market.values())
-    rows = [_attach_snapshot_name(item) for item in rows]
+    rows = [_enrich_snapshot(item) for item in rows]
+    rows = [item for item in rows if isinstance(item, dict)]
     rows.sort(key=_history_sort_key, reverse=True)
     if limit > 0:
         rows = rows[:limit]
@@ -622,7 +767,7 @@ def load_research_snapshots(
     symbol: str,
     market: str,
     *,
-    provider: str = OPENCLAW_PROVIDER,
+    provider: str = DEFAULT_RESEARCH_PROVIDER,
     bucket_start: str | None = None,
     bucket_end: str | None = None,
     limit: int = 50,
@@ -643,11 +788,11 @@ def load_research_snapshots(
     if not rows:
         return []
 
-    normalized_provider = str(provider).strip().lower()
+    normalized_provider = _normalize_provider(provider)
 
     filtered_rows: list[dict[str, Any]] = []
     for item in rows:
-        if str(item.get("provider") or provider).strip().lower() != normalized_provider:
+        if _normalize_provider(item.get("provider") or provider) != normalized_provider:
             continue
         if str(item.get("symbol") or "").strip().upper() != normalized_symbol:
             continue
@@ -665,7 +810,8 @@ def load_research_snapshots(
         filtered_rows.append(item)
 
     rows = _dedupe_history_rows(filtered_rows)
-    rows = [_attach_snapshot_name(item) for item in rows]
+    rows = [_enrich_snapshot(item) for item in rows]
+    rows = [item for item in rows if isinstance(item, dict)]
 
     def sort_key(item: dict[str, Any]) -> tuple[datetime.datetime, datetime.datetime, str]:
         bucket_dt = _parse_datetime(item.get("bucket_ts")) or datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
@@ -683,7 +829,7 @@ def load_research_snapshot_for_timestamp(
     market: str,
     request_timestamp: str,
     *,
-    provider: str = OPENCLAW_PROVIDER,
+    provider: str = DEFAULT_RESEARCH_PROVIDER,
 ) -> dict[str, Any] | None:
     """Select the best snapshot candidate for the requested timestamp.
 
@@ -705,4 +851,4 @@ def load_research_snapshot_for_timestamp(
     )
     if not candidates:
         return None
-    return candidates[0]
+    return _enrich_snapshot(candidates[0], reference_dt=parsed)

@@ -162,7 +162,7 @@ def _validation_snapshot_for_candidate(candidate: dict[str, Any], optimized_payl
     if validation_trades in (None, ""):
         validation_trades = trade_count or 0
 
-    return {
+    result = {
         **base_snapshot,
         "validation_source": source,
         "trade_count": int(trade_count or 0),
@@ -175,6 +175,24 @@ def _validation_snapshot_for_candidate(candidate: dict[str, Any], optimized_payl
         "is_reliable": bool((overlay or {}).get("is_reliable", base_snapshot.get("is_reliable", False))),
         "composite_score": (overlay or {}).get("composite_score", base_snapshot.get("composite_score")),
     }
+    freshness = "derived"
+    grade = "D" if int(result.get("validation_trades") or 0) <= 0 and int(result.get("trade_count") or 0) <= 0 else "A" if str(result.get("strategy_reliability") or "") == "high" else "B" if str(result.get("strategy_reliability") or "") == "medium" else "C"
+    exclusion_reason = "validation evidence unavailable" if grade == "D" else None
+    result["freshness"] = freshness
+    result["freshness_detail"] = {
+        "status": freshness,
+        "is_stale": False,
+        "reason": "runtime_validation_overlay",
+    }
+    result["validation"] = {
+        "grade": grade,
+        "source": source,
+        "source_count": 1,
+        "reason": str(result.get("reliability_reason") or "validation_snapshot"),
+        "notes": [f"reliability:{str(result.get('strategy_reliability') or 'insufficient')}", f"validation_trades:{int(result.get('validation_trades') or 0)}"],
+        "exclusion_reason": exclusion_reason,
+    }
+    return result
 
 
 def _risk_inputs_for_candidate(candidate: dict[str, Any], optimized_payload: dict[str, Any] | None, cfg: dict[str, Any]) -> dict[str, Any]:

@@ -88,6 +88,76 @@ def _minutes_since(timestamp: str) -> float | None:
     return delta.total_seconds() / 60.0
 
 
+def _build_universe_freshness(payload: dict[str, Any], *, max_age_minutes: int = _DEFAULT_MAX_AGE_MINUTES) -> dict[str, Any]:
+    generated_at = str(payload.get("updated_at") or payload.get("generated_at") or "")
+    age_minutes = _minutes_since(generated_at)
+    source = str(payload.get("source") or "")
+    if source.lower() == "snapshot_missing":
+        return {
+            "status": "missing",
+            "is_stale": True,
+            "max_age_minutes": max_age_minutes,
+            "generated_at": generated_at,
+            "age_minutes": age_minutes,
+            "reason": "snapshot_missing",
+        }
+    if age_minutes is None:
+        return {
+            "status": "invalid",
+            "is_stale": True,
+            "max_age_minutes": max_age_minutes,
+            "generated_at": generated_at,
+            "age_minutes": None,
+            "reason": "timestamp_invalid",
+        }
+    is_stale = age_minutes > float(max_age_minutes)
+    return {
+        "status": "stale" if is_stale else "fresh",
+        "is_stale": is_stale,
+        "max_age_minutes": max_age_minutes,
+        "generated_at": generated_at,
+        "age_minutes": round(age_minutes, 2),
+        "reason": "max_age_exceeded" if is_stale else "within_max_age",
+    }
+
+
+def _build_universe_validation(payload: dict[str, Any], freshness: dict[str, Any]) -> dict[str, Any]:
+    symbol_count = int(payload.get("symbol_count") or 0)
+    source = str(payload.get("source") or "snapshot")
+    grade = "D"
+    reason = "snapshot_missing"
+    exclusion_reason = None
+    if freshness.get("status") == "missing":
+        exclusion_reason = "universe snapshot not found"
+    elif freshness.get("status") == "invalid":
+        reason = "timestamp_invalid"
+        exclusion_reason = "universe snapshot timestamp is invalid"
+    elif symbol_count <= 0:
+        reason = "empty_universe"
+        exclusion_reason = "universe snapshot has no symbols"
+    elif freshness.get("status") == "stale":
+        grade = "C"
+        reason = "stale_universe"
+    else:
+        grade = "A"
+        reason = "fresh_universe"
+
+    notes: list[str] = []
+    if freshness.get("status") == "stale":
+        notes.append("ttl_expired")
+    if source:
+        notes.append(f"source:{source}")
+
+    return {
+        "grade": grade,
+        "source": source,
+        "source_count": 1,
+        "reason": reason,
+        "notes": notes,
+        "exclusion_reason": exclusion_reason,
+    }
+
+
 def _normalize_snapshot_symbol(row: dict[str, Any]) -> dict[str, Any] | None:
     code = str(row.get("code") or "").strip().upper()
     if not code:
@@ -145,7 +215,7 @@ def _normalize_snapshot(payload: dict[str, Any], *, market: str | None = None) -
     if symbol_count != len(symbols):
         symbol_count = len(symbols)
 
-    return {
+    normalized_payload = {
         "rule_name": normalized_rule,
         "universe": str(payload.get("universe") or normalized_rule),
         "market": normalized_market or str(payload.get("market") or UNIVERSE_MARKET_BY_RULE.get(normalized_rule, "")),
@@ -161,6 +231,12 @@ def _normalize_snapshot(payload: dict[str, Any], *, market: str | None = None) -
         "symbols": symbols,
         "excluded": normalized_excluded,
     }
+    freshness = _build_universe_freshness(normalized_payload)
+    normalized_payload["freshness"] = freshness.get("status")
+    normalized_payload["is_stale"] = bool(freshness.get("is_stale"))
+    normalized_payload["freshness_detail"] = freshness
+    normalized_payload["validation"] = _build_universe_validation(normalized_payload, freshness)
+    return normalized_payload
 
 
 def _empty_snapshot(rule_name: str) -> dict[str, Any]:

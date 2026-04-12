@@ -131,6 +131,41 @@ class ReportsRegressionTests(unittest.TestCase):
         self.assertEqual({"sample_component": 5.0}, row["strategy_scorecard"]["components"])
         self.assertEqual({"return_p05_pct": -3.1}, row["strategy_scorecard"]["tail_risk"])
 
+    def test_map_strategy_signal_hides_grade_d_research_score(self):
+        row = _map_strategy_signal(
+            {
+                "name": "MGM Resorts",
+                "code": "MGM",
+                "market": "NASDAQ",
+                "strategy_type": "trend",
+                "entry_allowed": True,
+                "research_score": 0.82,
+                "layer_c": {
+                    "research_score": 0.82,
+                    "freshness": "missing",
+                    "validation": {
+                        "grade": "D",
+                        "reason": "snapshot_missing",
+                        "exclusion_reason": "research snapshot not found",
+                    },
+                },
+                "ev_metrics": {
+                    "expected_value": 1.2,
+                    "win_probability": 0.57,
+                },
+                "validation_snapshot": {
+                    "strategy_reliability": "medium",
+                },
+            },
+            3,
+        )
+
+        self.assertIsNone(row["research_score"])
+        self.assertEqual("missing", row["research_freshness"])
+        self.assertEqual("D", row["research_validation"]["grade"])
+        self.assertIn("research_grade_d_hidden", row["research_quality_flags"])
+        self.assertEqual("research snapshot not found", row["research_exclusion_reason"])
+
 
 if __name__ == "__main__":
     unittest.main()
