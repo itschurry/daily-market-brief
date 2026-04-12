@@ -205,12 +205,21 @@ def _resolve_stock_quote(code: str, market: str = "") -> dict:
     resolved_exchange = normalize_market(resolved_market) or "NASDAQ"
     for exchange in _overseas_exchange_candidates(resolved_exchange):
         try:
-            kis_price = client.get_overseas_price(resolved_code, exchange=exchange)
-            resolved_exchange = exchange
-            break
+            candidate_price = client.get_overseas_price(resolved_code, exchange=exchange)
         except Exception as exc:
             last_exc = exc
             continue
+        quote_price = candidate_price.get("price")
+        try:
+            quote_price_value = float(quote_price) if quote_price is not None else None
+        except (TypeError, ValueError):
+            quote_price_value = None
+        if quote_price_value is None or quote_price_value <= 0:
+            last_exc = RuntimeError(f"empty overseas quote: {resolved_code}@{exchange}")
+            continue
+        kis_price = candidate_price
+        resolved_exchange = exchange
+        break
     if kis_price is None:
         if last_exc is not None:
             raise last_exc

@@ -139,6 +139,16 @@ class TradeWorkflowTests(unittest.TestCase):
                 "final_action": "review_for_entry",
                 "size_recommendation": {"quantity": 2},
                 "fetched_at": "2026-04-06T09:00:00+09:00",
+                "technical_snapshot": {
+                    "quote_source": "kis_daily_history",
+                    "quote_fetched_at": "2026-04-06T08:59:00+09:00",
+                    "freshness": "fresh",
+                    "validation": {
+                        "grade": "B",
+                        "source": "kis_daily_history",
+                        "reason": "quote_live_fetch",
+                    },
+                },
             }],
             orders=[{
                 "market": "KOSPI",
@@ -147,11 +157,17 @@ class TradeWorkflowTests(unittest.TestCase):
                 "side": "buy",
                 "filled_at": "2026-04-06T09:05:00+09:00",
                 "submitted_at": "2026-04-06T09:04:00+09:00",
+                "quote_source": "kis_realtime",
+                "quote_fetched_at": "2026-04-06T09:04:10+09:00",
+                "quote_is_stale": False,
             }],
         )
         self.assertEqual(1, summary["counts"]["filled"])
         self.assertEqual("filled", summary["items"][0]["workflow_stage"])
         self.assertEqual(1, summary["lifecycle_counts"]["filled"])
+        self.assertEqual("kis_realtime", summary["items"][0]["quote_source"])
+        self.assertEqual("fresh", summary["items"][0]["quote_freshness"])
+        self.assertEqual("B", summary["items"][0]["quote_validation"]["grade"])
 
 
 if __name__ == "__main__":

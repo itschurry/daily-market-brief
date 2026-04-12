@@ -174,6 +174,40 @@ function hannaBadgeClass(state: HannaState) {
   return 'inline-badge';
 }
 
+function layerCResearchGrade(source: Record<string, unknown> | null | undefined): string {
+  const validation = source?.validation;
+  if (!validation || typeof validation !== 'object') return '-';
+  return String((validation as { grade?: string }).grade || '').toUpperCase() || '-';
+}
+
+function layerCResearchFreshness(source: Record<string, unknown> | null | undefined): string {
+  const direct = source?.freshness;
+  if (typeof direct === 'string' && direct) return direct.toLowerCase();
+  const detail = source?.freshness_detail;
+  if (detail && typeof detail === 'object') {
+    return String((detail as { status?: string }).status || '').toLowerCase() || 'missing';
+  }
+  return 'missing';
+}
+
+function layerCResearchScoreDisplay(source: Record<string, unknown> | null | undefined): string {
+  if (layerCResearchGrade(source) === 'D') return '—';
+  const raw = source?.research_score;
+  const numeric = Number(raw);
+  return Number.isFinite(numeric) ? formatNumber(numeric, 2) : '-';
+}
+
+function layerCResearchBadgeClass(kind: 'freshness' | 'grade', value: string): string {
+  if (kind === 'freshness') {
+    if (value === 'fresh') return 'inline-badge is-success';
+    if (value === 'stale' || value === 'invalid') return 'inline-badge is-danger';
+    return 'inline-badge';
+  }
+  if (value === 'A') return 'inline-badge is-success';
+  if (value === 'C' || value === 'D') return 'inline-badge is-danger';
+  return 'inline-badge';
+}
+
 function hannaTone(state: HannaState): 'neutral' | 'good' | 'bad' {
   if (state === 'healthy') return 'good';
   if (state === 'timeout' || state === 'degraded') return 'bad';
@@ -411,6 +445,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
             snapshot?: Record<string, unknown>;
           }>;
         };
+        const layerCSnapshot = layerEventSnapshot<Record<string, unknown>>(item.layer_events, 'C');
         const layerDSnapshot = item.layer_d || layerEventSnapshot<{
           allowed?: boolean;
           blocked?: boolean;
@@ -457,6 +492,11 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
           riskDecision,
           riskReasonCode,
           riskMessage,
+          researchFreshness: layerCResearchFreshness(layerCSnapshot),
+          researchGrade: layerCResearchGrade(layerCSnapshot),
+          researchScore: layerCResearchScoreDisplay(layerCSnapshot),
+          researchReason: String(((layerCSnapshot?.validation as { reason?: string } | undefined)?.reason) || ''),
+          researchExclusionReason: String(((layerCSnapshot?.validation as { exclusion_reason?: string } | undefined)?.exclusion_reason) || ''),
           finalAction: String(item.final_action || layerESnapshot?.final_action || '-'),
           translatedReasons: rawReasonCodes.map((code) => reasonCodeToKorean(code)),
           rawReasons: rawReasonCodes,
@@ -1253,9 +1293,19 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
           <div className="paper-ops-overview-grid">
             <div className="page-section" style={{ padding: 16 }}>
               <div className="section-title">리서치 입력 분리</div>
+              <div className="workspace-chip-row" style={{ marginTop: 10, marginBottom: 10 }}>
+                <span className={String(snapshot.research.freshness || '').toLowerCase() === 'fresh' ? 'inline-badge is-success' : String(snapshot.research.freshness || '').toLowerCase() === 'stale' ? 'inline-badge is-danger' : 'inline-badge'}>
+                  {String(snapshot.research.freshness || 'missing')}
+                </span>
+                <span className="inline-badge">provider {String(snapshot.research.source || snapshot.research.status || '-')}</span>
+                <span className={String(snapshot.research.status || '') === 'healthy' ? 'inline-badge is-success' : 'inline-badge is-danger'}>
+                  status {String(snapshot.research.status || '-')}
+                </span>
+              </div>
               <div className="detail-list">
                 <div>Layer B: 퀀트 스캐너가 진입 후보를 만든 뒤 reason code와 스냅샷을 남깁니다.</div>
                 <div>Layer C: Hanna는 external research scorer일 뿐이고, buy/sell/order를 직접 내리지 못합니다.</div>
+                <div>Layer C 점수는 freshness/grade를 같이 봐야 합니다. Grade D면 점수 숫자는 숨기고 사유만 봅니다.</div>
                 <div>Layer D/E: Risk Gate가 최종 veto를 쥐고, 결과는 review_for_entry / watch_only / blocked / do_not_touch로만 끝냅니다.</div>
               </div>
             </div>
@@ -1714,6 +1764,8 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                 const workflowSymbolCode = String(item.code || '').trim().toUpperCase();
                 const workflowSymbolName = String(item.name || '').trim();
                 const statusLabel = reasonCodeToKorean(String(item.blocked_reason || item.last_order_reason || item.execution_status || '-'));
+                const quoteGrade = String(item.quote_validation?.grade || '-');
+                const quoteFreshness = String(item.quote_freshness || 'missing');
                 return (
                   <article key={`${item.signal_key || workflowSymbolCode || item.last_order_at || item.timestamp || item.logged_at || ''}`} className="responsive-card">
                     <div className="responsive-card-head">
@@ -1732,7 +1784,10 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                       <div><div className="responsive-card-label">마지막 시각</div><div className="responsive-card-value">{formatDateTime(item.last_order_at || item.fetched_at || item.timestamp || item.logged_at || '')}</div></div>
                       <div><div className="responsive-card-label">키</div><div className="responsive-card-value">{String(item.signal_key || '-')}</div></div>
                       <div><div className="responsive-card-label">주문 결과</div><div className="responsive-card-value">{item.last_order_success === undefined ? '-' : item.last_order_success ? '성공' : '실패'}</div></div>
+                      <div><div className="responsive-card-label">Quote</div><div className="responsive-card-value">{quoteFreshness} · Grade {quoteGrade}</div></div>
+                      <div><div className="responsive-card-label">Quote source</div><div className="responsive-card-value">{String(item.quote_source || '-')}</div></div>
                       <div style={{ gridColumn: '1 / -1' }}><div className="responsive-card-label">설명</div><div className="responsive-card-value">{statusLabel}</div></div>
+                      {item.quote_validation?.exclusion_reason ? <div style={{ gridColumn: '1 / -1' }}><div className="responsive-card-label">Quote note</div><div className="responsive-card-value">{String(item.quote_validation.exclusion_reason)}</div></div> : null}
                     </div>
                   </article>
                 );
@@ -1747,7 +1802,10 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                 <div className="section-title">Risk / Action 로그</div>
                 <div className="section-copy">Layer D risk 결과와 Layer E final action을 분리해서 보여줍니다. Hanna 상태는 참고 정보이고 주문 허용 여부는 risk veto 기준으로 읽으면 됩니다.</div>
               </div>
-              <div className={hannaBadgeClass(currentHannaState)}>Hanna {currentHannaState}</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <div className={hannaBadgeClass(currentHannaState)}>Hanna {currentHannaState}</div>
+                <div className={layerCResearchBadgeClass('freshness', String(snapshot.research.freshness || 'missing').toLowerCase())}>{String(snapshot.research.freshness || 'missing')}</div>
+              </div>
             </div>
             <div style={{ marginTop: 12 }}>
               <div className={`inline-badge ${riskActionCheck.tone === 'good' ? 'is-success' : riskActionCheck.tone === 'bad' ? 'is-danger' : ''}`}>{riskActionCheck.title}</div>
@@ -1766,6 +1824,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                     <th style={{ padding: 12, fontSize: 12 }}>종목</th>
                     <th style={{ padding: 12, fontSize: 12 }}>전략</th>
                     <th style={{ padding: 12, fontSize: 12 }}>Hanna</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>Layer C</th>
                     <th style={{ padding: 12, fontSize: 12 }}>Layer D</th>
                     <th style={{ padding: 12, fontSize: 12 }}>Layer E</th>
                     <th style={{ padding: 12, fontSize: 12 }}>reason code</th>
@@ -1783,11 +1842,18 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                         <div className={hannaBadgeClass(item.hannaState)}>{item.hannaState}</div>
                       </td>
                       <td style={{ padding: 12, fontSize: 12 }}>
+                        <div className="workspace-chip-row">
+                          <span className={layerCResearchBadgeClass('freshness', String(item.researchFreshness || 'missing'))}>{String(item.researchFreshness || 'missing')}</span>
+                          <span className={layerCResearchBadgeClass('grade', String(item.researchGrade || '-'))}>Grade {String(item.researchGrade || '-')}</span>
+                        </div>
+                        <div className="signal-cell-copy" style={{ marginTop: 6 }}>score {String(item.researchScore || '-')}</div>
+                      </td>
+                      <td style={{ padding: 12, fontSize: 12 }}>
                         <div className={item.riskDecision === 'allowed' ? 'inline-badge is-success' : 'inline-badge is-danger'}>
                           {riskDecisionLabel(item.riskDecision)}
                         </div>
-                        <div className="signal-cell-copy" style={{ marginTop: 6 }}>{reasonCodeToKorean(item.riskReasonCode)}</div>
                       </td>
+
                       <td style={{ padding: 12, fontSize: 12 }}>
                         <div className={item.finalAction === 'review_for_entry' ? 'inline-badge is-success' : item.finalAction === 'blocked' ? 'inline-badge is-danger' : 'inline-badge'}>
                           {reasonCodeToKorean(item.finalAction)}
@@ -1802,7 +1868,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                   ))}
                   {signalRiskActionLogs.length === 0 && (
                     <tr>
-                      <td colSpan={7} style={{ padding: 16, fontSize: 12, color: 'var(--text-4)' }}>
+                      <td colSpan={8} style={{ padding: 16, fontSize: 12, color: 'var(--text-4)' }}>
                         아직 기록된 signal snapshot이 없습니다. 엔진을 한 번 실행하면 Layer D/E 로그가 여기에 누적됩니다.
                       </td>
                     </tr>
@@ -1824,9 +1890,10 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                   </div>
                   <div className="responsive-card-grid">
                     <div><div className="responsive-card-label">시각</div><div className="responsive-card-value">{formatDateTime(item.timestamp)}</div></div>
+                    <div><div className="responsive-card-label">Layer C</div><div className="responsive-card-value">{String(item.researchFreshness || 'missing')} · Grade {String(item.researchGrade || '-')} · {String(item.researchScore || '-')}</div></div>
                     <div><div className="responsive-card-label">Layer D</div><div className="responsive-card-value">{riskDecisionLabel(item.riskDecision)} · {reasonCodeToKorean(item.riskReasonCode)}</div></div>
                     <div><div className="responsive-card-label">Layer E</div><div className="responsive-card-value">{reasonCodeToKorean(item.finalAction)}</div></div>
-                    <div><div className="responsive-card-label">상세</div><div className="responsive-card-value">{riskMessageLabel(item.riskMessage)}</div></div>
+                    <div><div className="responsive-card-label">상세</div><div className="responsive-card-value">{item.researchGrade === 'D' ? (item.researchExclusionReason || riskMessageLabel(item.riskMessage)) : riskMessageLabel(item.riskMessage)}</div></div>
                     <div style={{ gridColumn: '1 / -1' }}><div className="responsive-card-label">reason code</div><div className="responsive-card-value">{item.translatedReasons.join(', ') || '-'}</div><div className="signal-cell-copy">{item.rawReasons.join(', ') || '-'}</div></div>
                   </div>
                 </article>

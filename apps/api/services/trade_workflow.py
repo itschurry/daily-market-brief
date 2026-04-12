@@ -69,6 +69,51 @@ def _signal_key(payload: dict[str, Any]) -> str:
     return str(payload.get("originating_signal_key") or "").upper()
 
 
+def _extract_quote_quality(payload: dict[str, Any]) -> dict[str, Any]:
+    technical_snapshot = payload.get("technical_snapshot") if isinstance(payload.get("technical_snapshot"), dict) else {}
+    validation = technical_snapshot.get("validation") if isinstance(technical_snapshot.get("validation"), dict) else {}
+    quote_validation = payload.get("quote_validation") if isinstance(payload.get("quote_validation"), dict) else validation
+    quote_source = str(
+        payload.get("quote_source")
+        or technical_snapshot.get("quote_source")
+        or quote_validation.get("source")
+        or ""
+    ).strip() or None
+    quote_fetched_at = str(
+        payload.get("quote_fetched_at")
+        or technical_snapshot.get("quote_fetched_at")
+        or technical_snapshot.get("fetched_at")
+        or ""
+    ).strip() or None
+    freshness = str(
+        payload.get("quote_freshness")
+        or technical_snapshot.get("freshness")
+        or technical_snapshot.get("freshness_detail", {}).get("status")
+        or ("stale" if payload.get("quote_is_stale") else "")
+    ).strip().lower()
+    if not freshness:
+        freshness = "fresh" if quote_source and payload.get("quote_is_stale") is False else "stale" if quote_source else "missing"
+    grade = str(quote_validation.get("grade") or "").strip().upper()
+    if not grade:
+        grade = "B" if freshness == "fresh" and quote_source else "C" if quote_source else "D"
+    exclusion_reason = str(quote_validation.get("exclusion_reason") or "").strip() or ("current price unavailable" if grade == "D" else None)
+    reason = str(quote_validation.get("reason") or ("quote_missing" if grade == "D" else "quote_fallback" if freshness != "fresh" else "quote_live_fetch"))
+    return {
+        "quote_source": quote_source,
+        "quote_fetched_at": quote_fetched_at,
+        "quote_freshness": freshness,
+        "quote_validation": {
+            "grade": grade,
+            "source": quote_source or quote_validation.get("source") or "workflow",
+            "source_count": int(quote_validation.get("source_count") or 1),
+            "reason": reason,
+            "notes": list(quote_validation.get("notes") or ([f"freshness:{freshness}"] if freshness else [])),
+            "exclusion_reason": exclusion_reason,
+        },
+        "quote_exclusion_reason": exclusion_reason,
+    }
+
+
 def derive_signal_workflow(signal: dict[str, Any]) -> dict[str, Any]:
     signal_state = str(signal.get("signal_state") or "watch").lower()
     decision = summarize_order_decision(signal)
@@ -142,11 +187,11 @@ def derive_order_workflow(order: dict[str, Any]) -> dict[str, Any]:
 
 
 def enrich_signal_payload(signal: dict[str, Any]) -> dict[str, Any]:
-    return _enrich_symbol_meta({**signal, **derive_signal_workflow(signal)})
+    return _enrich_symbol_meta({**signal, **derive_signal_workflow(signal), **_extract_quote_quality(signal)})
 
 
 def enrich_order_payload(order: dict[str, Any]) -> dict[str, Any]:
-    return _enrich_symbol_meta({**order, **derive_order_workflow(order)})
+    return _enrich_symbol_meta({**order, **derive_order_workflow(order), **_extract_quote_quality(order)})
 
 
 def build_workflow_summary(signals: list[dict[str, Any]], orders: list[dict[str, Any]]) -> dict[str, Any]:
@@ -175,6 +220,11 @@ def build_workflow_summary(signals: list[dict[str, Any]], orders: list[dict[str,
                 "last_order_success": row.get("success"),
                 "last_order_at": row.get("filled_at") or row.get("submitted_at") or row.get("timestamp") or "",
                 "last_order_reason": row.get("failure_reason") or row.get("reason_code") or "",
+                "quote_source": row.get("quote_source") or merged.get("quote_source"),
+                "quote_fetched_at": row.get("quote_fetched_at") or merged.get("quote_fetched_at"),
+                "quote_freshness": row.get("quote_freshness") or merged.get("quote_freshness"),
+                "quote_validation": row.get("quote_validation") if isinstance(row.get("quote_validation"), dict) else merged.get("quote_validation"),
+                "quote_exclusion_reason": row.get("quote_exclusion_reason") or merged.get("quote_exclusion_reason"),
             })
             latest_by_key[key] = merged
 

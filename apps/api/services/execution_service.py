@@ -1434,6 +1434,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 candidate.get("execution_realism"), dict) else {}
             report_reasoning = candidate.get("report_reasoning") if isinstance(
                 candidate.get("report_reasoning"), dict) else {}
+            technical_snapshot = candidate.get("technical_snapshot") if isinstance(candidate.get("technical_snapshot"), dict) else {}
             signal_snapshots.append(enrich_signal_payload({
                 "timestamp": started_at,
                 "cycle_id": cycle_id,
@@ -1469,6 +1470,11 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 "final_action": candidate.get("final_action"),
                 "final_action_snapshot": candidate.get("final_action_snapshot"),
                 "layer_events": candidate.get("layer_events"),
+                "technical_snapshot": technical_snapshot,
+                "validation_snapshot": candidate.get("validation_snapshot"),
+                "quote_source": technical_snapshot.get("quote_source"),
+                "quote_fetched_at": technical_snapshot.get("quote_fetched_at"),
+                "quote_is_stale": technical_snapshot.get("freshness") == "stale",
                 "source": "strategy_engine",
                 "fetched_at": signal_book.get("generated_at") or started_at,
                 "is_stale": False,

@@ -738,6 +738,18 @@ export interface PaperWorkflowItem {
   timestamp?: string;
   logged_at?: string;
   fetched_at?: string;
+  quote_source?: string;
+  quote_fetched_at?: string;
+  quote_freshness?: string;
+  quote_exclusion_reason?: string;
+  quote_validation?: {
+    grade?: 'A' | 'B' | 'C' | 'D' | string;
+    source?: string;
+    source_count?: number;
+    reason?: string;
+    notes?: string[];
+    exclusion_reason?: string;
+  };
 }
 
 export interface PaperWorkflowSummary {
