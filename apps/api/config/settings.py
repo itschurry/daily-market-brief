@@ -80,6 +80,9 @@ class Settings(BaseSettings):
 
     report_output_dir: Path = Field(default=REPORTS_DIR, alias="REPORT_OUTPUT_DIR")
     logs_dir: Path = Field(default=LOGS_DIR, alias="LOGS_DIR")
+    telegram_enabled: bool = Field(default=False, alias="TELEGRAM_ENABLED")
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
 
     @property
     def effective_fred_api_key(self) -> str:
@@ -121,3 +124,6 @@ KIS_BASE_URL = settings.kis_base_url
 
 REPORT_OUTPUT_DIR = settings.report_output_dir
 LOGS_DIR = settings.logs_dir
+TELEGRAM_ENABLED = settings.telegram_enabled
+TELEGRAM_BOT_TOKEN = settings.telegram_bot_token
+TELEGRAM_CHAT_ID = settings.telegram_chat_id

@@ -17,7 +17,17 @@ from services import execution_service as execution_svc
 
 
 class _FakeNotifier:
+    def __init__(self):
+        self.market_open_briefs: list[dict] = []
+
     def notify_order_failure(self, payload):
+        return None
+
+    def notify_market_open_brief(self, payload):
+        self.market_open_briefs.append(payload)
+        return None
+
+    def notify_daily_loss_limit(self, payload):
         return None
 
 
@@ -205,6 +215,93 @@ class ExecutionStrategyCapTests(unittest.TestCase):
         self.assertIn("strategy_max_positions_reached", summary["skip_reason_counts"])
         self.assertEqual(1, summary["skip_reason_counts"]["strategy_max_positions_reached"])
         self.assertEqual(["DDD"], [item["code"] for item in engine.placed_orders])
+
+    def test_run_auto_trader_cycle_builds_market_open_brief_candidates(self):
+        engine = _FakeEngine()
+        notifier = _FakeNotifier()
+        cfg = execution_svc._default_auto_trader_config()
+        cfg["markets"] = ["KOSPI"]
+        cfg = execution_svc._sync_primary_strategy_fields(cfg)
+
+        signals = [
+            {
+                "code": "BUY1",
+                "name": "Buy One",
+                "market": "KOSPI",
+                "strategy_id": "alpha",
+                "strategy_name": "Alpha",
+                "signal_state": "entry",
+                "final_action": "review_for_entry",
+                "size_recommendation": {"quantity": 1, "reason": "ok"},
+                "risk_inputs": {"stop_loss_pct": 5.0, "take_profit_pct": 10.0},
+                "ev_metrics": {},
+                "risk_check": {"reason_code": "ok", "message": ""},
+                "reason_codes": ["momentum_ok"],
+                "reasons": ["모멘텀 유지"],
+                "layer_events": [],
+            },
+            {
+                "code": "HOLD1",
+                "name": "Hold One",
+                "market": "KOSPI",
+                "strategy_id": "alpha",
+                "strategy_name": "Alpha",
+                "signal_state": "entry",
+                "final_action": "watch_only",
+                "size_recommendation": {"quantity": 0, "reason": "size_zero"},
+                "risk_inputs": {"stop_loss_pct": 5.0, "take_profit_pct": 10.0},
+                "ev_metrics": {},
+                "risk_check": {"reason_code": "watch", "message": ""},
+                "reason_codes": ["needs_review"],
+                "reasons": ["장 확인 필요"],
+                "layer_events": [],
+            },
+            {
+                "code": "BLOCK1",
+                "name": "Block One",
+                "market": "KOSPI",
+                "strategy_id": "alpha",
+                "strategy_name": "Alpha",
+                "signal_state": "entry",
+                "final_action": "blocked",
+                "size_recommendation": {"quantity": 1, "reason": "ok"},
+                "risk_inputs": {"stop_loss_pct": 5.0, "take_profit_pct": 10.0},
+                "ev_metrics": {},
+                "risk_check": {"reason_code": "blocked", "message": ""},
+                "reason_codes": ["risk_blocked"],
+                "reasons": ["리스크 가드 차단"],
+                "layer_events": [],
+            },
+        ]
+
+        with patch.object(execution_svc, "get_execution_engine", return_value=engine), \
+             patch.object(execution_svc, "get_notification_service", return_value=notifier), \
+             patch.object(execution_svc, "is_market_open", return_value=True), \
+             patch.object(execution_svc, "_compute_technical_snapshot", return_value={"close": 1000.0}), \
+             patch.object(execution_svc, "_should_exit_by_indicators", return_value="모멘텀 약화"), \
+             patch.object(execution_svc, "build_signal_book", return_value={"signals": signals, "generated_at": "2026-04-10T09:00:00+09:00", "risk_guard_state": {}, "regime": "risk_off", "risk_level": "높음"}), \
+             patch.object(execution_svc, "summarize_order_decision", side_effect=[
+                 {"orderable": True, "reason_code": "momentum_ok", "action": "allow", "order_quantity": 1},
+                 {"orderable": False, "reason_code": "needs_review", "action": "hold", "order_quantity": 0},
+                 {"orderable": False, "reason_code": "risk_blocked", "action": "block", "order_quantity": 0},
+             ]), \
+             patch.object(execution_svc, "list_strategies", return_value=[
+                 {"strategy_id": "alpha", "market": "KOSPI", "enabled": True, "params": {"max_positions": 5}, "risk_limits": {"max_positions": 5}},
+             ]), \
+             patch.object(execution_svc, "read_order_events", return_value=[]), \
+             patch.object(execution_svc, "_record_execution_order", side_effect=lambda payload: payload), \
+             patch.object(execution_svc, "append_signal_snapshots", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "append_engine_cycle", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "append_account_snapshot", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "_should_send_market_open_brief", return_value=(True, "2026-04-10")), \
+             patch.object(execution_svc, "_build_market_open_brief_payload", side_effect=lambda **kwargs: kwargs["summary"]):
+            summary = execution_svc._run_auto_trader_cycle(cfg)
+
+        self.assertEqual(["BUY1"], [item["code"] for item in summary["brief_candidates"]["buy"]])
+        self.assertEqual(["AAA", "BBB"], [item["code"] for item in summary["brief_candidates"]["sell"]])
+        self.assertEqual(["HOLD1"], [item["code"] for item in summary["brief_candidates"]["hold"]])
+        self.assertEqual(["BLOCK1"], [item["code"] for item in summary["brief_candidates"]["blocked"]])
+        self.assertEqual(1, len(notifier.market_open_briefs))
 
 
 if __name__ == "__main__":

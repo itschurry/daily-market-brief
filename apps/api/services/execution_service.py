@@ -29,7 +29,7 @@ from analyzer.shared_strategy import (
     should_exit_from_snapshot,
 )
 from broker.execution_engine import EngineConfig, PaperExecutionEngine
-from config.market_calendar import is_market_open
+from config.market_calendar import SESSION_WINDOWS, get_market_local_dt, is_market_open
 from config.settings import LOGS_DIR
 from market_utils import normalize_market, resolve_market
 from services.notification_service import get_notification_service
@@ -111,6 +111,7 @@ _auto_trader_stop_event: threading.Event | None = None
 _auto_trader_thread: threading.Thread | None = None
 _auto_trader_state_loaded = False
 _last_daily_loss_notified_day = ""
+_last_market_open_brief_sent: dict[str, str] = {}
 _auto_trader_state: dict[str, Any] = {
     "engine_state": "stopped",
     "running": False,
@@ -132,11 +133,138 @@ _auto_trader_state: dict[str, Any] = {
 _live_engine: LiveBrokerExecutionEngine | None = None
 
 
+_MARKET_TO_CALENDAR = {"KOSPI": "KR", "NASDAQ": "US"}
+_MARKET_BRIEF_LABELS = {"KR": "한국장", "US": "미국장"}
+
+
 def _mask_chat_id(chat_id: str) -> str:
     value = str(chat_id or "").strip()
     if len(value) <= 4:
         return value
     return f"{value[:2]}***{value[-2:]}"
+
+
+def _brief_reason_from_candidate(candidate: dict[str, Any]) -> str:
+    report_reasoning = candidate.get("report_reasoning") if isinstance(candidate.get("report_reasoning"), dict) else {}
+    for key in ("summary", "recommendation_reason", "reason"):
+        value = str(candidate.get(key) or report_reasoning.get(key) or "").strip()
+        if value:
+            return value
+    reasons = candidate.get("reasons") if isinstance(candidate.get("reasons"), list) else []
+    for reason in reasons:
+        text = str(reason or "").strip()
+        if text:
+            return text
+    reason_codes = [str(item).strip() for item in (candidate.get("reason_codes") or []) if str(item).strip()]
+    if reason_codes:
+        return ", ".join(reason_codes[:2])
+    final_action = str(candidate.get("final_action") or "").strip()
+    if final_action == "watch_only":
+        return "신호는 있지만 장 확인이 더 필요해"
+    if final_action == "blocked":
+        return "리스크 가드에 걸렸어"
+    return "전략 근거 확인 중"
+
+
+def _compact_candidate(candidate: dict[str, Any], *, reason: str | None = None) -> dict[str, Any]:
+    return {
+        "name": str(candidate.get("name") or candidate.get("code") or "").strip(),
+        "code": str(candidate.get("code") or "").strip().upper(),
+        "market": str(candidate.get("market") or "").strip().upper(),
+        "brief_reason": str(reason or _brief_reason_from_candidate(candidate) or "").strip(),
+        "reason_codes": [str(item).strip() for item in (candidate.get("reason_codes") or []) if str(item).strip()][:3],
+    }
+
+
+def _compact_sell_candidate(position: dict[str, Any], *, market: str, reason: str) -> dict[str, Any]:
+    pnl_pct = _to_float(position.get("pnl_pct"), None)
+    suffix = f" / 수익률 {pnl_pct:+.2f}%" if pnl_pct is not None else ""
+    return {
+        "name": str(position.get("name") or position.get("code") or "").strip(),
+        "code": str(position.get("code") or "").strip().upper(),
+        "market": str(market or "").strip().upper(),
+        "brief_reason": f"{reason}{suffix}",
+        "reason_codes": [],
+    }
+
+
+def _should_send_market_open_brief(calendar_market: str) -> tuple[bool, str]:
+    local_dt = get_market_local_dt(calendar_market)
+    local_date = local_dt.date().isoformat()
+    minutes = local_dt.hour * 60 + local_dt.minute
+    open_minutes = SESSION_WINDOWS[calendar_market].open_minutes
+    if minutes < open_minutes or minutes > open_minutes + 5:
+        return False, local_date
+    if _last_market_open_brief_sent.get(calendar_market) == local_date:
+        return False, local_date
+    return True, local_date
+
+
+def _build_market_open_brief_payload(*, calendar_market: str, finished_at: str, summary: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from routes.market import _build_market
+    except Exception:
+        _build_market = None
+
+    market_snapshot = _build_market() if callable(_build_market) else {}
+    market_context = {}
+    summary_line = "시장 요약 수집 중"
+    risk_line = ""
+    try:
+        from domains.report.market_context_service import get_market_context
+    except ModuleNotFoundError:
+        try:
+            from apps.api.domains.report.market_context_service import get_market_context
+        except ModuleNotFoundError:
+            get_market_context = None
+    if callable(get_market_context):
+        try:
+            market_context = get_market_context() or {}
+        except Exception:
+            market_context = {}
+    context_payload = market_context.get("context") if isinstance(market_context.get("context"), dict) else {}
+    summary_line = str(
+        market_context.get("summary")
+        or context_payload.get("summary")
+        or context_payload.get("market_view")
+        or summary_line
+    ).strip() or "시장 요약 수집 중"
+    context_risks = market_context.get("risks") if isinstance(market_context.get("risks"), list) else []
+    if not context_risks and isinstance(context_payload.get("risks"), list):
+        context_risks = context_payload.get("risks")
+    if context_risks:
+        risk_line = str(context_risks[0] or "").strip()
+
+    risk_guard_state = summary.get("risk_guard_state") if isinstance(summary.get("risk_guard_state"), dict) else {}
+    risk_level = str(risk_guard_state.get("risk_level") or summary.get("risk_level") or "중간")
+    regime = str(risk_guard_state.get("regime") or summary.get("regime") or "neutral")
+    strategy_line = f"{regime} / 위험도 {risk_level} 기준으로 현재 전략을 돌리는 중이야"
+    memo = "자동매매는 현재 전략대로 유지하고, 되는 후보만 선별해서 볼게."
+    if not bool(risk_guard_state.get("entry_allowed", True)):
+        reasons = [str(item).strip() for item in (risk_guard_state.get("reasons") or []) if str(item).strip()]
+        if reasons:
+            memo = f"리스크 가드 때문에 신규 진입은 더 보수적으로 볼게. 핵심 사유: {reasons[0]}"
+        else:
+            memo = "리스크 가드가 걸려 있어서 신규 진입은 보수적으로 볼게."
+
+    candidates = summary.get("brief_candidates") if isinstance(summary.get("brief_candidates"), dict) else {}
+    filtered_market_snapshot = market_snapshot if isinstance(market_snapshot, dict) else {}
+    return {
+        "market_name": _MARKET_BRIEF_LABELS.get(calendar_market, calendar_market),
+        "generated_at": finished_at,
+        "market": filtered_market_snapshot,
+        "context": market_context,
+        "summary_line": summary_line,
+        "strategy_line": strategy_line,
+        "risk_line": risk_line,
+        "candidates": {
+            "buy": candidates.get("buy", []) if isinstance(candidates.get("buy"), list) else [],
+            "sell": candidates.get("sell", []) if isinstance(candidates.get("sell"), list) else [],
+            "hold": candidates.get("hold", []) if isinstance(candidates.get("hold"), list) else [],
+            "blocked": candidates.get("blocked", []) if isinstance(candidates.get("blocked"), list) else [],
+        },
+        "memo": memo,
+    }
 
 
 def _today_order_counts(account: dict) -> dict[str, int]:
@@ -1195,7 +1323,7 @@ def _auto_invest_picks(
 
 
 def _run_auto_trader_cycle(cfg: dict) -> dict:
-    global _last_daily_loss_notified_day
+    global _last_daily_loss_notified_day, _last_market_open_brief_sent
     engine = get_execution_engine(os.getenv("EXECUTION_MODE", "paper"))
     notifier = get_notification_service()
     cycle_id = f"cycle-{datetime.datetime.now(_KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
@@ -1264,6 +1392,12 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
     executed_sells: list[dict] = []
     skipped: list[dict] = []
     blocked_reason_counts: dict[str, int] = {}
+    brief_candidates: dict[str, list[dict[str, Any]]] = {
+        "buy": [],
+        "sell": [],
+        "hold": [],
+        "blocked": [],
+    }
     closed_markets: list[str] = []
     markets = [m for m in cfg.get("markets", ["KOSPI", "NASDAQ"]) if m in {
         "KOSPI", "NASDAQ"}]
@@ -1273,8 +1407,6 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
     blocked_counts_by_market: dict[str, int] = {
         market: 0 for market in markets}
     risk_guard_state: dict[str, Any] = {}
-
-    _MARKET_TO_CALENDAR = {"KOSPI": "KR", "NASDAQ": "US"}
 
     for market in markets:
         calendar_market = _MARKET_TO_CALENDAR.get(market, market)
@@ -1312,6 +1444,10 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 position, technicals, cfg, market)
             if not reason:
                 continue
+            if len(brief_candidates["sell"]) < 3:
+                brief_candidates["sell"].append(
+                    _compact_sell_candidate(position, market=market, reason=reason)
+                )
             result = engine.place_order(
                 side="sell",
                 code=code,
@@ -1421,10 +1557,19 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                 for reason in merged_reasons:
                     key = str(reason or "unknown")
                     blocked_reason_counts[key] = blocked_reason_counts.get(key, 0) + 1
+                if len(brief_candidates["blocked"]) < 3:
+                    brief_candidates["blocked"].append(_compact_candidate(candidate))
             candidate["entry_allowed"] = entry_allowed
             candidate["reason_codes"] = merged_reasons
             if entry_allowed:
                 effective_candidates.append(candidate)
+                if len(brief_candidates["buy"]) < 3:
+                    brief_candidates["buy"].append(_compact_candidate(candidate))
+            elif decision["action"] != "block" and signal_state == "exit":
+                if len(brief_candidates["sell"]) < 3:
+                    brief_candidates["sell"].append(_compact_candidate(candidate))
+            elif decision["action"] != "block" and len(brief_candidates["hold"]) < 3:
+                brief_candidates["hold"].append(_compact_candidate(candidate))
 
             ev_metrics = candidate.get("ev_metrics") if isinstance(
                 candidate.get("ev_metrics"), dict) else {}
@@ -1654,6 +1799,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
         "candidate_counts_by_market": candidate_counts_by_market,
         "blocked_reason_counts": blocked_reason_counts,
         "skip_reason_counts": skip_reason_counts,
+        "brief_candidates": brief_candidates,
         "market_stats": market_stats,
         "closed_markets": closed_markets,
         "risk_guard_state": risk_guard_state,
@@ -1698,6 +1844,21 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
                     "daily_loss_left": risk_guard_state.get("daily_loss_left"),
                     "reason": "daily_loss_limit_reached",
                 })
+    for calendar_market in sorted({_MARKET_TO_CALENDAR.get(market, market) for market in markets}):
+        should_send, local_date = _should_send_market_open_brief(calendar_market)
+        if not should_send:
+            continue
+        try:
+            notifier.notify_market_open_brief(
+                _build_market_open_brief_payload(
+                    calendar_market=calendar_market,
+                    finished_at=finished_at,
+                    summary=summary,
+                )
+            )
+            _last_market_open_brief_sent[calendar_market] = local_date
+        except Exception as exc:
+            logger.warning("market open brief 전송 실패: {}", exc)
     return summary
 
 
