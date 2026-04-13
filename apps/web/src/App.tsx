@@ -24,7 +24,7 @@ interface RouteState {
 }
 
 const WORKSPACE_PAGES: Array<{ id: WorkspacePage; label: string; path: string; hint: string }> = [
-  { id: 'operations-dashboard', label: '운영 대시보드', path: '/operations-dashboard', hint: '운영 개요 · 브리프 · 리스크 · 성과' },
+  { id: 'operations-dashboard', label: '운영 대시보드', path: '/operations-dashboard', hint: '운영 개요 · 스캐너 · 시나리오 · 성과' },
   { id: 'orders-execution', label: '주문/체결', path: '/orders-execution', hint: '주문 상태 · 차단 사유 · 포지션' },
   { id: 'lab', label: '실험실(Lab)', path: '/lab/validation', hint: '백테스트 · 탐색 · 재검증' },
   { id: 'watchlist', label: UI_TEXT.analysisTabs.watchlist, path: '/watchlist', hint: '관심 종목 저장과 분석' },
@@ -32,10 +32,8 @@ const WORKSPACE_PAGES: Array<{ id: WorkspacePage; label: string; path: string; h
 ];
 
 const DASHBOARD_TABS: Array<{ id: DashboardTab; label: string; path: string; hint: string }> = [
-  { id: 'overview', label: UI_TEXT.operationsTabs.overview, path: '/operations-dashboard', hint: '현재 applied 전략과 오늘 파이프라인 상태' },
+  { id: 'overview', label: UI_TEXT.operationsTabs.overview, path: '/operations-dashboard', hint: '브리프와 리스크를 합친 운영 첫 화면' },
   { id: 'scanner', label: UI_TEXT.operationsTabs.scanner, path: '/operations-dashboard/scanner', hint: '장중 후보와 blocked reason 관찰' },
-  { id: 'brief', label: UI_TEXT.operationsTabs.brief, path: '/operations-dashboard/brief', hint: '오늘 시장 브리프와 실행 포인트' },
-  { id: 'alerts', label: UI_TEXT.operationsTabs.alerts, path: '/operations-dashboard/alerts', hint: '리스크 알림과 대응 포인트' },
   { id: 'watch-decision', label: UI_TEXT.operationsTabs.watchDecision, path: '/operations-dashboard/watch-decision', hint: '관심 시나리오 검토' },
   { id: 'performance', label: UI_TEXT.operationsTabs.performance, path: '/operations-dashboard/performance', hint: '체결/운용 성과 추적' },
 ];
@@ -51,7 +49,7 @@ const RESEARCH_TABS: Array<{ id: ResearchTab; label: string; path: string; hint:
 ];
 
 const PAGE_COPY: Record<WorkspacePage, string> = {
-  'operations-dashboard': '운영자가 자동거래 파이프라인, 브리프, 리스크를 한 흐름으로 보는 관제 홈입니다.',
+  'operations-dashboard': '운영자가 자동거래 파이프라인, 브리프, 리스크를 한 화면에서 판단하는 관제 홈입니다.',
   'orders-execution': '주문 lifecycle, blocked reason, 체결 상태를 운영 관점에서 추적합니다.',
   lab: '백테스트, 탐색, 검증, 프리셋 실험은 이 영역에서만 수행합니다.',
   watchlist: '관심 종목 저장, 편집, 분석을 실행 화면과 분리해 관리합니다.',
@@ -100,8 +98,8 @@ function toRouteState(pathname: string, search = ''): RouteState {
     '/overview': '/operations-dashboard',
     '/operations/overview': '/operations-dashboard',
     '/operations/scanner': '/operations-dashboard/scanner',
-    '/operations/brief': '/operations-dashboard/brief',
-    '/operations/alerts': '/operations-dashboard/alerts',
+    '/operations/brief': '/operations-dashboard',
+    '/operations/alerts': '/operations-dashboard',
     '/operations/watch-decision': '/operations-dashboard/watch-decision',
     '/operations/performance': '/operations-dashboard/performance',
     '/operations/orders': '/orders-execution',
@@ -116,21 +114,21 @@ function toRouteState(pathname: string, search = ''): RouteState {
     '/console/validation': '/lab/validation',
     '/console/validation-lab': '/lab/validation',
     '/console/universe': '/lab/universe',
-    '/reports': '/operations-dashboard/brief',
-    '/reports/today-report': '/operations-dashboard/brief',
-    '/reports/today': '/operations-dashboard/brief',
-    '/reports/recommendations': '/operations-dashboard/brief',
-    '/reports/today-recommendations': '/operations-dashboard/brief',
-    '/reports/alerts': '/operations-dashboard/alerts',
+    '/reports': '/operations-dashboard',
+    '/reports/today-report': '/operations-dashboard',
+    '/reports/today': '/operations-dashboard',
+    '/reports/recommendations': '/operations-dashboard',
+    '/reports/today-recommendations': '/operations-dashboard',
+    '/reports/alerts': '/operations-dashboard',
     '/reports/watch-decision': '/operations-dashboard/watch-decision',
-    '/reports/action-board': '/operations-dashboard/alerts',
-    '/analysis/brief': '/operations-dashboard/brief',
-    '/analysis/alerts': '/operations-dashboard/alerts',
+    '/reports/action-board': '/operations-dashboard',
+    '/analysis/brief': '/operations-dashboard',
+    '/analysis/alerts': '/operations-dashboard',
     '/analysis/watch-decisions': '/operations-dashboard/watch-decision',
     '/analysis/watchlist': '/watchlist',
     '/analysis/research': '/research-ai',
-    '/research-ai/brief': '/operations-dashboard/brief',
-    '/research-ai/alerts': '/operations-dashboard/alerts',
+    '/research-ai/brief': '/operations-dashboard',
+    '/research-ai/alerts': '/operations-dashboard',
     '/research-ai/watch-decisions': '/operations-dashboard/watch-decision',
     '/research-ai/watchlist': '/watchlist',
     '/research-ai/research': '/research-ai',
@@ -149,12 +147,6 @@ function toRouteState(pathname: string, search = ''): RouteState {
   }
   if (path === '/operations-dashboard/performance') {
     return withDefaults({ page: 'operations-dashboard', dashboardTab: 'performance', canonicalPath: '/operations-dashboard/performance' }, normalizedSearch);
-  }
-  if (path === '/operations-dashboard/brief') {
-    return withDefaults({ page: 'operations-dashboard', dashboardTab: 'brief', canonicalPath: '/operations-dashboard/brief' }, normalizedSearch);
-  }
-  if (path === '/operations-dashboard/alerts') {
-    return withDefaults({ page: 'operations-dashboard', dashboardTab: 'alerts', canonicalPath: '/operations-dashboard/alerts' }, normalizedSearch);
   }
   if (path === '/operations-dashboard/watch-decision') {
     return withDefaults({ page: 'operations-dashboard', dashboardTab: 'watch-decision', canonicalPath: '/operations-dashboard/watch-decision' }, normalizedSearch);
@@ -350,10 +342,10 @@ export default function App() {
           )}
           {route.page === 'operations-dashboard' && route.dashboardTab === 'scanner' && <ScannerPage {...sharedProps} />}
           {route.page === 'operations-dashboard' && route.dashboardTab === 'performance' && <PerformancePage {...sharedProps} />}
-          {route.page === 'operations-dashboard' && ['brief', 'alerts', 'watch-decision'].includes(route.dashboardTab) && (
+          {route.page === 'operations-dashboard' && route.dashboardTab === 'watch-decision' && (
             <ReportsPage
               {...sharedProps}
-              reportTab={route.dashboardTab as 'brief' | 'alerts' | 'watch-decision'}
+              reportTab="watch-decision"
             />
           )}
 

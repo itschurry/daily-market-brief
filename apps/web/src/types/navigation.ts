@@ -5,7 +5,7 @@ export type WorkspacePage =
   | 'watchlist'
   | 'research-ai';
 
-export type DashboardTab = 'overview' | 'scanner' | 'brief' | 'alerts' | 'watch-decision' | 'performance';
+export type DashboardTab = 'overview' | 'scanner' | 'watch-decision' | 'performance';
 
 export type LabTab = 'validation' | 'strategies' | 'universe';
 

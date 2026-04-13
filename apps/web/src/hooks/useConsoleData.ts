@@ -68,11 +68,11 @@ function emptySnapshot(): ConsoleSnapshot {
 function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
   if (route.page === 'operations-dashboard' && route.dashboardTab === 'overview') {
     return {
-      signalLimit: 40,
-      initialTargets: ['engine', 'signals', 'research', 'portfolio', 'liveMarket', 'marketContext', 'strategies'],
+      signalLimit: 80,
+      initialTargets: ['engine', 'signals', 'research', 'portfolio', 'liveMarket', 'marketContext', 'strategies', 'validation', 'reports', 'todayPicks', 'hannaBrief', 'macro'],
       fastTargets: ['engine', 'liveMarket'],
       midTargets: ['signals', 'portfolio'],
-      slowTargets: ['research', 'marketContext', 'strategies'],
+      slowTargets: ['research', 'marketContext', 'strategies', 'validation', 'reports', 'todayPicks', 'hannaBrief', 'macro'],
     };
   }
 
@@ -96,7 +96,7 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
     };
   }
 
-  if (route.page === 'operations-dashboard' && ['brief', 'alerts', 'watch-decision'].includes(route.dashboardTab)) {
+  if (route.page === 'operations-dashboard' && route.dashboardTab === 'watch-decision') {
     return {
       signalLimit: 80,
       initialTargets: ['engine', 'signals', 'validation', 'reports', 'research', 'todayPicks', 'hannaBrief'],

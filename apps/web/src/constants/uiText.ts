@@ -8,8 +8,6 @@ export const UI_TEXT = {
   operationsTabs: {
     overview: '운영 개요',
     scanner: '장중 스캐너',
-    brief: '투자 브리프',
-    alerts: '리스크 알림',
     watchDecision: '관심 시나리오',
     performance: '성과',
   },

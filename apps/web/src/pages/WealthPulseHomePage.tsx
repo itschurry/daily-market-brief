@@ -5,9 +5,9 @@ import {
   isRiskBlockedSignal,
   isRiskEntryAllowed,
 } from '../adapters/consoleViewAdapter';
-import { UI_TEXT } from '../constants/uiText';
+import { UI_TEXT, reasonCodeToKorean, reliabilityToKorean } from '../constants/uiText';
 import type { ConsoleSnapshot } from '../types/consoleView';
-import { explainSizeRecommendation, formatDateTimeWithAge, formatKRW, formatNumber, formatPercent, formatSymbol, formatUSD } from '../utils/format';
+import { explainSizeRecommendation, formatDateTime, formatDateTimeWithAge, formatKRW, formatNumber, formatSymbol, formatUSD } from '../utils/format';
 
 interface WealthPulseHomePageProps {
   snapshot: ConsoleSnapshot;
@@ -68,6 +68,10 @@ function sessionTone(status: string | undefined): string {
   if (status === 'pre_open') return 'is-warning';
   if (status === 'after_close') return 'is-neutral';
   return 'is-danger';
+}
+
+function countLabel(value: number): string {
+  return `${formatNumber(value, 0)}건`;
 }
 
 export function WealthPulseHomePage({
@@ -135,7 +139,55 @@ export function WealthPulseHomePage({
 
   const riskGuard = getRiskGuardState(snapshot);
   const riskGuardAllowed = isRiskEntryAllowed(snapshot);
-  const riskReasons = Array.isArray(riskGuard.reasons) ? riskGuard.reasons.map((reason) => String(reason)) : [];
+  const riskReasons = Array.isArray(riskGuard.reasons) ? riskGuard.reasons.map((reason) => reasonCodeToKorean(String(reason))) : [];
+  const validationSummary = snapshot.validation.summary || {};
+  const reportGeneratedAt = todayView.generatedAt || snapshot.hannaBrief.generated_at || snapshot.reports.generated_at || '';
+  const todayActions = todayView.actionItems.slice(0, 2);
+  const avoidActions = [...todayView.watchPoints, ...todayView.judgmentLines]
+    .filter((line, index, arr) => line && arr.indexOf(line) === index)
+    .slice(0, 3);
+  const insightLines = [...todayView.judgmentLines, ...watchView.researchQueue]
+    .filter((line, index, arr) => line && arr.indexOf(line) === index)
+    .slice(0, 3);
+  const failedOrders = Number(engineState.today_order_counts?.failed || 0);
+  const skippedCount = Number((engineState.last_summary as { skipped_count?: number } | undefined)?.skipped_count || 0);
+  const staleOptimized = Boolean(engineState.optimized_params?.is_stale);
+  const validationGateEnabled = Boolean(engineState.validation_policy?.validation_gate_enabled);
+  const validationReliability = reliabilityToKorean(String(validationSummary.oos_reliability || '').toLowerCase());
+  const engineRunning = Boolean(engineState.running);
+  const engineStatusLabel = engineRunning ? '실행 중' : engineState.engine_state === 'paused' ? '일시정지' : engineState.engine_state === 'error' ? '오류' : '중지';
+  const riskAlertItems = [
+    {
+      key: 'engine',
+      label: '엔진 상태',
+      value: engineStatusLabel,
+      detail: engineState.last_error || (engineRunning ? `다음 실행 ${formatDateTime(engineState.next_run_at || '')}` : '자동 실행 루프가 멈춰 있습니다.'),
+      tone: engineRunning ? 'good' : 'bad',
+    },
+    {
+      key: 'guard',
+      label: '신규 진입',
+      value: riskGuardAllowed ? '가능' : '제한',
+      detail: riskReasons.join(' · ') || (riskGuardAllowed ? '현재 강한 차단 사유 없음' : '리스크 가드 사유 확인 필요'),
+      tone: riskGuardAllowed ? 'good' : 'bad',
+    },
+    {
+      key: 'orders',
+      label: '실패/스킵',
+      value: `${countLabel(failedOrders)} / ${countLabel(skippedCount)}`,
+      detail: failedOrders > 0 || skippedCount > 0 ? '최근 주문 실패나 스킵 사유를 먼저 확인해.' : '최근 실행 이상 징후가 크지 않아.',
+      tone: failedOrders > 0 || skippedCount > 0 ? 'bad' : 'good',
+    },
+    {
+      key: 'validation',
+      label: 'Validation Gate',
+      value: validationGateEnabled ? '활성' : '비활성',
+      detail: staleOptimized
+        ? `최적화 stale · OOS 신뢰도 ${validationReliability || '-'}`
+        : `OOS 신뢰도 ${validationReliability || '-'} · min trades ${formatNumber(Number(engineState.validation_policy?.validation_min_trades || 0), 0)}건`,
+      tone: staleOptimized || String(validationSummary.oos_reliability || '').toLowerCase() === 'low' ? 'bad' : 'good',
+    },
+  ];
 
   const liveMarket = snapshot.liveMarket || {};
   const marketCtx = snapshot.marketContext || {};
@@ -162,8 +214,8 @@ export function WealthPulseHomePage({
               <span className="wealth-home-muted">KOSPI + NASDAQ</span>
               <span className="wealth-home-muted">기준 시각 {formatDateTimeWithAge(snapshot.fetchedAt)}</span>
             </div>
-            <div className="wealth-home-hero-title">오늘 자산 흐름과 실행 포인트</div>
-            <div className="wealth-home-hero-copy">포트폴리오 요약, 진입 가능 신호, 리스크 상태를 한 화면에서 확인합니다.</div>
+            <div className="wealth-home-hero-title">오늘 자산 흐름과 실행 판단</div>
+            <div className="wealth-home-hero-copy">브리프 요약, 운영 리스크, 신호 상태를 운영 개요 한 화면에서 확인합니다.</div>
             <div className="wealth-home-hero-actions">
               <button className="ghost-button" onClick={onRefresh}>데이터 새로고침</button>
               <button className="ghost-button" onClick={onGoLab}>실험 모드 열기</button>
@@ -281,23 +333,60 @@ export function WealthPulseHomePage({
 
           <section className="wealth-grid-2">
             <article className="page-section">
-              <div className="section-title">오늘 액션 / 인사이트</div>
+              <div className="section-head-row">
+                <div>
+                  <div className="section-title">운영 브리프</div>
+                  <div className="section-copy">기존 투자 브리프 핵심만 운영 개요로 합쳤어.</div>
+                </div>
+                <div className="inline-badge">{reportGeneratedAt ? formatDateTimeWithAge(reportGeneratedAt) : '브리프 대기'}</div>
+              </div>
               <div className="wealth-list">
-                {todayView.actionItems.slice(0, 3).map((item, index) => (
+                <div className="wealth-list-item">
+                  <div className="wealth-list-title">오늘 결론</div>
+                  <div className="wealth-list-copy">{riskGuardAllowed ? (todayView.judgmentTitle || '선별') : '방어'} · 장세 {allocator.regime || snapshot.signals.regime || '-'} · 위험도 {allocator.risk_level || snapshot.signals.risk_level || '-'}</div>
+                </div>
+                {todayActions.map((item, index) => (
                   <div key={`action-${index}`} className="wealth-list-item">
                     <div className="wealth-list-title">{item.label}</div>
                     <div className="wealth-list-copy">{item.detail}</div>
                   </div>
                 ))}
-                {watchView.researchQueue.slice(0, 2).map((line, index) => (
+                {avoidActions.map((line, index) => (
+                  <div key={`avoid-${index}`} className="wealth-list-item">
+                    <div className="wealth-list-title">회피 {index + 1}</div>
+                    <div className="wealth-list-copy">{line}</div>
+                  </div>
+                ))}
+                {insightLines.map((line, index) => (
                   <div key={`insight-${index}`} className="wealth-list-item">
-                    <div className="wealth-list-title">인사이트 {index + 1}</div>
+                    <div className="wealth-list-title">근거 {index + 1}</div>
                     <div className="wealth-list-copy">{line}</div>
                   </div>
                 ))}
               </div>
             </article>
 
+            <article className="page-section">
+              <div className="section-head-row">
+                <div>
+                  <div className="section-title">운영 리스크</div>
+                  <div className="section-copy">기존 리스크 알림 핵심만 운영 개요로 합쳤어.</div>
+                </div>
+                <div className="inline-badge">실시간</div>
+              </div>
+              <div className="operator-note-grid" style={{ marginTop: 12 }}>
+                {riskAlertItems.map((item) => (
+                  <div key={item.key} className={`operator-note-card ${item.tone === 'bad' ? 'is-bad' : 'is-good'}`}>
+                    <div className="operator-note-label">{item.label}</div>
+                    <div className="wealth-position-symbol" style={{ marginTop: 6 }}>{item.value}</div>
+                    <div className="operator-note-copy" style={{ marginTop: 6 }}>{item.detail}</div>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </section>
+
+          <section className="wealth-grid-2">
             <article className="page-section">
               <div className="section-title">오늘 시그널 후보</div>
               <div className="wealth-position-list">
@@ -316,44 +405,21 @@ export function WealthPulseHomePage({
                 {topSignals.length === 0 && <div className="wealth-home-muted">{UI_TEXT.empty.signalsNoMatches}</div>}
               </div>
             </article>
-          </section>
-
-          <section className="wealth-grid-2">
-            <article className="page-section">
-              <div className="section-title">포지션 요약</div>
-              <div className="wealth-position-list">
-                {positions.slice(0, 6).map((position) => (
-                  <div key={position.key} className="wealth-position-row">
-                    <div>
-                      <div className="wealth-position-symbol">{position.symbol}</div>
-                      <div className="wealth-position-copy">{position.market} · {formatNumber(position.quantity, 0)}주</div>
-                    </div>
-                    <div className="wealth-position-right">
-                      <div className="wealth-position-symbol">{formatKRW(position.marketValueKrw, true)}</div>
-                      <div className={`wealth-position-copy ${position.unrealizedPnlKrw >= 0 ? 'is-up' : 'is-down'}`}>
-                        {formatKRW(position.unrealizedPnlKrw, true)}
-                        {position.unrealizedPnlPct === null ? '' : ` (${formatPercent(position.unrealizedPnlPct, 1)})`}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {positions.length === 0 && <div className="wealth-home-muted">{UI_TEXT.empty.noPositions}</div>}
-              </div>
-            </article>
 
             <article className="page-section">
-              <div className="section-title">알림 / 리스크 상태</div>
+              <div className="section-title">운영 메모</div>
               <div className="wealth-list">
                 <div className="wealth-list-item">
-                  <div className="wealth-list-title">리스크 가드</div>
-                  <div className={`wealth-list-copy ${riskGuardAllowed ? 'is-up' : 'is-down'}`}>
-                    {riskGuardAllowed ? '신규 진입 가능' : '신규 진입 제한'}
-                  </div>
-                  <div className="wealth-list-copy">{riskReasons.join(' · ') || '현재 차단 사유 없음'}</div>
+                  <div className="wealth-list-title">상세 포지션 확인</div>
+                  <div className="wealth-list-copy">포지션 상세 목록은 운영 개요에서 빼고 주문/체결 화면에서 보는 편이 더 정확해.</div>
                 </div>
                 <div className="wealth-list-item">
-                  <div className="wealth-list-title">오늘의 모드</div>
-                  <div className="wealth-list-copy">{watchView.mode} · {watchView.stanceTitle}</div>
+                  <div className="wealth-list-title">리서치 입력 상태</div>
+                  <div className="wealth-list-copy">{String(snapshot.research.freshness || 'missing')} · {String(snapshot.research.source || snapshot.research.status || '-')}</div>
+                </div>
+                <div className="wealth-list-item">
+                  <div className="wealth-list-title">최근 성공 시각</div>
+                  <div className="wealth-list-copy">{formatDateTime(engineState.last_success_at || '')}</div>
                 </div>
               </div>
             </article>
