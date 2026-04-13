@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import type { ConsoleSnapshot } from '../types/consoleView';
-import { formatDateTime, formatKRW, formatLocalAmountWithKRW, formatNumber, formatPercent, formatUSD, formatUSDWithKRW } from '../utils/format';
+import { formatDateTime, formatKRW, formatLocalAmountWithKRW, formatNumber, formatPercent, formatSymbol, formatUSD, formatUSDWithKRW } from '../utils/format';
 
 interface PerformancePageProps {
   snapshot: ConsoleSnapshot;
@@ -210,7 +210,7 @@ export function PerformancePage({ snapshot, loading, errorMessage, onRefresh }: 
                     return (
                       <tr key={`${row.logged_at ?? ''}-${i}`} style={{ borderTop: '1px solid var(--border)' }}>
                         <td style={{ padding: 12, fontSize: 12 }}>{formatDateTime(row.logged_at)}</td>
-                        <td style={{ padding: 12, fontSize: 12, fontWeight: 600 }}>{row.code ?? '-'}</td>
+                        <td style={{ padding: 12, fontSize: 12, fontWeight: 600 }}>{formatSymbol(row.code, row.name)}</td>
                         <td style={{ padding: 12, fontSize: 12 }}>{row.market ?? '-'}</td>
                         <td style={{ padding: 12, fontSize: 12 }}>
                           <span className={row.side === 'buy' ? 'inline-badge is-success' : 'inline-badge is-danger'}>
@@ -240,7 +240,7 @@ export function PerformancePage({ snapshot, loading, errorMessage, onRefresh }: 
                   <article key={`${row.logged_at ?? ''}-${i}-card`} className="responsive-card">
                     <div className="responsive-card-head">
                       <div>
-                        <div className="responsive-card-title">{row.code ?? '-'}</div>
+                        <div className="responsive-card-title">{formatSymbol(row.code, row.name)}</div>
                         <div className="signal-cell-copy">{row.market ?? '-'} · {formatDateTime(row.logged_at)}</div>
                       </div>
                       <span className={row.side === 'buy' ? 'inline-badge is-success' : 'inline-badge is-danger'}>{row.side === 'buy' ? '매수' : '매도'}</span>

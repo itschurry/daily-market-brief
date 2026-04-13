@@ -521,6 +521,7 @@ export interface PerformanceSummaryResponse {
     filled_history?: Array<{
       logged_at?: string;
       code?: string;
+      name?: string;
       market?: string;
       currency?: 'KRW' | 'USD' | string;
       side?: string;

@@ -100,6 +100,7 @@ def handle_performance_summary() -> tuple[int, dict]:
             {
                 "logged_at": e.get("logged_at"),
                 "code": e.get("code"),
+                "name": e.get("name"),
                 "market": e.get("market"),
                 "currency": e.get("currency"),
                 "side": e.get("side"),
