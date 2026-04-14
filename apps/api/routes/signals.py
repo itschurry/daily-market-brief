@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from services.execution_service import get_execution_service
 from services.strategy_engine import build_signal_book
 
@@ -11,11 +9,7 @@ def _load_runtime_account() -> dict:
     paper_account = getattr(service, "paper_account", None)
     if not callable(paper_account):
         return {}
-    _, payload = paper_account(refresh=True)
-    try:
-        setattr(paper_account, "call_args", SimpleNamespace(args=(), kwargs={"refresh": True}))
-    except Exception:
-        pass
+    _, payload = paper_account(True)
     if not isinstance(payload, dict):
         return {}
     account = payload.get("account")

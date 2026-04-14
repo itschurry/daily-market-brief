@@ -424,7 +424,7 @@ export interface UniverseResponse {
   count?: number;
 }
 
-export interface ResearchSnapshotItem {
+export interface CandidateResearchSnapshot {
   provider?: string;
   schema_version?: string;
   run_id?: string;
@@ -462,7 +462,7 @@ export interface ResearchSnapshotItem {
   };
 }
 
-export interface ResearchSnapshotsResponse {
+export interface CandidateResearchHistoryResponse {
   ok?: boolean;
   provider?: string;
   symbol?: string;
@@ -472,7 +472,42 @@ export interface ResearchSnapshotsResponse {
   descending?: boolean;
   limit?: number;
   count?: number;
-  snapshots?: ResearchSnapshotItem[];
+  snapshots?: CandidateResearchSnapshot[];
+  error?: string;
+}
+
+export interface CandidateResearchTarget {
+  strategy_id?: string;
+  strategy_name?: string;
+  symbol?: string;
+  market?: string;
+  name?: string;
+  candidate_rank?: number | null;
+  last_scanned_at?: string;
+  research_status?: string;
+  research_unavailable?: boolean;
+  snapshot_exists?: boolean;
+  snapshot_fresh?: boolean;
+  snapshot_generated_at?: string;
+  snapshot_research_score?: number | null;
+  final_action?: string;
+}
+
+export interface CandidateResearchTargetsResponse {
+  ok?: boolean;
+  provider?: string;
+  mode?: 'missing_or_stale' | 'missing_only' | 'stale_only' | string;
+  count?: number;
+  items?: CandidateResearchTarget[];
+  targets?: Array<{
+    symbol?: string;
+    market?: string;
+    name?: string;
+  }>;
+  missing_count?: number;
+  stale_count?: number;
+  fresh_count?: number;
+  deduped?: boolean;
   error?: string;
 }
 
@@ -488,6 +523,14 @@ export interface ResearchStatusResponse {
   last_run_id?: string;
   accepted_last_run?: number;
   rejected_last_run?: number;
+  received_valid_last_run?: number;
+  deduped_count_last_run?: number;
+  coverage_count?: number;
+  fresh_symbol_count?: number;
+  stale_symbol_count?: number;
+  latest_bucket_ts?: string;
+  accept_ratio?: number;
+  error?: string;
 }
 
 export interface PerformanceSummaryResponse {
@@ -1324,11 +1367,11 @@ export interface WatchlistActionsResponse {
   error?: string;
 }
 
-export interface ResearchSnapshotLatestResponse {
+export interface CandidateResearchLatestResponse {
   ok?: boolean;
   provider?: string;
   symbol?: string;
   market?: string;
-  snapshot?: ResearchSnapshotItem;
+  snapshot?: CandidateResearchSnapshot;
   error?: string;
 }

@@ -18,7 +18,7 @@ export const UI_TEXT = {
   },
   analysisTabs: {
     watchlist: '관심 종목',
-    research: '리서치 스냅샷',
+    research: '후보 리서치',
   },
   common: {
     refresh: '새로고침',

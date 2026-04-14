@@ -12,8 +12,9 @@ import type {
   QuantOpsGuardrailPolicyResponse,
   QuantOpsWorkflowResponse,
   RecommendationsResponse,
-  ResearchSnapshotLatestResponse,
-  ResearchSnapshotsResponse,
+  CandidateResearchHistoryResponse,
+  CandidateResearchLatestResponse,
+  CandidateResearchTargetsResponse,
   ResearchStatusResponse,
   ReportsExplainResponse,
   ScannerStatusResponse,
@@ -128,11 +129,39 @@ export function fetchPortfolioState(refresh = true) {
   return getJSON<PortfolioStateResponse>(`/api/portfolio/state?refresh=${refresh ? '1' : '0'}`, { noStore: true });
 }
 
-export function fetchResearchStatus(provider = 'openclaw') {
+export function fetchResearchStatus(provider = 'default') {
   return getJSON<ResearchStatusResponse>(`/api/research/status?provider=${encodeURIComponent(provider)}`, { noStore: true });
 }
 
-export function fetchResearchSnapshots(params?: {
+export function fetchCandidateResearchTargets(params?: {
+  market?: string[];
+  limit?: number;
+}) {
+  const query = new URLSearchParams();
+  params?.market?.forEach((item) => {
+    if (item) query.append('market', item);
+  });
+  if (typeof params?.limit === 'number') query.set('limit', String(params.limit));
+  const queryString = query.toString();
+  return getJSON<CandidateResearchTargetsResponse>(`/api/research/scanner-targets${queryString ? `?${queryString}` : ''}`, { noStore: true });
+}
+
+export function fetchCandidateResearchPendingTargets(params?: {
+  market?: string[];
+  limit?: number;
+  mode?: 'missing_or_stale' | 'missing_only' | 'stale_only';
+}) {
+  const query = new URLSearchParams();
+  params?.market?.forEach((item) => {
+    if (item) query.append('market', item);
+  });
+  if (typeof params?.limit === 'number') query.set('limit', String(params.limit));
+  if (params?.mode) query.set('mode', params.mode);
+  const queryString = query.toString();
+  return getJSON<CandidateResearchTargetsResponse>(`/api/research/scanner-enrich-targets${queryString ? `?${queryString}` : ''}`, { noStore: true });
+}
+
+export function fetchCandidateResearchHistory(params?: {
   symbol?: string;
   market?: string;
   provider?: string;
@@ -150,7 +179,7 @@ export function fetchResearchSnapshots(params?: {
   if (typeof params?.limit === 'number') query.set('limit', String(params.limit));
   if (typeof params?.descending === 'boolean') query.set('descending', params.descending ? '1' : '0');
   const queryString = query.toString();
-  return getJSON<ResearchSnapshotsResponse>(`/api/research/snapshots${queryString ? `?${queryString}` : ''}`, { noStore: true });
+  return getJSON<CandidateResearchHistoryResponse>(`/api/research/snapshots${queryString ? `?${queryString}` : ''}`, { noStore: true });
 }
 
 export function fetchValidationBacktest(query?: BacktestQuery, settings?: ValidationSettings) {
@@ -270,7 +299,7 @@ export function searchStocks(query: string) {
   return getJSON<StockSearchResponse>(`/api/stock-search?q=${encodeURIComponent(query)}`, { noStore: true });
 }
 
-export function fetchResearchSnapshotLatest(params: { symbol: string; market: string }) {
+export function fetchCandidateResearchLatest(params: { symbol: string; market: string }) {
   const query = new URLSearchParams({ symbol: params.symbol, market: params.market });
-  return getJSON<ResearchSnapshotLatestResponse>(`/api/research/snapshots/latest?${query.toString()}`, { noStore: true });
+  return getJSON<CandidateResearchLatestResponse>(`/api/research/snapshots/latest?${query.toString()}`, { noStore: true });
 }

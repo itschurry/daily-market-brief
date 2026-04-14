@@ -6,7 +6,7 @@ import { BacktestValidationPage } from './pages/BacktestValidationPage';
 import { PaperPortfolioPage } from './pages/PaperPortfolioPage';
 import { PerformancePage } from './pages/PerformancePage';
 import { ReportsPage } from './pages/ReportsPage';
-import { ResearchSnapshotsPage } from './pages/ResearchSnapshotsPage';
+import { CandidateResearchPage } from './pages/CandidateResearchPage';
 import { ScannerPage } from './pages/ScannerPage';
 import { StrategiesPage } from './pages/StrategiesPage';
 import { UniversePage } from './pages/UniversePage';
@@ -28,7 +28,7 @@ const WORKSPACE_PAGES: Array<{ id: WorkspacePage; label: string; path: string; h
   { id: 'orders-execution', label: '주문/체결', path: '/orders-execution', hint: '주문 상태 · 차단 사유 · 포지션' },
   { id: 'lab', label: '실험실(Lab)', path: '/lab/validation', hint: '백테스트 · 탐색 · 재검증' },
   { id: 'watchlist', label: UI_TEXT.analysisTabs.watchlist, path: '/watchlist', hint: '관심 종목 저장과 분석' },
-  { id: 'research-ai', label: '리서치/AI', path: '/research-ai', hint: '리서치 스냅샷 조회' },
+  { id: 'research-ai', label: '리서치/AI', path: '/research-ai', hint: '현재 후보 리서치 조회' },
 ];
 
 const DASHBOARD_TABS: Array<{ id: DashboardTab; label: string; path: string; hint: string }> = [
@@ -45,7 +45,7 @@ const LAB_TABS: Array<{ id: LabTab; label: string; path: string; hint: string }>
 ];
 
 const RESEARCH_TABS: Array<{ id: ResearchTab; label: string; path: string; hint: string }> = [
-  { id: 'research', label: UI_TEXT.analysisTabs.research, path: '/research-ai', hint: '리서치 스냅샷 조회' },
+  { id: 'research', label: UI_TEXT.analysisTabs.research, path: '/research-ai', hint: '현재 후보 리서치 조회' },
 ];
 
 const PAGE_COPY: Record<WorkspacePage, string> = {
@@ -53,7 +53,7 @@ const PAGE_COPY: Record<WorkspacePage, string> = {
   'orders-execution': '주문 흐름, 차단 사유, 체결 상태를 운영 관점에서 추적합니다.',
   lab: '백테스트, 탐색, 검증, 프리셋 실험은 이 영역에서만 수행합니다.',
   watchlist: '관심 종목 저장, 편집, 분석을 실행 화면과 분리해 관리합니다.',
-  'research-ai': '리서치 스냅샷만 따로 모아 보고 점수와 생성 이력을 추적합니다.',
+  'research-ai': '현재 스캐너 후보에 붙은 리서치 상태와 생성 이력을 따로 추적합니다.',
 };
 
 function normalizeSearch(search = ''): string {
@@ -356,7 +356,7 @@ export default function App() {
           {route.page === 'lab' && route.labTab === 'strategies' && <StrategiesPage {...sharedProps} mode="lab" />}
           {route.page === 'lab' && route.labTab === 'universe' && <UniversePage {...sharedProps} />}
 
-          {route.page === 'research-ai' && route.researchTab === 'research' && <ResearchSnapshotsPage {...sharedProps} />}
+          {route.page === 'research-ai' && route.researchTab === 'research' && <CandidateResearchPage {...sharedProps} />}
         </div>
       </main>
     </div>
