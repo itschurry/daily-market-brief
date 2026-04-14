@@ -5,6 +5,7 @@ import { SymbolIdentity } from '../components/SymbolIdentity';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import type { ConsoleSnapshot } from '../types/consoleView';
 import type { ResearchSnapshotItem } from '../types/domain';
+import { freshnessToKorean, gradeToKorean, reasonCodeToKorean } from '../constants/uiText';
 import { formatDateTime, formatDateTimeWithAge, formatNumber } from '../utils/format';
 
 interface ResearchSnapshotsPageProps {
@@ -36,26 +37,26 @@ function scoreDisplay(item: ResearchSnapshotItem): string {
 
 function freshnessBadge(item: ResearchSnapshotItem): { label: string; tone: string } {
   const freshness = String(item.freshness || item.freshness_detail?.status || '').toLowerCase();
-  if (freshness === 'fresh') return { label: 'fresh', tone: 'inline-badge is-success' };
-  if (freshness === 'stale') return { label: 'stale', tone: 'inline-badge is-danger' };
-  if (freshness === 'invalid') return { label: 'invalid', tone: 'inline-badge is-danger' };
-  if (freshness === 'missing') return { label: 'missing', tone: 'inline-badge' };
-  return { label: 'unknown', tone: 'inline-badge' };
+  if (freshness === 'fresh') return { label: freshnessToKorean(freshness), tone: 'inline-badge is-success' };
+  if (freshness === 'stale') return { label: freshnessToKorean(freshness), tone: 'inline-badge is-danger' };
+  if (freshness === 'invalid') return { label: freshnessToKorean(freshness), tone: 'inline-badge is-danger' };
+  if (freshness === 'missing') return { label: freshnessToKorean(freshness), tone: 'inline-badge' };
+  return { label: freshnessToKorean(freshness), tone: 'inline-badge' };
 }
 
 function gradeBadge(item: ResearchSnapshotItem): { label: string; tone: string } {
   const grade = snapshotGrade(item);
-  if (grade === 'A') return { label: 'Grade A', tone: 'inline-badge is-success' };
-  if (grade === 'B') return { label: 'Grade B', tone: 'inline-badge' };
-  if (grade === 'C') return { label: 'Grade C', tone: 'inline-badge is-danger' };
-  if (grade === 'D') return { label: 'Grade D', tone: 'inline-badge is-danger' };
-  return { label: 'Grade -', tone: 'inline-badge' };
+  if (grade === 'A') return { label: gradeToKorean(grade), tone: 'inline-badge is-success' };
+  if (grade === 'B') return { label: gradeToKorean(grade), tone: 'inline-badge' };
+  if (grade === 'C') return { label: gradeToKorean(grade), tone: 'inline-badge is-danger' };
+  if (grade === 'D') return { label: gradeToKorean(grade), tone: 'inline-badge is-danger' };
+  return { label: gradeToKorean(grade), tone: 'inline-badge' };
 }
 
 function snapshotStatus(item: ResearchSnapshotItem): { label: string; tone: string } {
   const grade = snapshotGrade(item);
   if (grade === 'D') return { label: '검증 제외', tone: 'inline-badge is-danger' };
-  if (String(item.freshness || '').toLowerCase() === 'stale') return { label: 'stale research', tone: 'inline-badge is-danger' };
+  if (String(item.freshness || '').toLowerCase() === 'stale') return { label: '지연 리서치', tone: 'inline-badge is-danger' };
   const score = Number(item.research_score);
   if (!Number.isFinite(score)) return { label: '점수 대기', tone: 'inline-badge' };
   if (score >= 0.8) return { label: '우선 검토', tone: 'inline-badge is-success' };
@@ -118,8 +119,8 @@ function SnapshotCard({ item }: { item: ResearchSnapshotItem }) {
 
       {(warnings.length > 0 || tags.length > 0) && (
         <div className="workspace-chip-row" style={{ marginTop: 12 }}>
-          {warnings.map((warning, index) => <span key={`w-${index}`} className="inline-badge is-danger">{warning}</span>)}
-          {tags.map((tag, index) => <span key={`t-${index}`} className="inline-badge">{tag}</span>)}
+          {warnings.map((warning, index) => <span key={`w-${index}`} className="inline-badge is-danger">{reasonCodeToKorean(String(warning))}</span>)}
+          {tags.map((tag, index) => <span key={`t-${index}`} className="inline-badge">{reasonCodeToKorean(String(tag))}</span>)}
         </div>
       )}
     </div>
@@ -488,7 +489,7 @@ export function ResearchSnapshotsPage({ loading, errorMessage, onRefresh }: Rese
                                   <div className="workspace-chip-row" style={{ marginBottom: 12 }}>
                                     <span className={freshnessBadge(item).tone}>{freshnessBadge(item).label}</span>
                                     <span className={gradeBadge(item).tone}>{gradeBadge(item).label}</span>
-                                    {item.validation?.reason ? <span className="inline-badge">{item.validation.reason}</span> : null}
+                                    {item.validation?.reason ? <span className="inline-badge">{reasonCodeToKorean(String(item.validation.reason))}</span> : null}
                                   </div>
                                   {Object.keys(components).length > 0 && (
                                     <div className="workspace-score-grid" style={{ marginBottom: 12 }}>

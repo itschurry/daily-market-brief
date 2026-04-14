@@ -5,7 +5,7 @@ import {
   isRiskBlockedSignal,
   isRiskEntryAllowed,
 } from '../adapters/consoleViewAdapter';
-import { UI_TEXT, reasonCodeToKorean, reliabilityToKorean } from '../constants/uiText';
+import { UI_TEXT, reasonCodeToKorean, reliabilityToKorean, freshnessToKorean, providerSourceToKorean, providerStatusToKorean } from '../constants/uiText';
 import type { ConsoleSnapshot } from '../types/consoleView';
 import { explainSizeRecommendation, formatDateTime, formatDateTimeWithAge, formatKRW, formatNumber, formatSymbol, formatUSD } from '../utils/format';
 
@@ -183,8 +183,8 @@ export function WealthPulseHomePage({
       label: 'Validation Gate',
       value: validationGateEnabled ? '활성' : '비활성',
       detail: staleOptimized
-        ? `최적화 stale · OOS 신뢰도 ${validationReliability || '-'}`
-        : `OOS 신뢰도 ${validationReliability || '-'} · min trades ${formatNumber(Number(engineState.validation_policy?.validation_min_trades || 0), 0)}건`,
+        ? `최적화 지연 · OOS 신뢰도 ${validationReliability || '-'}`
+        : `OOS 신뢰도 ${validationReliability || '-'} · 최소 거래 ${formatNumber(Number(engineState.validation_policy?.validation_min_trades || 0), 0)}건`,
       tone: staleOptimized || String(validationSummary.oos_reliability || '').toLowerCase() === 'low' ? 'bad' : 'good',
     },
   ];
@@ -415,7 +415,7 @@ export function WealthPulseHomePage({
                 </div>
                 <div className="wealth-list-item">
                   <div className="wealth-list-title">리서치 입력 상태</div>
-                  <div className="wealth-list-copy">{String(snapshot.research.freshness || 'missing')} · {String(snapshot.research.source || snapshot.research.status || '-')}</div>
+                  <div className="wealth-list-copy">{freshnessToKorean(String(snapshot.research.freshness || 'missing'))} · {providerSourceToKorean(String(snapshot.research.source || snapshot.research.status || '-')) || providerStatusToKorean(String(snapshot.research.status || '-'))}</div>
                 </div>
                 <div className="wealth-list-item">
                   <div className="wealth-list-title">최근 성공 시각</div>

@@ -9,7 +9,7 @@ import {
 } from '../adapters/consoleViewAdapter';
 import type { ReactNode } from 'react';
 import { FreshnessBadge, GradeBadge } from '../components/QualityBadge';
-import { UI_TEXT, reasonCodeToKorean, reliabilityToKorean } from '../constants/uiText';
+import { UI_TEXT, reasonCodeToKorean, reliabilityToKorean, freshnessToKorean, providerStatusToKorean, providerSourceToKorean } from '../constants/uiText';
 import type { DomainSignal } from '../types/domain';
 import { formatCount, formatDateTime, formatDateTimeWithAge, formatKRW, formatNumber, formatPercent, formatSymbol } from '../utils/format';
 import {
@@ -100,7 +100,7 @@ function buildValidationNarrativeGate(snapshot: ConsoleSnapshot): {
   const validation = validationRoot.validation || summary.validation || {};
   const freshness = String(validationRoot.freshness || summary.freshness || validationRoot.freshness_detail?.status || summary.freshness_detail?.status || '').toLowerCase() || 'missing';
   const grade = String(validation.grade || '').toUpperCase() || '-';
-  const reason = String(validation.reason || '').trim();
+  const reason = reasonCodeToKorean(String(validation.reason || '').trim());
   const exclusionReason = String(validation.exclusion_reason || '').trim();
   const qualityFlags: string[] = [];
   if (freshness === 'stale') qualityFlags.push('validation_stale');
@@ -150,7 +150,7 @@ function tabHeadline(tab: ReportViewTab): string {
 function tabDescription(tab: ReportViewTab): string {
   if (tab === 'alerts') return '실행 전·실행 중 조치가 필요한 운영 리스크를 먼저 모아보는 화면입니다.';
   if (tab === 'watch-decision') return '이 탭은 매수 확정판이 아니라 오늘 다시 볼 허용 후보와 막힌 후보를 분리해 두는 research queue입니다.';
-  return '리서치 요약은 참고용이고, live path 최종 판단은 Layer E final action과 Risk Gate가 끝냅니다.';
+  return '리서치 요약은 참고용이고, 실시간 최종 판단은 5단계 최종 액션과 리스크 게이트가 끝냅니다.';
 }
 
 interface ScorecardSignalCandidate {
@@ -236,7 +236,7 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
           <span className="report-hero-meta">브리프 생성 {formatDateTimeWithAge(view.generatedAt)}</span>
         </div>
         <div className="report-decision-title">오늘 결론: {modeLabel}</div>
-        <div className="report-hero-copy">시장 요약보다 먼저 Layer B quant → Layer C research → Layer D risk → Layer E final action 순서를 고정합니다. 지금은 {guardAllowed ? '허용된 진입만 선별 실행' : '신규 진입 중단과 보유 리스크 관리'}이 우선입니다. 리서치는 참고 자료고, buy/sell/order 명령권은 없습니다.</div>
+        <div className="report-hero-copy">시장 요약보다 먼저 2단계 퀀트 → 3단계 리서치 → 4단계 리스크 → 5단계 최종 액션 순서를 고정합니다. 지금은 {guardAllowed ? '허용된 진입만 선별 실행' : '신규 진입 중단과 보유 리스크 관리'}이 우선입니다. 리서치는 참고 자료고, 매수/매도/주문 명령권은 없습니다.</div>
         <div className="report-decision-strip">
           <div className={`report-decision-chip ${guardAllowed ? 'is-good' : 'is-bad'}`}>
             진입 {guardAllowed ? '가능' : '제한'}
@@ -250,15 +250,15 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
         <div className="section-head-row">
           <div>
             <div className="section-title">리서치 입력 상태</div>
-            <div className="section-copy">브리프가 참고하는 리서치 freshness와 provider 상태만 짧게 확인합니다.</div>
+            <div className="section-copy">브리프가 참고하는 리서치 최신성하고 제공 상태만 짧게 확인합니다.</div>
           </div>
           <div className="workspace-chip-row">
             <span className={String(snapshot.research.freshness || '').toLowerCase() === 'fresh' ? 'inline-badge is-success' : String(snapshot.research.freshness || '').toLowerCase() === 'stale' ? 'inline-badge is-danger' : 'inline-badge'}>
-              {String(snapshot.research.freshness || 'missing')}
+              {freshnessToKorean(String(snapshot.research.freshness || 'missing'))}
             </span>
-            <span className="inline-badge">provider {String(snapshot.research.source || snapshot.research.status || '-')}</span>
+            <span className="inline-badge">제공 {providerSourceToKorean(String(snapshot.research.source || snapshot.research.status || '-'))}</span>
             <span className={String(snapshot.research.status || '') === 'healthy' ? 'inline-badge is-success' : 'inline-badge is-danger'}>
-              status {String(snapshot.research.status || '-')}
+              상태 {providerStatusToKorean(String(snapshot.research.status || '-'))}
             </span>
           </div>
         </div>
@@ -288,7 +288,7 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
             <div className="section-head-row">
               <div>
                 <div className="section-title">오늘 quant 전략 점수판</div>
-                <div className="section-copy">EV만 보지 않고 quant 점수 구성과 꼬리손실까지 함께 확인하는 운영용 카드입니다. Layer C research score와는 별도 레이어로 읽습니다.</div>
+                <div className="section-copy">EV만 보지 않고 퀀트 점수 구성과 꼬리손실까지 함께 확인하는 운영용 카드입니다. 3단계 리서치 점수와는 별도 층위로 읽습니다.</div>
               </div>
               <div className="inline-badge">상위 {formatCount(Math.min(scorecardCandidates.length, 3), '건')}</div>
             </div>
@@ -309,7 +309,7 @@ function renderTodayReport(snapshot: ConsoleSnapshot) {
                         <div className="workspace-chip-row" style={{ marginTop: 8 }}>
                           <FreshnessBadge value={signalResearchFreshness(item.signal)} />
                           <GradeBadge value={signalResearchGrade(item.signal)} />
-                          {item.signal.layer_c?.validation?.reason ? <span className="inline-badge">{String(item.signal.layer_c.validation.reason)}</span> : null}
+                          {item.signal.layer_c?.validation?.reason ? <span className="inline-badge">{reasonCodeToKorean(String(item.signal.layer_c.validation.reason))}</span> : null}
                         </div>
                       </div>
                       <div className={`report-decision-chip ${item.signal.entry_allowed ? 'is-good' : 'is-bad'}`}>{item.decision.label}</div>
@@ -603,7 +603,7 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
     {
       key: 'optimized',
       label: '최적화 파라미터',
-      value: staleOptimized ? 'stale' : '정상',
+      value: staleOptimized ? '지연' : '정상',
       detail: staleOptimized
         ? `버전 ${String(engineState.optimized_params?.version || '-')} · source ${String(engineState.optimized_params?.effective_source || engineState.optimized_params?.source || '-')} · 최신 최적화 재실행 권장`
         : `버전 ${String(engineState.optimized_params?.version || '-')} · source ${String(engineState.optimized_params?.effective_source || engineState.optimized_params?.source || '-')} · ${formatDateTime(engineState.optimized_params?.optimized_at || '')}`,
@@ -663,7 +663,7 @@ function renderAlerts(snapshot: ConsoleSnapshot) {
           <span className="report-hero-meta">실행 리스크 우선 확인</span>
         </div>
         <div className="report-decision-title">지금 조치 필요: {alerts.filter((item) => item.severity >= 2).length}건</div>
-        <div className="report-hero-copy">단순 알림판이 아니라 paper/live 실행 전에 이상 징후를 잡는 리스크 보드입니다. 엔진 상태, 진입 차단, stale optimization, 실패 주문부터 먼저 확인하면 됩니다. 여기서 보는 경고는 Risk Gate와 Layer E 최종 액션을 흔드는 운영 경고입니다.</div>
+        <div className="report-hero-copy">단순 알림판이 아니라 모의/실거래 실행 전에 이상 징후를 잡는 리스크 보드입니다. 엔진 상태, 진입 차단, 지연된 최적화, 실패 주문부터 먼저 확인하면 됩니다. 여기서 보는 경고는 리스크 게이트와 5단계 최종 액션을 흔드는 운영 경고입니다.</div>
         <div className="report-decision-strip">
           <div className={`report-decision-chip ${isRunning ? 'is-good' : 'is-bad'}`}>엔진 {isRunning ? '실행 중' : '정지'}</div>
           <div className={`report-decision-chip ${guardBlocked ? 'is-bad' : 'is-good'}`}>진입 {guardBlocked ? '차단' : '허용'}</div>

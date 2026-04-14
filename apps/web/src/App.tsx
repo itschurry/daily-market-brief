@@ -33,7 +33,7 @@ const WORKSPACE_PAGES: Array<{ id: WorkspacePage; label: string; path: string; h
 
 const DASHBOARD_TABS: Array<{ id: DashboardTab; label: string; path: string; hint: string }> = [
   { id: 'overview', label: UI_TEXT.operationsTabs.overview, path: '/operations-dashboard', hint: '브리프와 리스크를 합친 운영 첫 화면' },
-  { id: 'scanner', label: UI_TEXT.operationsTabs.scanner, path: '/operations-dashboard/scanner', hint: '장중 후보와 blocked reason 관찰' },
+  { id: 'scanner', label: UI_TEXT.operationsTabs.scanner, path: '/operations-dashboard/scanner', hint: '장중 후보와 차단 사유 관찰' },
   { id: 'watch-decision', label: UI_TEXT.operationsTabs.watchDecision, path: '/operations-dashboard/watch-decision', hint: '관심 시나리오 검토' },
   { id: 'performance', label: UI_TEXT.operationsTabs.performance, path: '/operations-dashboard/performance', hint: '체결/운용 성과 추적' },
 ];
@@ -50,7 +50,7 @@ const RESEARCH_TABS: Array<{ id: ResearchTab; label: string; path: string; hint:
 
 const PAGE_COPY: Record<WorkspacePage, string> = {
   'operations-dashboard': '운영자가 자동거래 파이프라인, 브리프, 리스크를 한 화면에서 판단하는 관제 홈입니다.',
-  'orders-execution': '주문 lifecycle, blocked reason, 체결 상태를 운영 관점에서 추적합니다.',
+  'orders-execution': '주문 흐름, 차단 사유, 체결 상태를 운영 관점에서 추적합니다.',
   lab: '백테스트, 탐색, 검증, 프리셋 실험은 이 영역에서만 수행합니다.',
   watchlist: '관심 종목 저장, 편집, 분석을 실행 화면과 분리해 관리합니다.',
   'research-ai': '리서치 스냅샷만 따로 모아 보고 점수와 생성 이력을 추적합니다.',
@@ -256,15 +256,15 @@ export default function App() {
         onClick={() => setMobileNavOpen(false)}
       />
 
-      <aside className="app-sidebar" aria-label="Workspace navigation">
+      <aside className="app-sidebar" aria-label="작업 공간 탐색">
         <div className="app-sidebar-brand">
           <div className="app-sidebar-kicker">WealthPulse</div>
-          <div className="app-sidebar-title">Operator Workspace</div>
+          <div className="app-sidebar-title">운영 작업 공간</div>
           <div className="app-sidebar-copy">{PAGE_COPY[route.page]}</div>
         </div>
 
         <div className="app-sidebar-group">
-          <div className="app-sidebar-group-label">Workspace</div>
+          <div className="app-sidebar-group-label">작업 공간</div>
           {WORKSPACE_PAGES.map((page, index) => (
             <button
               key={page.id}
@@ -318,8 +318,8 @@ export default function App() {
         )}
 
         <div className="app-sidebar-foot">
-          <span className={`app-chrome-pill ${loading ? 'is-live' : ''}`}>{loading ? 'Syncing' : 'Ready'}</span>
-          <span className="app-chrome-pill">{FEATURE_FLAGS.refactorBundleDNavigation ? 'Bundle D IA' : 'Legacy IA'}</span>
+          <span className={`app-chrome-pill ${loading ? 'is-live' : ''}`}>{loading ? '동기화 중' : '준비 완료'}</span>
+          <span className="app-chrome-pill">{FEATURE_FLAGS.refactorBundleDNavigation ? '개편 네비게이션' : '기존 네비게이션'}</span>
         </div>
       </aside>
 

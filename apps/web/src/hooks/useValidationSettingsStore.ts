@@ -3,6 +3,7 @@ import { fetchValidationSettings, resetValidationSettings, saveValidationSetting
 import { defaultBacktestQuery, loadBacktestQuery, saveBacktestQuery } from './useBacktest';
 import { CONFIG_DRAFT_SETTINGS_STORAGE_KEY, loadStoredJson, saveStoredJson } from '../lib/validationConfigStorage';
 import type { BacktestQuery } from '../types';
+import { strategyTypeToKorean, riskProfileToKorean } from '../constants/uiText';
 import type { PersistedValidationSettingsResponse } from '../types/domain';
 
 export interface ValidationSettings {
@@ -394,16 +395,12 @@ export function useValidationSettingsStore() {
 }
 
 export function formatValidationSettingsLabel(settings: ValidationSettings, query: BacktestQuery): string[] {
-  const strategyLabel = query.strategy_kind === 'mean_reversion'
-    ? 'Mean Reversion'
-    : query.strategy_kind === 'defensive'
-      ? 'Defensive'
-      : 'Trend Following';
+  const strategyLabel = strategyTypeToKorean(String(query.strategy_kind || 'trend_following'));
   return [
     `${query.market_scope === 'kospi' ? 'KOSPI' : query.market_scope === 'nasdaq' ? 'NASDAQ' : 'KOSPI+NASDAQ'} · 탐색 기간 ${query.lookback_days}일`,
-    `${strategyLabel} · regime ${query.regime_mode} · risk ${query.risk_profile}`,
+    `${strategyLabel} · 장세 ${query.regime_mode === 'auto' ? '자동' : '수동'} · 리스크 ${riskProfileToKorean(query.risk_profile)}`,
     `검증 ${settings.validationDays}일${settings.trainingDays ? ` · UI 설정 학습 구간 ${settings.trainingDays}일` : ''}`,
-    `${settings.walkForward ? 'Walk-forward 사용' : 'Walk-forward 미사용'} · 최소 거래수 ${settings.minTrades}건 · ${settings.objective}`,
+    `${settings.walkForward ? '워크포워드 사용' : '워크포워드 미사용'} · 최소 거래수 ${settings.minTrades}건 · ${settings.objective}`,
   ];
 }
 

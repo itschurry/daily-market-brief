@@ -14,6 +14,7 @@ import {
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { NumericInput } from '../components/NumericInput';
 import { FreshnessBadge, GradeBadge } from '../components/QualityBadge';
+import { reasonCodeToKorean, providerSourceToKorean } from '../constants/uiText';
 import { defaultBacktestQuery } from '../hooks/useBacktest';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import {
@@ -32,6 +33,7 @@ import type {
 } from '../types/domain';
 import type { ActionBarAction, ConsoleSnapshot } from '../types/consoleView';
 import type { StrategiesMetadataResponse } from '../types/domain';
+import { strategyTypeToKorean, riskProfileToKorean, reliabilityToKorean } from '../constants/uiText';
 import { formatCount, formatDateTime, formatNumber, formatPercent } from '../utils/format';
 
 interface BacktestValidationPageProps {
@@ -42,9 +44,7 @@ interface BacktestValidationPageProps {
 }
 
 function strategyLabel(strategyKind: string | undefined) {
-  if (strategyKind === 'mean_reversion') return 'Mean Reversion';
-  if (strategyKind === 'defensive') return 'Defensive';
-  return 'Trend Following';
+  return strategyTypeToKorean(String(strategyKind || 'trend_following'));
 }
 
 function marketLabel(scope: BacktestQuery['market_scope']) {
@@ -159,7 +159,7 @@ function syncQueryWithStrategy(
 function quantOpsStateLabel(state?: QuantOpsCandidateStatePayload | null) {
   if (!state) return '없음';
   if (state.status === 'active') return '활성';
-  if (state.status === 'stale') return 'stale';
+  if (state.status === 'stale') return '지연';
   if (state.status === 'missing') return '없음';
   return state.status || '알 수 없음';
 }
@@ -167,14 +167,17 @@ function quantOpsStateLabel(state?: QuantOpsCandidateStatePayload | null) {
 function quantOpsCandidateSummary(candidate?: QuantOpsCandidatePayload | null) {
   if (!candidate) return '후보 없음';
   const decision = candidate.decision?.label || candidate.decision?.status || '-';
-  const reliability = candidate.metrics?.reliability || '-';
+  const reliability = reliabilityToKorean(String(candidate.metrics?.reliability || '-'));
   const trades = formatCount(candidate.metrics?.trade_count, '건');
   return `${decision} · 신뢰도 ${reliability} · 거래 ${trades}`;
 }
 
 function quantOpsRuntimeSummary(runtimeApply?: QuantOpsRuntimeApplyPayload | null) {
   if (!runtimeApply?.available) return '미반영';
-  return `${runtimeApply.status || 'applied'} · ${runtimeApply.runtime_candidate_source_mode || '-'} · 엔진 ${runtimeApply.engine_state || '-'}`;
+  const sourceMode = runtimeApply.runtime_candidate_source_mode === 'runtime_candidates' ? '런타임 후보' : String(runtimeApply.runtime_candidate_source_mode || '-');
+  const applyStatus = String(runtimeApply.status || '').toLowerCase() === 'applied' ? '반영됨' : (runtimeApply.status || '반영됨');
+  const engineState = String(runtimeApply.engine_state || '').toLowerCase() === 'stopped' ? '중지' : (runtimeApply.engine_state || '-');
+  return `${applyStatus} · ${sourceMode} · 엔진 ${engineState}`;
 }
 
 export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefresh }: BacktestValidationPageProps) {
@@ -315,8 +318,8 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
 
   const statusItems = useMemo(() => ([
     { label: '전략', value: strategyLabel(validationStore.draftQuery.strategy_kind), tone: 'neutral' as const },
-    { label: 'Regime', value: validationStore.draftQuery.regime_mode === 'auto' ? '자동' : '수동', tone: 'neutral' as const },
-    { label: '리스크', value: validationStore.draftQuery.risk_profile, tone: 'neutral' as const },
+    { label: '장세', value: validationStore.draftQuery.regime_mode === 'auto' ? '자동' : '수동', tone: 'neutral' as const },
+    { label: '리스크', value: riskProfileToKorean(validationStore.draftQuery.risk_profile), tone: 'neutral' as const },
     { label: '백테스트', value: status === 'loading' ? '실행 중' : displayedResult.error ? '실패' : displayedResult.metrics ? '완료' : '대기', tone: displayedResult.error ? 'bad' as const : displayedResult.metrics ? 'good' as const : 'neutral' as const },
     { label: '최적화', value: optimizationRunning ? '실행 중' : optimizationPayload?.status === 'ok' ? '결과 있음' : '대기', tone: optimizationRunning ? 'neutral' as const : optimizationPayload?.status === 'ok' ? 'good' as const : 'neutral' as const },
   ]), [displayedResult.error, displayedResult.metrics, optimizationPayload?.status, optimizationRunning, status, validationStore.draftQuery.regime_mode, validationStore.draftQuery.risk_profile, validationStore.draftQuery.strategy_kind]);
@@ -394,21 +397,21 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       setWfData(result);
       if (result.ok === false) {
         setWfStatus('error');
-        const msg = 'Walk-forward 검증에 실패했습니다.';
+        const msg = '워크포워드 검증에 실패했습니다.';
         setWfLastError(msg);
         push('error', msg, undefined, 'walkforward');
       } else {
         setWfStatus('ok');
         push(
           'success',
-          'Walk-forward 검증을 완료했습니다.',
+          '워크포워드 검증을 완료했습니다.',
           `윈도우 ${result.summary?.windows ?? 0}개 · 양호 비율 ${formatPercent(result.summary?.positive_window_ratio, 1, true)}`,
           'walkforward',
         );
       }
     } catch {
       setWfStatus('error');
-      const msg = 'Walk-forward 응답을 불러오지 못했습니다.';
+      const msg = '워크포워드 응답을 불러오지 못했습니다.';
       setWfLastError(msg);
       push('error', msg, undefined, 'walkforward');
     }
@@ -532,7 +535,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
   const [presetSaving, setPresetSaving] = useState(false);
   const handleSaveAsPreset = useCallback(async () => {
     const q = validationStore.draftQuery;
-    const defaultName = `${q.strategy_kind === 'mean_reversion' ? 'Mean Reversion' : q.strategy_kind === 'defensive' ? 'Defensive' : 'Trend Following'} · ${q.market_scope.toUpperCase()} · ${q.risk_profile}`;
+    const defaultName = `${strategyLabel(q.strategy_kind)} · ${q.market_scope.toUpperCase()} · ${riskProfileToKorean(q.risk_profile)}`;
     const rawName = window.prompt('프리셋 이름을 입력해줘.', defaultName);
     if (!rawName) return;
     const name = rawName.trim();
@@ -599,7 +602,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
       busy: status === 'loading',
     },
     {
-      label: 'Walk-forward 검증',
+      label: '워크포워드 검증',
       tone: 'default',
       onClick: handleRunWalkForward,
       disabled: wfStatus === 'loading',
@@ -657,7 +660,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
         <div className="content-shell console-page-shell" style={{ display: 'grid', gap: 16 }}>
           <ConsoleActionBar
             title="전략 검증"
-            subtitle="전략 종류를 먼저 선택하고, regime/risk/portfolio 제약을 정한 뒤 전략별 파라미터를 조정합니다. Monte Carlo는 최적값 발굴기가 아니라 전략별 강건성 검증기로 취급합니다."
+            subtitle="전략 종류를 먼저 선택하고, 장세 모드/리스크/포트폴리오 제약을 정한 뒤 전략별 파라미터를 조정합니다. 몬테카를로는 최적값 발굴기가 아니라 전략별 강건성 검증기로 취급합니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading || metadataLoading}
             errorMessage={errorMessage || lastError}
@@ -676,13 +679,13 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
               <label style={{ display: 'grid', gap: 6 }}>
                 <span>전략</span>
                 <select className="backtest-input-wrap" value={validationStore.draftQuery.strategy_kind} onChange={handleStrategyChange}>
-                  <option value="trend_following">Trend Following</option>
-                  <option value="mean_reversion">Mean Reversion</option>
-                  <option value="defensive">Defensive</option>
+                  <option value="trend_following">추세 추종</option>
+                  <option value="mean_reversion">평균 회귀</option>
+                  <option value="defensive">방어형</option>
                 </select>
               </label>
               <label style={{ display: 'grid', gap: 6 }}>
-                <span>Regime 모드</span>
+                <span>장세 모드</span>
                 <select className="backtest-input-wrap" value={validationStore.draftQuery.regime_mode} onChange={(event) => updateDraftQuery({ regime_mode: event.target.value as BacktestQuery['regime_mode'] })}>
                   <option value="auto">자동</option>
                   <option value="manual">수동</option>
@@ -703,9 +706,9 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                     ));
                   }}
                 >
-                  <option value="conservative">conservative</option>
-                  <option value="balanced">balanced</option>
-                  <option value="aggressive">aggressive</option>
+                  <option value="conservative">보수형</option>
+                  <option value="balanced">균형형</option>
+                  <option value="aggressive">공격형</option>
                 </select>
               </label>
               <label style={{ display: 'grid', gap: 6 }}>
@@ -819,7 +822,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   />
                 </label>
                 <label style={{ display: 'grid', gap: 6 }}>
-                  <span>Walk-forward</span>
+                  <span>워크포워드</span>
                   <select
                     className="backtest-input-wrap"
                     value={validationStore.draftSettings.walkForward ? 'on' : 'off'}
@@ -830,7 +833,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   </select>
                 </label>
                 <label style={{ display: 'grid', gap: 6 }}>
-                  <span>Objective</span>
+                  <span>목표</span>
                   <select
                     className="backtest-input-wrap"
                     value={validationStore.draftSettings.objective}
@@ -849,9 +852,9 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
             <div style={{ fontSize: 14, fontWeight: 700 }}>실행 요약</div>
             <div className="console-metric-grid">
               <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>선택 전략</div><div style={{ marginTop: 6, fontWeight: 700 }}>{strategyLabel(displayedResult.strategy_kind || validationStore.draftQuery.strategy_kind)}</div></div>
-              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>Resolved 전략</div><div style={{ marginTop: 6, fontWeight: 700 }}>{strategyLabel(String(executionSummary.resolved_strategy_kind || displayedResult.resolved_strategy_kind || validationStore.draftQuery.strategy_kind))}</div></div>
-              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>Resolved Regime</div><div style={{ marginTop: 6, fontWeight: 700 }}>{String(executionSummary.resolved_regime || displayedResult.resolved_regime || validationStore.draftQuery.regime_mode)}</div></div>
-              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>Risk 프로필</div><div style={{ marginTop: 6, fontWeight: 700 }}>{displayedResult.risk_profile || validationStore.draftQuery.risk_profile}</div></div>
+              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>확정 전략</div><div style={{ marginTop: 6, fontWeight: 700 }}>{strategyLabel(String(executionSummary.resolved_strategy_kind || displayedResult.resolved_strategy_kind || validationStore.draftQuery.strategy_kind))}</div></div>
+              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>확정 장세</div><div style={{ marginTop: 6, fontWeight: 700 }}>{String(executionSummary.resolved_regime || displayedResult.resolved_regime || validationStore.draftQuery.regime_mode)}</div></div>
+              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>리스크 프로필</div><div style={{ marginTop: 6, fontWeight: 700 }}>{riskProfileToKorean(displayedResult.risk_profile || validationStore.draftQuery.risk_profile)}</div></div>
               <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>시장</div><div style={{ marginTop: 6, fontWeight: 700 }}>{marketLabel(validationStore.draftQuery.market_scope)}</div></div>
               <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>최근 실행</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatDateTime(displayedResult.generated_at || '') || '-'}</div></div>
             </div>
@@ -860,10 +863,10 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
           <section className="page-section console-card-section" style={{ display: 'grid', gap: 12 }}>
             <div style={{ fontSize: 14, fontWeight: 700 }}>성능 요약</div>
             <div className="console-metric-grid">
-              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>CAGR</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatPercent(summaryMetrics.cagr_pct, 2)}</div></div>
+              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>연환산 수익률</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatPercent(summaryMetrics.cagr_pct, 2)}</div></div>
               <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>MDD</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatPercent(summaryMetrics.max_drawdown_pct, 2)}</div></div>
               <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>승률</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatPercent(summaryMetrics.win_rate_pct, 2)}</div></div>
-              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>Profit Factor</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatNumber(summaryMetrics.profit_factor, 2)}</div></div>
+              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>손익비</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatNumber(summaryMetrics.profit_factor, 2)}</div></div>
               <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>거래 수</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatCount(summaryMetrics.trade_count, '건')}</div></div>
               <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>총 수익</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatPercent(displayedResult.metrics?.total_return_pct, 2)}</div></div>
             </div>
@@ -890,20 +893,20 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
           </section>
 
           <section className="page-section console-card-section" style={{ display: 'grid', gap: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>Walk-forward 검증 결과</div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>워크포워드 검증 결과</div>
             {wfStatus === 'error' && (
               <div style={{ fontSize: 12, color: 'var(--tone-bad)' }}>{wfLastError}</div>
             )}
             {wfStatus === 'idle' && (
-              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Walk-forward 검증 버튼을 눌러 결과를 확인하세요. 학습·검증 구간을 슬라이딩하며 OOS 신뢰도를 측정합니다.</div>
+              <div style={{ fontSize: 12, color: 'var(--text-4)' }}>워크포워드 검증 버튼을 눌러 결과를 확인하세요. 학습·검증 구간을 슬라이딩하며 OOS 신뢰도를 측정합니다.</div>
             )}
             {(wfStatus === 'ok' || wfStatus === 'loading') && (
               <>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <FreshnessBadge value={String(wfData.freshness || 'missing')} />
                   <GradeBadge value={String(wfData.validation?.grade || '-')} />
-                  {wfData.validation?.reason ? <span className="inline-badge">{String(wfData.validation.reason)}</span> : null}
-                  {wfData.source ? <span className="inline-badge">source {String(wfData.source)}</span> : null}
+                  {wfData.validation?.reason ? <span className="inline-badge">{reasonCodeToKorean(String(wfData.validation.reason))}</span> : null}
+                  {wfData.source ? <span className="inline-badge">출처 {providerSourceToKorean(String(wfData.source))}</span> : null}
                 </div>
                 {wfData.validation?.exclusion_reason ? (
                   <div style={{ fontSize: 12, color: 'var(--tone-bad)' }}>검증 숫자는 신뢰도 부족 상태야: {String(wfData.validation.exclusion_reason)}</div>
@@ -933,7 +936,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                                 <GradeBadge value={String(s.validation?.grade || '-')} />
                               </div>
                             </div>
-                            {s.validation?.reason ? <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{String(s.validation.reason)}</div> : null}
+                            {s.validation?.reason ? <div style={{ fontSize: 11, color: 'var(--text-3)' }}>{reasonCodeToKorean(String(s.validation.reason))}</div> : null}
                             {scorecard ? (
                               <>
                                 <div style={{ fontSize: 12 }}>Score {formatNumber(score, 2)}</div>
@@ -955,7 +958,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
           </section>
 
           <section className="page-section console-data-section" style={{ padding: 0 }}>
-            <div style={{ padding: 16, fontSize: 14, fontWeight: 700 }}>Input Parameter Band</div>
+            <div style={{ padding: 16, fontSize: 14, fontWeight: 700 }}>입력 파라미터 구간</div>
             <div style={{ padding: '0 16px 16px', display: 'grid', gap: 8 }}>
               <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{displayedResult.parameter_band?.summary || '현재 입력 파라미터가 전략 허용 범위 안에서 어디에 있는지 보여줍니다.'}</div>
               {Object.entries(displayedResult.parameter_band?.parameter_bands || {}).length > 0 ? (
@@ -984,16 +987,16 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
           </section>
 
           <section className="page-section console-data-section" style={{ padding: 0 }}>
-            <div style={{ padding: 16, fontSize: 14, fontWeight: 700 }}>Regime Breakdown</div>
+            <div style={{ padding: 16, fontSize: 14, fontWeight: 700 }}>장세별 분해</div>
             <div className="responsive-table-desktop" style={{ overflow: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: 'var(--bg-soft)', textAlign: 'left' }}>
-                    <th style={{ padding: 12, fontSize: 12 }}>Regime</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>장세</th>
                     <th style={{ padding: 12, fontSize: 12 }}>거래 수</th>
                     <th style={{ padding: 12, fontSize: 12 }}>승률</th>
                     <th style={{ padding: 12, fontSize: 12 }}>평균 수익</th>
-                    <th style={{ padding: 12, fontSize: 12 }}>Profit Factor</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>손익비</th>
                     <th style={{ padding: 12, fontSize: 12 }}>전략</th>
                   </tr>
                 </thead>
@@ -1009,7 +1012,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                     </tr>
                   ))}
                   {(!displayedResult.regime_breakdown || displayedResult.regime_breakdown.length === 0) && (
-                    <tr><td colSpan={6} style={{ padding: 14, fontSize: 12, color: 'var(--text-4)' }}>아직 regime별 결과가 없습니다.</td></tr>
+                    <tr><td colSpan={6} style={{ padding: 14, fontSize: 12, color: 'var(--text-4)' }}>아직 장세별 결과가 없습니다.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -1031,20 +1034,20 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
           </section>
 
           <section className="page-section console-card-section" style={{ display: 'grid', gap: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>Monte Carlo 강건성 검증</div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>몬테카를로 강건성 검증</div>
             <div style={{ fontSize: 12, color: 'var(--text-4)' }}>
-              {optimizationMessage || '전략별 param grid를 분리해서 robust zone 중심으로 결과를 확인합니다.'}
+              {optimizationMessage || '전략별 파라미터 격자를 분리해서 안정 구간 중심으로 결과를 확인합니다.'}
             </div>
             <div className="console-metric-grid">
               <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>전략</div><div style={{ marginTop: 6, fontWeight: 700 }}>{strategyLabel(String(searchContext?.strategy_kind || validationStore.draftQuery.strategy_kind))}</div></div>
               <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>상태</div><div style={{ marginTop: 6, fontWeight: 700 }}>{optimizationRunning ? '실행 중' : optimizationPayload?.status === 'ok' ? '결과 있음' : '대기'}</div></div>
-              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>Optimized Symbols</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatCount(Number((optimizationPayload?.meta as Record<string, unknown> | undefined)?.n_symbols_optimized || 0), '개')}</div></div>
-              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>Reliable</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatCount(Number((optimizationPayload?.meta as Record<string, unknown> | undefined)?.n_reliable || 0), '개')}</div></div>
+              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>최적화 종목 수</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatCount(Number((optimizationPayload?.meta as Record<string, unknown> | undefined)?.n_symbols_optimized || 0), '개')}</div></div>
+              <div><div style={{ fontSize: 12, color: 'var(--text-4)' }}>신뢰 통과</div><div style={{ marginTop: 6, fontWeight: 700 }}>{formatCount(Number((optimizationPayload?.meta as Record<string, unknown> | undefined)?.n_reliable || 0), '개')}</div></div>
             </div>
             <div style={{ display: 'grid', gap: 8 }}>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>Aggregate Robust Zone</div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>공통 안정 구간</div>
               <div style={{ fontSize: 12, color: 'var(--text-4)' }}>
-                {optimizerAggregateRobustZone?.summary || 'optimizer 결과가 있으면 종목별 robust zone의 공통 안정 구간을 보여줍니다.'}
+                {optimizerAggregateRobustZone?.summary || '최적화 결과가 있으면 종목별 안정 구간의 공통 영역을 보여줍니다.'}
               </div>
               {Object.entries(optimizerAggregateRobustZone?.parameter_bands || {}).length > 0 ? (
                 <div className="responsive-table-desktop" style={{ overflow: 'auto' }}>
@@ -1067,16 +1070,16 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                     </tbody>
                   </table>
                 </div>
-              ) : <div style={{ fontSize: 12, color: 'var(--text-4)' }}>표시할 robust zone이 없습니다.</div>}
+              ) : <div style={{ fontSize: 12, color: 'var(--text-4)' }}>표시할 안정 구간이 없습니다.</div>}
             </div>
             <div style={{ display: 'grid', gap: 8 }}>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>Global Parameter Patch</div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>전역 파라미터 패치</div>
               <div style={{ display: 'grid', gap: 6 }}>
                 {Object.entries((optimizationPayload?.global_params || {}) as Record<string, unknown>).slice(0, 8).map(([key, value]) => (
                   <div key={key} style={{ fontSize: 12 }}>{key}: {String(value)}</div>
                 ))}
                 {Object.keys((optimizationPayload?.global_params || {}) as Record<string, unknown>).length === 0 && (
-                  <div style={{ fontSize: 12, color: 'var(--text-4)' }}>아직 optimizer global params가 없습니다.</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-4)' }}>아직 최적화 전역 파라미터가 없습니다.</div>
                 )}
               </div>
             </div>
@@ -1087,7 +1090,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
               <div>
                 <div style={{ fontSize: 14, fontWeight: 700 }}>운영 반영 워크플로우</div>
                 <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-4)' }}>
-                  검증 랩 결과를 latest → saved → runtime 순서로 넘겨야 실제 엔진에 반영됩니다.
+                  검증 랩 결과를 최신 후보 → 저장 후보 → 런타임 반영 순서로 넘겨야 실제 엔진에 반영됩니다.
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1098,7 +1101,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   className="ghost-button"
                   onClick={() => { void handleQuantOpsSave(); }}
                   disabled={quantOpsBusyAction !== null || !latestCandidate || latestCandidate?.guardrails?.can_save === false}
-                  title={!latestCandidate ? 'latest candidate가 없어서 저장할 수 없습니다.' : latestCandidate?.guardrails?.can_save === false ? (latestCandidate.guardrails?.reasons || []).join(', ') : ''}
+                  title={!latestCandidate ? '최신 후보가 없어서 저장할 수 없습니다.' : latestCandidate?.guardrails?.can_save === false ? (latestCandidate.guardrails?.reasons || []).join(', ') : ''}
                 >
                   {quantOpsBusyAction === 'save' ? '저장 중...' : '최신 후보 저장'}
                 </button>
@@ -1106,7 +1109,7 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
                   className="ghost-button"
                   onClick={() => { void handleQuantOpsApply(); }}
                   disabled={quantOpsBusyAction !== null || !savedCandidate || savedCandidate?.guardrails?.can_apply === false}
-                  title={!savedCandidate ? 'saved candidate가 없어서 반영할 수 없습니다.' : savedCandidate?.guardrails?.can_apply === false ? (savedCandidate.guardrails?.reasons || []).join(', ') : ''}
+                  title={!savedCandidate ? '저장 후보가 없어서 반영할 수 없습니다.' : savedCandidate?.guardrails?.can_apply === false ? (savedCandidate.guardrails?.reasons || []).join(', ') : ''}
                 >
                   {quantOpsBusyAction === 'apply' ? '반영 중...' : '저장 후보 런타임 반영'}
                 </button>
@@ -1115,17 +1118,17 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
 
             <div className="console-metric-grid">
               <div>
-                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Search 결과</div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>탐색 결과</div>
                 <div style={{ marginTop: 6, fontWeight: 700 }}>{quantOpsWorkflow?.search_result?.available ? '있음' : '없음'}</div>
                 <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-4)' }}>{quantOpsWorkflow?.search_result?.version || '-'}</div>
               </div>
               <div>
-                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Latest 후보</div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>최신 후보</div>
                 <div style={{ marginTop: 6, fontWeight: 700 }}>{latestCandidate?.id || '-'}</div>
                 <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-4)' }}>{quantOpsStateLabel(latestCandidateState)}</div>
               </div>
               <div>
-                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Saved 후보</div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>저장 후보</div>
                 <div style={{ marginTop: 6, fontWeight: 700 }}>{savedCandidate?.id || '-'}</div>
                 <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-4)' }}>{quantOpsStateLabel(savedCandidateState)}</div>
               </div>
@@ -1138,20 +1141,20 @@ export function BacktestValidationPage({ snapshot, loading, errorMessage, onRefr
 
             <div style={{ display: 'grid', gap: 10 }}>
               <div style={{ padding: 12, background: 'var(--bg-soft)', borderRadius: 8, display: 'grid', gap: 6 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Latest candidate</div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>최신 후보</div>
                 <div style={{ fontWeight: 700 }}>{quantOpsCandidateSummary(latestCandidate)}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{latestCandidate?.decision?.summary || (latestCandidateState?.reasons || []).join(', ') || '-'}</div>
               </div>
               <div style={{ padding: 12, background: 'var(--bg-soft)', borderRadius: 8, display: 'grid', gap: 6 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Saved candidate</div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>저장 후보</div>
                 <div style={{ fontWeight: 700 }}>{quantOpsCandidateSummary(savedCandidate)}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-4)' }}>{savedCandidateState?.reasons?.length ? savedCandidateState.reasons.join(', ') : savedCandidate?.save_note || '-'}</div>
               </div>
               <div style={{ padding: 12, background: 'var(--bg-soft)', borderRadius: 8, display: 'grid', gap: 6 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>Runtime apply</div>
+                <div style={{ fontSize: 12, color: 'var(--text-4)' }}>런타임 반영</div>
                 <div style={{ fontWeight: 700 }}>{quantOpsRuntimeSummary(runtimeApply)}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-4)' }}>
-                  applied_at {formatDateTime(runtimeApply?.applied_at || '') || '-'} · next_run_at {formatDateTime(runtimeApply?.next_run_at || '') || '-'}
+                  반영 시각 {formatDateTime(runtimeApply?.applied_at || '') || '-'} · 다음 실행 {formatDateTime(runtimeApply?.next_run_at || '') || '-'}
                 </div>
               </div>
             </div>

@@ -149,12 +149,83 @@ export function reasonCodeToKorean(code: string): string {
   return REASON_CODE_KR[code] || code;
 }
 
+const FRESHNESS_KR: Record<string, string> = {
+  fresh: '최신',
+  stale: '지연',
+  invalid: '무효',
+  missing: '없음',
+  derived: '파생',
+  unknown: '알 수 없음',
+};
+
+const GRADE_KR: Record<string, string> = {
+  A: 'A등급',
+  B: 'B등급',
+  C: 'C등급',
+  D: 'D등급',
+};
+
+const PROVIDER_STATUS_KR: Record<string, string> = {
+  healthy: '정상',
+  degraded: '불안정',
+  timeout: '응답 지연',
+  research_unavailable: '리서치 미사용/불가',
+  stale_ingest: '수집 지연',
+  stale: '지연',
+  invalid: '무효',
+  missing: '없음',
+  unknown: '알 수 없음',
+};
+
+const PROVIDER_SOURCE_KR: Record<string, string> = {
+  default: '기본',
+  healthy: '정상',
+  degraded: '불안정',
+  research_unavailable: '리서치 미사용/불가',
+};
+
+const STRATEGY_LIFECYCLE_KR: Record<string, string> = {
+  applied: '적용 중',
+  approved: '준비됨',
+  stale: '재확인 필요',
+  blocked: '보관됨',
+  candidate: '초안',
+};
+
+export function freshnessToKorean(value: string | null | undefined): string {
+  const normalized = String(value || '').trim().toLowerCase();
+  return FRESHNESS_KR[normalized] || normalized || FRESHNESS_KR.unknown;
+}
+
+export function gradeToKorean(value: string | null | undefined): string {
+  const normalized = String(value || '').trim().toUpperCase();
+  return GRADE_KR[normalized] || '등급 없음';
+}
+
+export function providerStatusToKorean(value: string | null | undefined): string {
+  const normalized = String(value || '').trim().toLowerCase();
+  return PROVIDER_STATUS_KR[normalized] || normalized || PROVIDER_STATUS_KR.unknown;
+}
+
+export function providerSourceToKorean(value: string | null | undefined): string {
+  const normalized = String(value || '').trim().toLowerCase();
+  return PROVIDER_SOURCE_KR[normalized] || normalized || '-';
+}
+
+export function strategyLifecycleToKorean(value: string | null | undefined): string {
+  const normalized = String(value || '').trim().toLowerCase();
+  return STRATEGY_LIFECYCLE_KR[normalized] || normalized || '-';
+}
+
 const STRATEGY_TYPE_KR: Record<string, string> = {
   breakout: '돌파',
   pullback: '눌림목',
   'event-driven': '이벤트',
   'news-theme momentum': '뉴스/테마 모멘텀',
   'mean-reversion': '평균회귀',
+  trend_following: '추세 추종',
+  mean_reversion: '평균 회귀',
+  defensive: '방어형',
 };
 
 const RELIABILITY_KR: Record<string, string> = {
@@ -170,4 +241,15 @@ export function strategyTypeToKorean(strategyType: string): string {
 
 export function reliabilityToKorean(reliability: string): string {
   return RELIABILITY_KR[reliability] || reliability || '-';
+}
+
+const RISK_PROFILE_KR: Record<string, string> = {
+  conservative: '보수형',
+  balanced: '균형형',
+  aggressive: '공격형',
+};
+
+export function riskProfileToKorean(value: string | null | undefined): string {
+  const normalized = String(value || '').trim().toLowerCase();
+  return RISK_PROFILE_KR[normalized] || normalized || '-';
 }

@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { FreshnessBadge, GradeBadge } from '../components/QualityBadge';
+import { reasonCodeToKorean } from '../constants/uiText';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import type { ConsoleSnapshot } from '../types/consoleView';
 import { formatDateTime } from '../utils/format';
@@ -34,7 +35,7 @@ export function UniversePage({ snapshot, loading, errorMessage, onRefresh }: Uni
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <ConsoleActionBar
             title="유니버스"
-            subtitle="고정 종목 목록 대신 universe rule 기반 종목군을 보여줍니다. 최근 변경 내역과 주요 제외 사유를 같이 확인할 수 있습니다."
+            subtitle="고정 종목 목록 대신 유니버스 규칙 기반 종목군을 보여줍니다. 최근 변경 내역과 주요 제외 사유를 같이 확인할 수 있습니다."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage}
@@ -53,7 +54,7 @@ export function UniversePage({ snapshot, loading, errorMessage, onRefresh }: Uni
                   <div className="workspace-chip-row" style={{ marginTop: 8 }}>
                     <FreshnessBadge value={String(item.freshness || item.freshness_detail?.status || 'missing')} />
                     <GradeBadge value={String(item.validation?.grade || '-')} />
-                    {item.validation?.reason ? <span className="inline-badge">{item.validation.reason}</span> : null}
+                    {item.validation?.reason ? <span className="inline-badge">{reasonCodeToKorean(String(item.validation.reason))}</span> : null}
                   </div>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-3)', textAlign: 'right' }}>

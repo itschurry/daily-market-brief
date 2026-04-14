@@ -3,7 +3,7 @@ import { ConsoleActionBar } from '../components/ConsoleActionBar';
 import { NumericInput } from '../components/NumericInput';
 import { SymbolIdentity } from '../components/SymbolIdentity';
 import { getRiskGuardState, isRiskEntryAllowed } from '../adapters/consoleViewAdapter';
-import { UI_TEXT, reasonCodeToKorean } from '../constants/uiText';
+import { UI_TEXT, reasonCodeToKorean, freshnessToKorean, gradeToKorean, providerStatusToKorean, providerSourceToKorean } from '../constants/uiText';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import { usePaperTrading } from '../hooks/usePaperTrading';
 import { useToast } from '../hooks/useToast';
@@ -183,6 +183,13 @@ function hannaBadgeClass(state: HannaState) {
   if (state === 'healthy') return 'inline-badge is-success';
   if (state === 'timeout' || state === 'degraded') return 'inline-badge is-danger';
   return 'inline-badge';
+}
+
+function hannaStateLabel(state: HannaState): string {
+  if (state === 'healthy') return '정상';
+  if (state === 'degraded') return '불안정';
+  if (state === 'timeout') return '응답 지연';
+  return '리서치 미사용/불가';
 }
 
 function layerCResearchGrade(source: Record<string, unknown> | null | undefined): string {
@@ -561,9 +568,9 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
       return {
         tone: 'neutral' as const,
         title: '아직 판별 로그 없음',
-        detail: 'Risk/Action 로그가 쌓이지 않았습니다. 엔진을 1회 실행하고 시계열을 갱신하세요.',
+        detail: '리스크/액션 로그가 쌓이지 않았습니다. 엔진을 1회 실행하고 시계열을 갱신하세요.',
         steps: [
-          'Layer B 신호 수집 → Layer D risk 판단 → Layer E final action',
+          '2단계 신호 수집 → 4단계 리스크 판단 → 5단계 최종 액션',
           '모든 단계가 비어 있으면 이번 사이클이 생성되지 않은 상태입니다.',
         ],
       };
@@ -572,10 +579,10 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
       return {
         tone: 'bad' as const,
         title: '주문으로 안 넘어가는 후보가 있습니다',
-        detail: `진입 허용 + review_for_entry가 ${formatCount(readinessSignalCount, '건')}건 있었지만, 최근 주문 이벤트로 이어진 건이 ${formatCount(readinessSignalGapCount, '건')}건입니다.`,
+        detail: `진입 허용 + 진입 검토가 ${formatCount(readinessSignalCount, '건')}건 있었지만, 최근 주문 이벤트로 이어진 건이 ${formatCount(readinessSignalGapCount, '건')}건입니다.`,
         steps: [
           `대상 후보: ${readinessSignals.filter((item) => !item.hasOrder).map((item) => `${item.symbolCode}(${item.market})`).slice(0, 3).join(', ') || '-'}`,
-          'Layer D에서 허용이 났는데도 주문 이벤트가 없다면 실시간 주문 채널/사이클 실행 상태를 확인하세요.',
+          '4단계에서 허용이 났는데도 주문 이벤트가 없다면 실시간 주문 채널/사이클 실행 상태를 확인해.',
         ],
       };
     }
@@ -583,9 +590,9 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
       return {
         tone: 'bad' as const,
         title: '리스크 가드가 주 원인으로 보입니다',
-        detail: `Risk/Action에서 차단은 ${formatCount(riskGuardBlockCount, '건')}건입니다.`,
+        detail: `리스크/액션에서 차단은 ${formatCount(riskGuardBlockCount, '건')}건입니다.`,
         steps: [
-          '실제 Layer D가 차단이면 주문이 들어오지 않는 것이 정상입니다.',
+          '실제 4단계가 차단이면 주문이 들어오지 않는 게 정상이야.',
           '차단 사유는 reason code와 risk_message에 적혀 있습니다.',
         ],
       };
@@ -593,10 +600,10 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
     return {
       tone: 'good' as const,
       title: '리스크/액션 경로는 주문 허용 상태',
-      detail: '최근 후보가 review_for_entry 또는 allowed 상태이면 주문 이벤트가 만들어져야 합니다.',
+      detail: '최근 후보가 진입 검토 또는 허용 상태이면 주문 이벤트가 만들어져야 해.',
       steps: [
         '최근 주문 실패가 계속 난다면 엔진 실행 중단/브로커 에러/잔고 상태를 점검하세요.',
-        '워크플로우 단계에서 order_ready → order_sent로 넘어가는지 확인하세요.',
+        '워크플로우 단계에서 주문 준비 → 주문 전송으로 넘어가는지 확인하세요.',
       ],
     };
   }, [readinessSignalCount, readinessSignalGapCount, riskGuardBlockCount, signalRiskActionLogs.length]);
@@ -707,7 +714,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
     },
     {
       label: 'Hanna',
-      value: currentHannaState,
+      value: hannaStateLabel(currentHannaState),
       tone: hannaTone(currentHannaState),
     },
   ]), [currentHannaState, engineState.engine_state, engineState.running, riskGuardAllowed, status, vm.positionCount]);
@@ -906,7 +913,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
         pushToast({
           tone: 'error',
           title: '실행 로그 초기화 실패',
-          description: result.error || '최근 체결 내역 및 Risk/Action 로그 정리를 다시 시도해 주세요.',
+          description: result.error || '최근 체결 내역 및 리스크/액션 로그 정리를 다시 시도해 주세요.',
         });
         return;
       }
@@ -1293,8 +1300,8 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                 confirmTitle: '실행 로그를 삭제할까요?',
                 confirmMessage: '최근 체결 내역/리스크-액션 로그/엔진 로그를 제거합니다.',
                 confirmDetails: [
-                  '삭제 대상: 주문 이벤트, signal snapshot, 계좌 스냅샷, 엔진 사이클 로그',
-                  '삭제 대상: 최근 체결 내역, 엔진 사이클, Risk/Action 표시 데이터',
+                  '삭제 대상: 주문 이벤트, 신호 스냅샷, 계좌 스냅샷, 엔진 사이클 로그',
+                  '삭제 대상: 최근 체결 내역, 엔진 사이클, 리스크/액션 표시 데이터',
                   '이 작업은 되돌릴 수 없습니다.',
                 ],
               },
@@ -1317,7 +1324,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                 confirmTitle: '로그/히스토리를 완전히 정리할까요?',
                 confirmMessage: '로그, 계좌 스냅샷, 엔진 실행 이력까지 초기 상태로 되돌립니다.',
                 confirmDetails: [
-                  '삭제 대상: 주문 이벤트, signal snapshot, 계좌 스냅샷, 엔진 사이클 로그',
+                  '삭제 대상: 주문 이벤트, 신호 스냅샷, 계좌 스냅샷, 엔진 사이클 로그',
                   '계좌/포지션/현금은 화면 설정의 초기 자금 기준으로 초기화됩니다.',
                   '이 작업은 되돌릴 수 없습니다.',
                 ],
@@ -1328,15 +1335,15 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
 
           <div className="page-section validation-decision-hero console-hero-section" style={{ padding: 18 }}>
             <div className="report-hero-topline">
-              <span className="report-hero-tag">Risk First</span>
+              <span className="report-hero-tag">리스크 우선</span>
               <span className={`report-decision-chip ${entryAllowed ? 'is-good' : 'is-bad'}`}>신규 진입 {entryAllowed ? '가능' : '차단'}</span>
             </div>
             <div className="report-decision-title">운용 우선순위: {riskyPositions.length > 0 || todayFailCount > 0 ? '리스크 정리 먼저' : '정상 운영 지속'}</div>
-            <div className="report-hero-copy">지금 필요한 순서만 짧게 보이도록 정리했어. 보유 포지션 확인 → 실행 워크플로우 확인 → Risk/Action 로그 확인 순서로 보면 어디서 막혔는지 훨씬 빨리 찾을 수 있어.</div>
+            <div className="report-hero-copy">지금 필요한 순서만 짧게 보이도록 정리했어. 보유 포지션 확인 → 실행 워크플로우 확인 → 리스크/액션 로그 확인 순서로 보면 어디서 막혔는지 훨씬 빨리 찾을 수 있어.</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
               <button type="button" className="ghost-button" onClick={() => scrollToSection('paper-positions-section')}>보유 포지션으로</button>
               <button type="button" className="ghost-button" onClick={() => scrollToSection('paper-workflow-section')}>실행 워크플로우로</button>
-              <button type="button" className="ghost-button" onClick={() => scrollToSection('paper-risk-action-section')}>Risk / Action 로그로</button>
+              <button type="button" className="ghost-button" onClick={() => scrollToSection('paper-risk-action-section')}>리스크/액션 로그로</button>
               <button type="button" className="ghost-button" onClick={() => scrollToSection('paper-engine-panel-section')}>엔진 상태로</button>
             </div>
             {repeatedCashRetries.length > 0 && (
@@ -1364,7 +1371,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
               <div className={`summary-metric-card ${trustTone === 'good' ? 'is-good' : trustTone === 'bad' ? 'is-bad' : ''}`}>
                 <div className="summary-metric-label">엔진 신뢰도</div>
                 <div className="summary-metric-value">{trustState} ({trustScore})</div>
-                <div className="summary-metric-detail">최근 오류 {engineState.last_error ? '있음' : '없음'} · validation gate {engineState.validation_policy?.validation_gate_enabled ? '활성' : '비활성'}</div>
+                <div className="summary-metric-detail">최근 오류 {engineState.last_error ? '있음' : '없음'} · 검증 게이트 {engineState.validation_policy?.validation_gate_enabled ? '활성' : '비활성'}</div>
               </div>
             </div>
           </div>
@@ -1374,18 +1381,18 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
               <div className="section-title">리서치 입력 분리</div>
               <div className="workspace-chip-row" style={{ marginTop: 10, marginBottom: 10 }}>
                 <span className={String(snapshot.research.freshness || '').toLowerCase() === 'fresh' ? 'inline-badge is-success' : String(snapshot.research.freshness || '').toLowerCase() === 'stale' ? 'inline-badge is-danger' : 'inline-badge'}>
-                  {String(snapshot.research.freshness || 'missing')}
+                  {freshnessToKorean(String(snapshot.research.freshness || 'missing'))}
                 </span>
-                <span className="inline-badge">provider {String(snapshot.research.source || snapshot.research.status || '-')}</span>
+                <span className="inline-badge">제공 {providerSourceToKorean(String(snapshot.research.source || snapshot.research.status || '-'))}</span>
                 <span className={String(snapshot.research.status || '') === 'healthy' ? 'inline-badge is-success' : 'inline-badge is-danger'}>
-                  status {String(snapshot.research.status || '-')}
+                  상태 {providerStatusToKorean(String(snapshot.research.status || '-'))}
                 </span>
               </div>
               <div className="detail-list">
-                <div>Layer B: 퀀트 스캐너가 진입 후보를 만든 뒤 reason code와 스냅샷을 남깁니다.</div>
-                <div>Layer C: Hanna는 external research scorer일 뿐이고, buy/sell/order를 직접 내리지 못합니다.</div>
-                <div>Layer C 점수는 freshness/grade를 같이 봐야 합니다. Grade D면 점수 숫자는 숨기고 사유만 봅니다.</div>
-                <div>Layer D/E: Risk Gate가 최종 veto를 쥐고, 결과는 review_for_entry / watch_only / blocked / do_not_touch로만 끝냅니다.</div>
+                <div>2단계: 퀀트 스캐너가 진입 후보를 만든 뒤 사유 코드와 스냅샷을 남깁니다.</div>
+                <div>3단계: Hanna는 외부 리서치 점수기일 뿐이고, 매수/매도/주문을 직접 내리지 못합니다.</div>
+                <div>3단계 점수는 최신성/등급을 같이 봐야 합니다. D등급이면 점수 숫자는 숨기고 사유만 봅니다.</div>
+                <div>4·5단계: 리스크 게이트가 최종 거부권을 쥐고, 결과는 진입 검토 / 관찰 전용 / 차단 / 관망으로만 끝냅니다.</div>
               </div>
             </div>
             <div className="page-section" style={{ padding: 16 }}>
@@ -1490,7 +1497,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                         />
                       </strong>
                     ) : '없음'} · {
-                      String((latestScreenedFailure as { failure_reason?: string; reason_code?: string } | null)?.failure_reason || (latestScreenedFailure as { reason_code?: string } | null)?.reason_code || '-')
+                      reasonCodeToKorean(String((latestScreenedFailure as { failure_reason?: string; reason_code?: string } | null)?.failure_reason || (latestScreenedFailure as { reason_code?: string } | null)?.reason_code || '-'))
                     }
                   </div>
                 </div>
@@ -1650,9 +1657,9 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                 <div>
                   최근 실행 요약: 매수 {formatNumber(engineState.last_summary?.executed_buy_count, 0)}건 / 매도 {formatNumber(engineState.last_summary?.executed_sell_count, 0)}건
                 </div>
-                <div>today 체결(B/S) / 실패: {formatNumber(engineState.today_order_counts?.buy, 0)} / {formatNumber(engineState.today_order_counts?.sell, 0)} / {formatNumber(engineState.today_order_counts?.failed, 0)}</div>
-                <div>today 실현손익: {formatKRW(engineState.today_realized_pnl, true)}</div>
-                <div>validation gate: {engineState.validation_policy?.validation_gate_enabled ? '활성' : '비활성'}</div>
+                <div>당일 체결(B/S) / 실패: {formatNumber(engineState.today_order_counts?.buy, 0)} / {formatNumber(engineState.today_order_counts?.sell, 0)} / {formatNumber(engineState.today_order_counts?.failed, 0)}</div>
+                <div>당일 실현손익: {formatKRW(engineState.today_realized_pnl, true)}</div>
+                <div>검증 게이트: {engineState.validation_policy?.validation_gate_enabled ? '활성' : '비활성'}</div>
               </div>
             </div>
 
@@ -1708,7 +1715,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                     )}
                     {!isSuccess && (
                       <div style={{ marginTop: 4, color: 'var(--down)', display: 'grid', gap: 4 }}>
-                        <div>reason code: {item.reason_code || item.failure_reason || '-'}</div>
+                        <div>사유 코드: {reasonCodeToKorean(String(item.reason_code || item.failure_reason || '-'))}</div>
                         <div>상세: {item.message || explainOrderFailureReason(item.failure_reason)}</div>
                       </div>
                     )}
@@ -1764,9 +1771,9 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
 
             <div className="validation-decision-grid" style={{ marginTop: 12 }}>
               {[
-                { key: 'discover', label: '탐색', value: workflowCounts.discover, detail: 'watch + blocked', tone: workflowTab === 'discover' ? 'is-good' : '' },
-                { key: 'signal', label: '신호', value: workflowCounts.signal, detail: 'signal_generated', tone: workflowTab === 'signal' ? 'is-good' : '' },
-                { key: 'decision', label: '판단', value: workflowCounts.decision, detail: 'execution_decided + order_ready', tone: workflowTab === 'decision' ? 'is-good' : '' },
+                { key: 'discover', label: '탐색', value: workflowCounts.discover, detail: '관찰 + 차단', tone: workflowTab === 'discover' ? 'is-good' : '' },
+                { key: 'signal', label: '신호', value: workflowCounts.signal, detail: '신호 생성', tone: workflowTab === 'signal' ? 'is-good' : '' },
+                { key: 'decision', label: '판단', value: workflowCounts.decision, detail: '판단 완료 + 주문 준비', tone: workflowTab === 'decision' ? 'is-good' : '' },
                 { key: 'order', label: '주문', value: workflowCounts.order, detail: `체결 ${workflowCounts.filled} · 거절 ${workflowCounts.rejected}`, tone: workflowTab === 'order' ? (workflowCounts.rejected > workflowCounts.filled ? 'is-bad' : 'is-good') : '' },
               ].map((item) => (
                 <button
@@ -1880,8 +1887,8 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                       <div><div className="responsive-card-label">마지막 시각</div><div className="responsive-card-value">{formatDateTime(item.last_order_at || item.fetched_at || item.timestamp || item.logged_at || '')}</div></div>
                       <div><div className="responsive-card-label">키</div><div className="responsive-card-value">{String(item.signal_key || '-')}</div></div>
                       <div><div className="responsive-card-label">주문 결과</div><div className="responsive-card-value">{item.last_order_success === undefined ? '-' : item.last_order_success ? '성공' : '실패'}</div></div>
-                      <div><div className="responsive-card-label">Quote</div><div className="responsive-card-value">{quoteFreshness} · Grade {quoteGrade}</div></div>
-                      <div><div className="responsive-card-label">Quote source</div><div className="responsive-card-value">{String(item.quote_source || '-')}</div></div>
+                      <div><div className="responsive-card-label">시세</div><div className="responsive-card-value">{freshnessToKorean(quoteFreshness)} · {gradeToKorean(quoteGrade)}</div></div>
+                      <div><div className="responsive-card-label">시세 출처</div><div className="responsive-card-value">{String(item.quote_source || '-')}</div></div>
                       <div style={{ gridColumn: '1 / -1' }}><div className="responsive-card-label">설명</div><div className="responsive-card-value">{statusLabel}</div></div>
                       {item.quote_validation?.exclusion_reason ? <div style={{ gridColumn: '1 / -1' }}><div className="responsive-card-label">Quote note</div><div className="responsive-card-value">{String(item.quote_validation.exclusion_reason)}</div></div> : null}
                     </div>
@@ -1895,12 +1902,12 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
           <div id="paper-risk-action-section" className="page-section" style={{ padding: 16 }}>
             <div className="section-head-row">
               <div>
-                <div className="section-title">Risk / Action 로그</div>
-                <div className="section-copy">Layer D risk 결과와 Layer E final action을 분리해서 보여줍니다. Hanna 상태는 참고 정보이고 주문 허용 여부는 risk veto 기준으로 읽으면 됩니다.</div>
+                <div className="section-title">리스크/액션 로그</div>
+                <div className="section-copy">4단계 리스크 결과와 5단계 최종 액션을 분리해서 보여줍니다. Hanna 상태는 참고 정보이고 주문 허용 여부는 리스크 거부 기준으로 읽으면 됩니다.</div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <div className={hannaBadgeClass(currentHannaState)}>Hanna {currentHannaState}</div>
-                <div className={layerCResearchBadgeClass('freshness', String(snapshot.research.freshness || 'missing').toLowerCase())}>{String(snapshot.research.freshness || 'missing')}</div>
+                <div className={hannaBadgeClass(currentHannaState)}>Hanna {hannaStateLabel(currentHannaState)}</div>
+                <div className={layerCResearchBadgeClass('freshness', String(snapshot.research.freshness || 'missing').toLowerCase())}>{freshnessToKorean(String(snapshot.research.freshness || 'missing'))}</div>
               </div>
             </div>
             <div style={{ marginTop: 12 }}>
@@ -1920,10 +1927,10 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                     <th style={{ padding: 12, fontSize: 12 }}>종목</th>
                     <th style={{ padding: 12, fontSize: 12 }}>전략</th>
                     <th style={{ padding: 12, fontSize: 12 }}>Hanna</th>
-                    <th style={{ padding: 12, fontSize: 12 }}>Layer C</th>
-                    <th style={{ padding: 12, fontSize: 12 }}>Layer D</th>
-                    <th style={{ padding: 12, fontSize: 12 }}>Layer E</th>
-                    <th style={{ padding: 12, fontSize: 12 }}>reason code</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>3단계</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>4단계</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>5단계</th>
+                    <th style={{ padding: 12, fontSize: 12 }}>사유 코드</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1935,14 +1942,14 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                       </td>
                       <td style={{ padding: 12, fontSize: 12 }}>{item.strategy}</td>
                       <td style={{ padding: 12, fontSize: 12 }}>
-                        <div className={hannaBadgeClass(item.hannaState)}>{item.hannaState}</div>
+                        <div className={hannaBadgeClass(item.hannaState)}>{hannaStateLabel(item.hannaState)}</div>
                       </td>
                       <td style={{ padding: 12, fontSize: 12 }}>
                         <div className="workspace-chip-row">
-                          <span className={layerCResearchBadgeClass('freshness', String(item.researchFreshness || 'missing'))}>{String(item.researchFreshness || 'missing')}</span>
-                          <span className={layerCResearchBadgeClass('grade', String(item.researchGrade || '-'))}>Grade {String(item.researchGrade || '-')}</span>
+                          <span className={layerCResearchBadgeClass('freshness', String(item.researchFreshness || 'missing'))}>{freshnessToKorean(String(item.researchFreshness || 'missing'))}</span>
+                          <span className={layerCResearchBadgeClass('grade', String(item.researchGrade || '-'))}>{gradeToKorean(String(item.researchGrade || '-'))}</span>
                         </div>
-                        <div className="signal-cell-copy" style={{ marginTop: 6 }}>score {String(item.researchScore || '-')}</div>
+                        <div className="signal-cell-copy" style={{ marginTop: 6 }}>점수 {String(item.researchScore || '-')}</div>
                       </td>
                       <td style={{ padding: 12, fontSize: 12 }}>
                         <div className={item.riskDecision === 'allowed' ? 'inline-badge is-success' : 'inline-badge is-danger'}>
@@ -1958,14 +1965,14 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                       </td>
                       <td style={{ padding: 12, fontSize: 12 }}>
                         <div>{item.translatedReasons.join(', ') || '-'}</div>
-                        <div className="signal-cell-copy" style={{ marginTop: 6 }}>{item.rawReasons.join(', ') || '-'}</div>
+                        <div className="signal-cell-copy" style={{ marginTop: 6 }}>{item.translatedReasons.join(', ') || '-'}</div>
                       </td>
                     </tr>
                   ))}
                   {signalRiskActionLogs.length === 0 && (
                     <tr>
                       <td colSpan={8} style={{ padding: 16, fontSize: 12, color: 'var(--text-4)' }}>
-                        아직 기록된 signal snapshot이 없습니다. 엔진을 한 번 실행하면 Layer D/E 로그가 여기에 누적됩니다.
+                        아직 기록된 신호 스냅샷이 없습니다. 엔진을 한 번 실행하면 4·5단계 로그가 여기에 누적됩니다.
                       </td>
                     </tr>
                   )}
@@ -1982,19 +1989,19 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                       </div>
                       <div className="signal-cell-copy">{item.market} · {item.strategy}</div>
                     </div>
-                    <div className={hannaBadgeClass(item.hannaState)}>{item.hannaState}</div>
+                    <div className={hannaBadgeClass(item.hannaState)}>{hannaStateLabel(item.hannaState)}</div>
                   </div>
                   <div className="responsive-card-grid">
                     <div><div className="responsive-card-label">시각</div><div className="responsive-card-value">{formatDateTime(item.timestamp)}</div></div>
-                    <div><div className="responsive-card-label">Layer C</div><div className="responsive-card-value">{String(item.researchFreshness || 'missing')} · Grade {String(item.researchGrade || '-')} · {String(item.researchScore || '-')}</div></div>
-                    <div><div className="responsive-card-label">Layer D</div><div className="responsive-card-value">{riskDecisionLabel(item.riskDecision)} · {reasonCodeToKorean(item.riskReasonCode)}</div></div>
-                    <div><div className="responsive-card-label">Layer E</div><div className="responsive-card-value">{reasonCodeToKorean(item.finalAction)}</div></div>
+                    <div><div className="responsive-card-label">3단계</div><div className="responsive-card-value">{freshnessToKorean(String(item.researchFreshness || 'missing'))} · {gradeToKorean(String(item.researchGrade || '-'))} · {String(item.researchScore || '-')}</div></div>
+                    <div><div className="responsive-card-label">4단계</div><div className="responsive-card-value">{riskDecisionLabel(item.riskDecision)} · {reasonCodeToKorean(item.riskReasonCode)}</div></div>
+                    <div><div className="responsive-card-label">5단계</div><div className="responsive-card-value">{reasonCodeToKorean(item.finalAction)}</div></div>
                     <div><div className="responsive-card-label">상세</div><div className="responsive-card-value">{item.researchGrade === 'D' ? (item.researchExclusionReason || riskMessageLabel(item.riskMessage)) : riskMessageLabel(item.riskMessage)}</div></div>
-                    <div style={{ gridColumn: '1 / -1' }}><div className="responsive-card-label">reason code</div><div className="responsive-card-value">{item.translatedReasons.join(', ') || '-'}</div><div className="signal-cell-copy">{item.rawReasons.join(', ') || '-'}</div></div>
+                    <div style={{ gridColumn: '1 / -1' }}><div className="responsive-card-label">사유 코드</div><div className="responsive-card-value">{item.translatedReasons.join(', ') || '-'}</div></div>
                   </div>
                 </article>
               ))}
-              {signalRiskActionLogs.length === 0 && <div style={{ padding: 16, fontSize: 12, color: 'var(--text-4)' }}>아직 기록된 signal snapshot이 없습니다. 엔진을 한 번 실행하면 Layer D/E 로그가 여기에 누적됩니다.</div>}
+              {signalRiskActionLogs.length === 0 && <div style={{ padding: 16, fontSize: 12, color: 'var(--text-4)' }}>아직 기록된 신호 스냅샷이 없습니다. 엔진을 한 번 실행하면 4·5단계 로그가 여기에 누적됩니다.</div>}
             </div>
           </div>
 
@@ -2004,7 +2011,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
               <div>cycle 로그: {formatCount(cycles.length, '건')}</div>
               <div>주문 이벤트 로그: {formatCount(orderEvents.length, '건')}</div>
               <div>계좌 스냅샷: {formatCount(accountHistory.length, '건')}</div>
-              <div>signal snapshot: {formatCount(signalSnapshots.length, '건')}</div>
+              <div>신호 스냅샷: {formatCount(signalSnapshots.length, '건')}</div>
             </div>
           </div>
 

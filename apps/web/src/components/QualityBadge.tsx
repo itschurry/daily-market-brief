@@ -1,22 +1,23 @@
 import type { ReactNode } from 'react';
+import { freshnessToKorean, gradeToKorean } from '../constants/uiText';
 
 export function freshnessBadgeMeta(value: string | null | undefined): { label: string; className: string } {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'fresh') return { label: 'fresh', className: 'inline-badge is-success' };
-  if (normalized === 'stale') return { label: 'stale', className: 'inline-badge is-danger' };
-  if (normalized === 'invalid') return { label: 'invalid', className: 'inline-badge is-danger' };
-  if (normalized === 'missing') return { label: 'missing', className: 'inline-badge' };
-  if (normalized === 'derived') return { label: 'derived', className: 'inline-badge' };
-  return { label: normalized || 'unknown', className: 'inline-badge' };
+  if (normalized === 'fresh') return { label: freshnessToKorean(normalized), className: 'inline-badge is-success' };
+  if (normalized === 'stale') return { label: freshnessToKorean(normalized), className: 'inline-badge is-danger' };
+  if (normalized === 'invalid') return { label: freshnessToKorean(normalized), className: 'inline-badge is-danger' };
+  if (normalized === 'missing') return { label: freshnessToKorean(normalized), className: 'inline-badge' };
+  if (normalized === 'derived') return { label: freshnessToKorean(normalized), className: 'inline-badge' };
+  return { label: freshnessToKorean(normalized), className: 'inline-badge' };
 }
 
 export function gradeBadgeMeta(value: string | null | undefined): { label: string; className: string } {
   const normalized = String(value || '').trim().toUpperCase();
-  if (normalized === 'A') return { label: 'Grade A', className: 'inline-badge is-success' };
-  if (normalized === 'B') return { label: 'Grade B', className: 'inline-badge' };
-  if (normalized === 'C') return { label: 'Grade C', className: 'inline-badge is-danger' };
-  if (normalized === 'D') return { label: 'Grade D', className: 'inline-badge is-danger' };
-  return { label: 'Grade -', className: 'inline-badge' };
+  if (normalized === 'A') return { label: gradeToKorean(normalized), className: 'inline-badge is-success' };
+  if (normalized === 'B') return { label: gradeToKorean(normalized), className: 'inline-badge' };
+  if (normalized === 'C') return { label: gradeToKorean(normalized), className: 'inline-badge is-danger' };
+  if (normalized === 'D') return { label: gradeToKorean(normalized), className: 'inline-badge is-danger' };
+  return { label: gradeToKorean(normalized), className: 'inline-badge' };
 }
 
 interface QualityBadgeProps {

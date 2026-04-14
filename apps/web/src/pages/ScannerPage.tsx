@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
-import { reasonCodeToKorean } from '../constants/uiText';
+import { reasonCodeToKorean, freshnessToKorean, gradeToKorean } from '../constants/uiText';
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import type { ScannerCandidate, ScannerStatusItem } from '../types/domain';
 import type { ConsoleSnapshot } from '../types/consoleView';
@@ -16,10 +16,10 @@ interface ScannerPageProps {
 type HannaState = 'healthy' | 'degraded' | 'timeout' | 'research_unavailable';
 
 const HANNA_STATE_LABEL: Record<HannaState, string> = {
-  healthy: 'healthy',
-  degraded: 'degraded',
-  timeout: 'timeout',
-  research_unavailable: 'research_unavailable',
+  healthy: '정상',
+  degraded: '불안정',
+  timeout: '응답 지연',
+  research_unavailable: '리서치 미사용/불가',
 };
 
 function resolveHannaState(candidate?: ScannerCandidate): HannaState {
@@ -100,20 +100,20 @@ function researchScoreDisplay(candidate: ScannerCandidate | undefined): string {
 
 function researchGradeBadge(candidate: ScannerCandidate | undefined): { label: string; className: string } {
   const grade = researchGrade(candidate);
-  if (grade === 'A') return { label: 'Grade A', className: 'inline-badge is-success' };
-  if (grade === 'B') return { label: 'Grade B', className: 'inline-badge' };
-  if (grade === 'C') return { label: 'Grade C', className: 'inline-badge is-danger' };
-  if (grade === 'D') return { label: 'Grade D', className: 'inline-badge is-danger' };
-  return { label: 'Grade -', className: 'inline-badge' };
+  if (grade === 'A') return { label: gradeToKorean(grade), className: 'inline-badge is-success' };
+  if (grade === 'B') return { label: gradeToKorean(grade), className: 'inline-badge' };
+  if (grade === 'C') return { label: gradeToKorean(grade), className: 'inline-badge is-danger' };
+  if (grade === 'D') return { label: gradeToKorean(grade), className: 'inline-badge is-danger' };
+  return { label: gradeToKorean(grade), className: 'inline-badge' };
 }
 
 function researchFreshnessBadge(candidate: ScannerCandidate | undefined): { label: string; className: string } {
   const freshness = researchFreshness(candidate);
-  if (freshness === 'fresh') return { label: 'fresh', className: 'inline-badge is-success' };
-  if (freshness === 'stale') return { label: 'stale', className: 'inline-badge is-danger' };
-  if (freshness === 'invalid') return { label: 'invalid', className: 'inline-badge is-danger' };
-  if (freshness === 'missing') return { label: 'missing', className: 'inline-badge' };
-  return { label: freshness || 'unknown', className: 'inline-badge' };
+  if (freshness === 'fresh') return { label: freshnessToKorean(freshness), className: 'inline-badge is-success' };
+  if (freshness === 'stale') return { label: freshnessToKorean(freshness), className: 'inline-badge is-danger' };
+  if (freshness === 'invalid') return { label: freshnessToKorean(freshness), className: 'inline-badge is-danger' };
+  if (freshness === 'missing') return { label: freshnessToKorean(freshness), className: 'inline-badge' };
+  return { label: freshnessToKorean(freshness), className: 'inline-badge' };
 }
 
 function translatedCodes(items: string[] | undefined) {
@@ -173,7 +173,7 @@ export function ScannerPage({ snapshot, loading, errorMessage, onRefresh }: Scan
         <div className="content-shell" style={{ display: 'grid', gap: 16 }}>
           <ConsoleActionBar
             title="장중 스캐너"
-            subtitle="Layer A 유니버스부터 Layer E final action까지 같은 화면에서 읽는 운영용 스캐너입니다. 종목을 누르면 왜 review 대상인지, 왜 막혔는지 레이어별 근거를 바로 확인할 수 있습니다."
+            subtitle="1단계 유니버스부터 최종 액션까지 같은 화면에서 읽는 운영용 스캐너야. 종목을 누르면 왜 검토 대상인지, 왜 막혔는지 단계별 근거를 바로 확인할 수 있어."
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage}
@@ -183,9 +183,9 @@ export function ScannerPage({ snapshot, loading, errorMessage, onRefresh }: Scan
             onClearLogs={clear}
             settingsPanel={(
               <div style={{ display: 'grid', gap: 8, fontSize: 12, color: 'var(--text-3)' }}>
-                <div>Layer A는 universe 포함 이유만 기록하고 주문 판단을 하지 않습니다.</div>
-                <div>Layer C Hanna는 structured DTO와 warning code만 제공하며, buy/sell/order 명령을 내리지 못합니다.</div>
-                <div>최종 실행 의미는 Layer E final action 기준입니다: review_for_entry / watch_only / blocked / do_not_touch.</div>
+                <div>1단계는 유니버스 포함 이유만 기록하고 주문 판단을 하지 않아.</div>
+                <div>3단계 Hanna는 구조화된 데이터와 경고 코드만 제공하며, 매수/매도/주문 명령을 내리지 못해.</div>
+                <div>최종 실행 의미는 마지막 액션 기준이야: 진입 검토 / 관찰 전용 / 차단 / 관망.</div>
               </div>
             )}
           />
@@ -220,9 +220,9 @@ export function ScannerPage({ snapshot, loading, errorMessage, onRefresh }: Scan
                       <tr style={{ background: 'var(--bg-soft)', textAlign: 'left' }}>
                         <th style={{ padding: 12, fontSize: 12 }}>순위</th>
                         <th style={{ padding: 12, fontSize: 12 }}>종목</th>
-                        <th style={{ padding: 12, fontSize: 12 }}>Layer B</th>
-                        <th style={{ padding: 12, fontSize: 12 }}>Layer C</th>
-                        <th style={{ padding: 12, fontSize: 12 }}>Layer D/E</th>
+                        <th style={{ padding: 12, fontSize: 12 }}>2단계 퀀트</th>
+                        <th style={{ padding: 12, fontSize: 12 }}>3단계 리서치</th>
+                        <th style={{ padding: 12, fontSize: 12 }}>4·5단계 판단</th>
                         <th style={{ padding: 12, fontSize: 12 }}>사유</th>
                       </tr>
                     </thead>
@@ -255,8 +255,8 @@ export function ScannerPage({ snapshot, loading, errorMessage, onRefresh }: Scan
                               </div>
                             </td>
                             <td style={{ padding: 12, fontSize: 12 }}>
-                              <div>quant {candidate.quant_score == null ? '-' : formatNumber(candidate.quant_score, 2)}</div>
-                              <div className="signal-cell-copy">{candidate.signal_state || '-'} · raw {formatNumber(candidate.score, 2)}</div>
+                              <div>퀀트 {candidate.quant_score == null ? '-' : formatNumber(candidate.quant_score, 2)}</div>
+                              <div className="signal-cell-copy">{reasonCodeToKorean(String(candidate.signal_state || '-'))} · 원점수 {formatNumber(candidate.score, 2)}</div>
                             </td>
                             <td style={{ padding: 12, fontSize: 12 }}>
                               <div className={classNameForHanna(hannaState)}>{HANNA_STATE_LABEL[hannaState]}</div>
@@ -265,13 +265,13 @@ export function ScannerPage({ snapshot, loading, errorMessage, onRefresh }: Scan
                                 <span className={researchGradeBadge(candidate).className}>{researchGradeBadge(candidate).label}</span>
                               </div>
                               <div className="signal-cell-copy" style={{ marginTop: 6 }}>
-                                score {researchScoreDisplay(candidate)}
+                                점수 {researchScoreDisplay(candidate)}
                               </div>
                             </td>
                             <td style={{ padding: 12, fontSize: 12 }}>
-                              <div>{candidate.risk_check?.reason_code || 'OK'}</div>
+                              <div>{reasonCodeToKorean(String(candidate.risk_check?.reason_code || 'OK'))}</div>
                               <div className={classNameForFinalAction(candidate.final_action)} style={{ marginTop: 6 }}>
-                                {candidate.final_action || '-'}
+                                {reasonCodeToKorean(String(candidate.final_action || '-'))}
                               </div>
                             </td>
                             <td style={{ padding: 12, fontSize: 12 }}>
@@ -295,59 +295,59 @@ export function ScannerPage({ snapshot, loading, errorMessage, onRefresh }: Scan
                       <div>
                         <div style={{ fontSize: 14, fontWeight: 700 }}>{formatSymbol(selectedCandidate.code, selectedCandidate.name)}</div>
                         <div className="signal-cell-copy" style={{ marginTop: 4 }}>
-                          {selectedCandidate.strategy_name || selectedCandidate.strategy_id} · {selectedCandidate.market || '-'} · {selectedCandidate.signal_state || '-'}
+                          {selectedCandidate.strategy_name || selectedCandidate.strategy_id} · {selectedCandidate.market || '-'} · {reasonCodeToKorean(String(selectedCandidate.signal_state || '-'))}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <span className={classNameForHanna(resolveHannaStateWithProvider(selectedCandidate, snapshot.research.status, snapshot.research.freshness))}>Hanna {HANNA_STATE_LABEL[resolveHannaStateWithProvider(selectedCandidate, snapshot.research.status, snapshot.research.freshness)]}</span>
-                        <span className={classNameForFinalAction(selectedCandidate.final_action)}>{selectedCandidate.final_action || '-'}</span>
+                        <span className={classNameForFinalAction(selectedCandidate.final_action)}>{reasonCodeToKorean(String(selectedCandidate.final_action || '-'))}</span>
                       </div>
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
                       <div className="operator-note-card" style={{ display: 'grid', gap: 6 }}>
-                        <div className="operator-note-label">Layer A · Universe</div>
-                        <div className="operator-note-copy">rule {selectedCandidate.layer_a?.universe_rule || '-'}</div>
-                        <div className="operator-note-copy">scan {formatDateTime(selectedCandidate.layer_a?.scan_time || selectedCandidate.last_scanned_at)}</div>
-                        <div className="operator-note-copy">inclusion {selectedCandidate.layer_a?.inclusion_reason || '-'}</div>
-                        <div className="operator-note-copy">universe freshness {String((snapshot.universe.items || []).find((row) => String(row.rule_name || '') === String(selectedCandidate.layer_a?.universe_rule || ''))?.freshness || 'missing')}</div>
+                        <div className="operator-note-label">1단계 · 유니버스</div>
+                        <div className="operator-note-copy">규칙 {selectedCandidate.layer_a?.universe_rule || '-'}</div>
+                        <div className="operator-note-copy">스캔 시각 {formatDateTime(selectedCandidate.layer_a?.scan_time || selectedCandidate.last_scanned_at)}</div>
+                        <div className="operator-note-copy">포함 사유 {reasonCodeToKorean(String(selectedCandidate.layer_a?.inclusion_reason || '-'))}</div>
+                        <div className="operator-note-copy">유니버스 최신성 {freshnessToKorean(String((snapshot.universe.items || []).find((row) => String(row.rule_name || '') === String(selectedCandidate.layer_a?.universe_rule || ''))?.freshness || 'missing'))}</div>
                       </div>
 
                       <div className="operator-note-card" style={{ display: 'grid', gap: 6 }}>
-                        <div className="operator-note-label">Layer B · Quant</div>
-                        <div className="operator-note-copy">quant_score {selectedCandidate.layer_b?.quant_score == null ? '-' : formatNumber(selectedCandidate.layer_b?.quant_score, 2)}</div>
-                        <div className="operator-note-copy">strategy {selectedCandidate.layer_b?.strategy_id || selectedCandidate.strategy_id || '-'}</div>
-                        <div className="operator-note-copy">tags {translatedCodes(selectedCandidate.layer_b?.quant_tags)}</div>
-                        <div className="operator-note-copy">quote {selectedCandidate.layer_b?.technical_snapshot?.current_price ?? '-'} · {String(selectedCandidate.layer_b?.technical_snapshot?.freshness || 'missing')} · Grade {String(selectedCandidate.layer_b?.technical_snapshot?.validation?.grade || '-')}</div>
+                        <div className="operator-note-label">2단계 · 퀀트</div>
+                        <div className="operator-note-copy">퀀트 점수 {selectedCandidate.layer_b?.quant_score == null ? '-' : formatNumber(selectedCandidate.layer_b?.quant_score, 2)}</div>
+                        <div className="operator-note-copy">전략 {selectedCandidate.layer_b?.strategy_id || selectedCandidate.strategy_id || '-'}</div>
+                        <div className="operator-note-copy">태그 {translatedCodes(selectedCandidate.layer_b?.quant_tags)}</div>
+                        <div className="operator-note-copy">시세 {selectedCandidate.layer_b?.technical_snapshot?.current_price ?? '-'} · {freshnessToKorean(String(selectedCandidate.layer_b?.technical_snapshot?.freshness || 'missing'))} · {gradeToKorean(String(selectedCandidate.layer_b?.technical_snapshot?.validation?.grade || '-'))}</div>
                       </div>
 
                       <div className="operator-note-card" style={{ display: 'grid', gap: 6 }}>
-                        <div className="operator-note-label">Layer C · Hanna</div>
+                        <div className="operator-note-label">3단계 · Hanna</div>
                         <div className="workspace-chip-row">
                           <span className={researchFreshnessBadge(selectedCandidate).className}>{researchFreshnessBadge(selectedCandidate).label}</span>
                           <span className={researchGradeBadge(selectedCandidate).className}>{researchGradeBadge(selectedCandidate).label}</span>
-                          {selectedCandidate.layer_c?.validation?.reason ? <span className="inline-badge">{selectedCandidate.layer_c.validation.reason}</span> : null}
+                          {selectedCandidate.layer_c?.validation?.reason ? <span className="inline-badge">{reasonCodeToKorean(String(selectedCandidate.layer_c.validation.reason))}</span> : null}
                         </div>
-                        <div className="operator-note-copy">research_score {researchScoreDisplay(selectedCandidate)}</div>
-                        <div className="operator-note-copy">warnings {translatedCodes(selectedCandidate.layer_c?.warnings)}</div>
-                        <div className="operator-note-copy">tags {(selectedCandidate.layer_c?.tags || []).join(', ') || '-'}</div>
-                        <div className="operator-note-copy">summary {researchGrade(selectedCandidate) === 'D' ? (selectedCandidate.layer_c?.validation?.exclusion_reason || '검증 제외') : (selectedCandidate.layer_c?.summary || '-')}</div>
+                        <div className="operator-note-copy">리서치 점수 {researchScoreDisplay(selectedCandidate)}</div>
+                        <div className="operator-note-copy">경고 {translatedCodes(selectedCandidate.layer_c?.warnings)}</div>
+                        <div className="operator-note-copy">태그 {translatedCodes(selectedCandidate.layer_c?.tags)}</div>
+                        <div className="operator-note-copy">요약 {researchGrade(selectedCandidate) === 'D' ? (selectedCandidate.layer_c?.validation?.exclusion_reason || '검증 제외') : (selectedCandidate.layer_c?.summary || '-')}</div>
                       </div>
 
                       <div className="operator-note-card" style={{ display: 'grid', gap: 6 }}>
-                        <div className="operator-note-label">Layer D · Risk Gate</div>
-                        <div className="operator-note-copy">{selectedCandidate.layer_d?.blocked ? 'blocked' : 'allowed'}</div>
-                        <div className="operator-note-copy">reason {translatedCodes(selectedCandidate.layer_d?.reason_codes || selectedCandidate.reason_codes)}</div>
-                        <div className="operator-note-copy">position/liquidity {selectedCandidate.layer_d?.position_cap_state || '-'} / {selectedCandidate.layer_d?.liquidity_state || '-'}</div>
-                        <div className="operator-note-copy">spread {selectedCandidate.layer_d?.spread_state || '-'}</div>
+                        <div className="operator-note-label">4단계 · 리스크 게이트</div>
+                        <div className="operator-note-copy">{selectedCandidate.layer_d?.blocked ? '차단' : '허용'}</div>
+                        <div className="operator-note-copy">사유 {translatedCodes(selectedCandidate.layer_d?.reason_codes || selectedCandidate.reason_codes)}</div>
+                        <div className="operator-note-copy">포지션/유동성 {reasonCodeToKorean(String(selectedCandidate.layer_d?.position_cap_state || '-'))} / {reasonCodeToKorean(String(selectedCandidate.layer_d?.liquidity_state || '-'))}</div>
+                        <div className="operator-note-copy">스프레드 {reasonCodeToKorean(String(selectedCandidate.layer_d?.spread_state || '-'))}</div>
                       </div>
 
                       <div className="operator-note-card" style={{ display: 'grid', gap: 6 }}>
-                        <div className="operator-note-label">Layer E · Final Action</div>
-                        <div className="operator-note-copy">final_action {selectedCandidate.layer_e?.final_action || selectedCandidate.final_action || '-'}</div>
-                        <div className="operator-note-copy">reason {selectedCandidate.layer_e?.decision_reason || '-'}</div>
-                        <div className="operator-note-copy">timestamp {formatDateTime(selectedCandidate.layer_e?.timestamp || selectedCandidate.last_scanned_at)}</div>
-                        <div className="operator-note-copy">source {(selectedCandidate.layer_e?.source_context && JSON.stringify(selectedCandidate.layer_e.source_context)) || '-'}</div>
+                        <div className="operator-note-label">5단계 · 최종 액션</div>
+                        <div className="operator-note-copy">최종 액션 {reasonCodeToKorean(String(selectedCandidate.layer_e?.final_action || selectedCandidate.final_action || '-'))}</div>
+                        <div className="operator-note-copy">판단 사유 {reasonCodeToKorean(String(selectedCandidate.layer_e?.decision_reason || '-'))}</div>
+                        <div className="operator-note-copy">기록 시각 {formatDateTime(selectedCandidate.layer_e?.timestamp || selectedCandidate.last_scanned_at)}</div>
+                        <div className="operator-note-copy">참조 정보 {(selectedCandidate.layer_e?.source_context && JSON.stringify(selectedCandidate.layer_e.source_context)) || '-'}</div>
                       </div>
                     </div>
                   </div>

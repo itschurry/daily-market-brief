@@ -4,6 +4,7 @@ import { deleteStrategyPreset, saveStrategyPreset, seedDefaultStrategies, toggle
 import { useConsoleLogs } from '../hooks/useConsoleLogs';
 import { loadBacktestQuery } from '../hooks/useBacktest';
 import { VALIDATION_TRANSFER_STORAGE_KEY } from '../lib/validationConfigStorage';
+import { strategyLifecycleToKorean } from '../constants/uiText';
 import type { StrategyRegistryItem } from '../types/domain';
 import type { ConsoleSnapshot } from '../types/consoleView';
 import { formatDateTime, formatPercent } from '../utils/format';
@@ -17,11 +18,11 @@ interface StrategiesPageProps {
 }
 
 function lifecycleBadge(item: StrategyRegistryItem): { className: string; label: string } {
-  if (item.enabled) return { className: 'inline-badge is-success', label: 'applied' };
-  if (item.status === 'ready') return { className: 'inline-badge', label: 'approved' };
-  if (item.status === 'paused') return { className: 'inline-badge is-warning', label: 'stale' };
-  if (item.status === 'archived') return { className: 'inline-badge is-danger', label: 'blocked' };
-  return { className: 'inline-badge is-danger', label: 'candidate' };
+  if (item.enabled) return { className: 'inline-badge is-success', label: strategyLifecycleToKorean('applied') };
+  if (item.status === 'ready') return { className: 'inline-badge', label: strategyLifecycleToKorean('approved') };
+  if (item.status === 'paused') return { className: 'inline-badge is-warning', label: strategyLifecycleToKorean('stale') };
+  if (item.status === 'archived') return { className: 'inline-badge is-danger', label: strategyLifecycleToKorean('blocked') };
+  return { className: 'inline-badge is-danger', label: strategyLifecycleToKorean('candidate') };
 }
 
 function formatParamValue(value: unknown): string {
@@ -158,7 +159,7 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh, mod
 
   const handleCreatePreset = useCallback(async () => {
     const base = selectedStrategy || items.find((item) => item.strategy_kind === 'trend_following') || items[0];
-    const rawName = window.prompt('새 프리셋 이름을 입력해줘.', base?.name ? `${base.name} Copy` : 'New Strategy Preset');
+    const rawName = window.prompt('새 프리셋 이름을 입력해줘.', base?.name ? `${base.name} 복사본` : '새 전략 프리셋');
     if (!rawName) return;
     const name = rawName.trim();
     const strategyId = window.prompt('전략 ID를 입력해줘.', slugifyStrategyId(name));
@@ -181,7 +182,7 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh, mod
 
   const handleClonePreset = useCallback(async () => {
     if (!selectedStrategy) return;
-    const rawName = window.prompt('복제할 프리셋 이름을 입력해줘.', `${selectedStrategy.name || selectedStrategy.strategy_id} Copy`);
+    const rawName = window.prompt('복제할 프리셋 이름을 입력해줘.', `${selectedStrategy.name || selectedStrategy.strategy_id} 복사본`);
     if (!rawName) return;
     const name = rawName.trim();
     const strategyId = window.prompt('새 전략 ID를 입력해줘.', slugifyStrategyId(name));
@@ -246,8 +247,8 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh, mod
           <ConsoleActionBar
             title={readOnly ? '전략 상태' : '전략 프리셋'}
             subtitle={readOnly
-              ? '운영 모드에서는 승인/적용된 전략 상태와 enable 현황만 확인합니다. 프리셋 생성, 삭제, 검증 이관은 실험 모드에서만 허용합니다.'
-              : '실시간 엔진은 승인된 Strategy Registry만 읽습니다. approval status, enable 상태, universe rule, scan cycle을 여기서 분리해서 관리합니다.'}
+              ? '운영 모드에서는 승인/적용된 전략 상태와 활성화 현황만 확인합니다. 프리셋 생성, 삭제, 검증 이관은 실험 모드에서만 허용합니다.'
+              : '실시간 엔진은 승인된 전략 레지스트리만 읽습니다. 승인 상태, 활성화 상태, 유니버스 규칙, 스캔 주기를 여기서 분리해서 관리합니다.'}
             lastUpdated={snapshot.fetchedAt}
             loading={loading}
             errorMessage={errorMessage}
@@ -429,7 +430,7 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh, mod
                   <div className="summary-metric-label">시장 / 유니버스</div>
                   <div className="summary-metric-value">{selectedStrategy.market || '-'} / {selectedStrategy.universe_rule || '-'}</div>
                   <div className="summary-metric-detail" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    scan cycle
+                    스캔 주기
                     {!readOnly ? (
                       <select
                         value={selectedStrategy.scan_cycle || '5m'}
@@ -457,8 +458,8 @@ export function StrategiesPage({ snapshot, loading, errorMessage, onRefresh, mod
                 <div className="page-section" style={{ padding: 16 }}>
                   <div className="section-title">현재 룰</div>
                   <div className="detail-list">
-                    <div><strong>Entry</strong> · {selectedStrategy.entry_rule || '-'}</div>
-                    <div><strong>Exit</strong> · {selectedStrategy.exit_rule || '-'}</div>
+                    <div><strong>진입</strong> · {selectedStrategy.entry_rule || '-'}</div>
+                    <div><strong>청산</strong> · {selectedStrategy.exit_rule || '-'}</div>
                     <div><strong>활성화 일시</strong> · {formatDateTime(selectedStrategy.enabled_at)}</div>
                   </div>
                 </div>
