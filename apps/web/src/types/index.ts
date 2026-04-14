@@ -707,6 +707,12 @@ export interface PaperEngineConfig {
   stop_loss_pct: number;
   take_profit_pct: number;
   max_holding_days: number;
+  rotation?: {
+    enabled?: boolean;
+    min_score_gap?: number;
+    daily_limit?: number;
+    min_holding_days?: number;
+  };
   market_profiles?: Partial<Record<'KOSPI' | 'NASDAQ', PaperStrategyProfile>>;
 }
 
@@ -839,6 +845,23 @@ export interface PaperEngineState {
       blocked_count?: number;
       skipped_count?: number;
     }>;
+    rotation_summary?: {
+      attempted_count?: number;
+      executed_count?: number;
+      executed?: Array<{
+        market?: string;
+        sell_code?: string;
+        buy_code?: string;
+        score_gap?: number;
+      }>;
+      blocked?: Array<{
+        market?: string;
+        reason?: string;
+        sell_code?: string;
+        buy_code?: string;
+        score_gap?: number;
+      }>;
+    };
   };
   config?: Partial<PaperEngineConfig>;
   workflow_summary?: PaperWorkflowSummary;

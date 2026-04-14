@@ -72,7 +72,17 @@ class _FakeEngine:
                 "quantity": quantity,
                 "avg_price_local": 1000.0,
                 "avg_price_krw": 1000.0,
+                "entry_ts": event["ts"],
             })
+        elif kwargs.get("side") == "sell":
+            self.account["positions"] = [
+                position
+                for position in self.account["positions"]
+                if not (
+                    str(position.get("code") or "").upper() == code
+                    and str(position.get("market") or "").upper() == market
+                )
+            ]
         return {"ok": True, "event": event, "account": self.account}
 
 
@@ -126,6 +136,16 @@ class ExecutionStrategyCapTests(unittest.TestCase):
             counts = execution_svc._infer_strategy_position_counts(account, "KOSPI")
 
         self.assertEqual({"alpha": 2}, counts)
+
+    def test_default_auto_trader_config_enables_conservative_rotation_defaults(self):
+        cfg = execution_svc._default_auto_trader_config()
+
+        self.assertEqual({
+            "enabled": True,
+            "min_score_gap": 8.0,
+            "daily_limit": 1,
+            "min_holding_days": 2,
+        }, cfg["rotation"])
 
     def test_strategy_position_cap_map_uses_more_conservative_of_params_and_risk_limits(self):
         with patch.object(execution_svc, "list_strategies", return_value=[
@@ -302,6 +322,199 @@ class ExecutionStrategyCapTests(unittest.TestCase):
         self.assertEqual(["HOLD1"], [item["code"] for item in summary["brief_candidates"]["hold"]])
         self.assertEqual(["BLOCK1"], [item["code"] for item in summary["brief_candidates"]["blocked"]])
         self.assertEqual(1, len(notifier.market_open_briefs))
+
+    def test_run_auto_trader_cycle_rotates_when_full_and_better_candidate_exists(self):
+        engine = _FakeEngine()
+        engine.account["positions"] = [
+            {"code": "AAA", "name": "Weak Hold", "market": "KOSPI", "quantity": 1, "avg_price_local": 1000, "avg_price_krw": 1000, "entry_ts": "2026-04-01T09:00:00+09:00"},
+            {"code": "BBB", "name": "Strong Hold", "market": "KOSPI", "quantity": 1, "avg_price_local": 1000, "avg_price_krw": 1000, "entry_ts": "2026-04-01T09:00:00+09:00"},
+        ]
+        cfg = execution_svc._default_auto_trader_config()
+        cfg["markets"] = ["KOSPI"]
+        cfg["daily_buy_limit"] = 10
+        cfg["daily_sell_limit"] = 10
+        cfg["max_orders_per_symbol_per_day"] = 3
+        cfg["market_profiles"]["KOSPI"]["max_positions"] = 2
+        cfg["rotation"] = {
+            "enabled": True,
+            "min_score_gap": 8.0,
+            "daily_limit": 1,
+            "min_holding_days": 2,
+        }
+        cfg = execution_svc._sync_primary_strategy_fields(cfg)
+
+        signals = [
+            {
+                "code": "AAA",
+                "name": "Weak Hold",
+                "market": "KOSPI",
+                "strategy_id": "alpha",
+                "strategy_name": "Alpha",
+                "signal_state": "hold",
+                "score": 55.0,
+                "size_recommendation": {"quantity": 0, "reason": "held"},
+                "risk_inputs": {},
+                "ev_metrics": {},
+                "risk_check": {"reason_code": "held", "message": ""},
+                "reason_codes": [],
+                "layer_events": [],
+            },
+            {
+                "code": "BBB",
+                "name": "Strong Hold",
+                "market": "KOSPI",
+                "strategy_id": "beta",
+                "strategy_name": "Beta",
+                "signal_state": "hold",
+                "score": 72.0,
+                "size_recommendation": {"quantity": 0, "reason": "held"},
+                "risk_inputs": {},
+                "ev_metrics": {},
+                "risk_check": {"reason_code": "held", "message": ""},
+                "reason_codes": [],
+                "layer_events": [],
+            },
+            {
+                "code": "CCC",
+                "name": "Rotation Buy",
+                "market": "KOSPI",
+                "strategy_id": "gamma",
+                "strategy_name": "Gamma",
+                "signal_state": "entry",
+                "score": 70.0,
+                "size_recommendation": {"quantity": 1, "reason": "ok"},
+                "risk_inputs": {"stop_loss_pct": 5.0, "take_profit_pct": 10.0},
+                "ev_metrics": {},
+                "risk_check": {"reason_code": "ok", "message": ""},
+                "reason_codes": [],
+                "layer_events": [],
+            },
+        ]
+
+        with patch.object(execution_svc, "get_execution_engine", return_value=engine), \
+             patch.object(execution_svc, "get_notification_service", return_value=_FakeNotifier()), \
+             patch.object(execution_svc, "is_market_open", return_value=True), \
+             patch.object(execution_svc, "_compute_technical_snapshot", return_value={"close": 1000.0}), \
+             patch.object(execution_svc, "_should_exit_by_indicators", return_value=None), \
+             patch.object(execution_svc, "build_signal_book", return_value={"signals": signals, "generated_at": "2026-04-10T09:00:00+09:00", "risk_guard_state": {}}), \
+             patch.object(execution_svc, "summarize_order_decision", side_effect=[
+                 {"orderable": False, "reason_code": "held", "action": "hold", "order_quantity": 0},
+                 {"orderable": False, "reason_code": "held", "action": "hold", "order_quantity": 0},
+                 {"orderable": True, "reason_code": "ok", "action": "allow", "order_quantity": 1},
+             ]), \
+             patch.object(execution_svc, "list_strategies", return_value=[
+                 {"strategy_id": "alpha", "market": "KOSPI", "enabled": True, "params": {"max_positions": 2}, "risk_limits": {"max_positions": 2}},
+                 {"strategy_id": "beta", "market": "KOSPI", "enabled": True, "params": {"max_positions": 2}, "risk_limits": {"max_positions": 2}},
+                 {"strategy_id": "gamma", "market": "KOSPI", "enabled": True, "params": {"max_positions": 2}, "risk_limits": {"max_positions": 2}},
+             ]), \
+             patch.object(execution_svc, "read_order_events", return_value=[]), \
+             patch.object(execution_svc, "_record_execution_order", side_effect=lambda payload: payload), \
+             patch.object(execution_svc, "append_signal_snapshots", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "append_engine_cycle", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "append_account_snapshot", side_effect=lambda payload: None):
+            summary = execution_svc._run_auto_trader_cycle(cfg)
+
+        self.assertEqual(["sell", "buy"], [item["side"] for item in engine.placed_orders])
+        self.assertEqual(["AAA", "CCC"], [item["code"] for item in engine.placed_orders])
+        self.assertEqual(1, summary["rotation_summary"]["executed_count"])
+        self.assertEqual("AAA", summary["rotation_summary"]["executed"][0]["sell_code"])
+        self.assertEqual("CCC", summary["rotation_summary"]["executed"][0]["buy_code"])
+
+    def test_run_auto_trader_cycle_skips_rotation_when_score_gap_is_too_small(self):
+        engine = _FakeEngine()
+        engine.account["positions"] = [
+            {"code": "AAA", "name": "Weak Hold", "market": "KOSPI", "quantity": 1, "avg_price_local": 1000, "avg_price_krw": 1000, "entry_ts": "2026-04-01T09:00:00+09:00"},
+            {"code": "BBB", "name": "Strong Hold", "market": "KOSPI", "quantity": 1, "avg_price_local": 1000, "avg_price_krw": 1000, "entry_ts": "2026-04-01T09:00:00+09:00"},
+        ]
+        cfg = execution_svc._default_auto_trader_config()
+        cfg["markets"] = ["KOSPI"]
+        cfg["daily_buy_limit"] = 10
+        cfg["daily_sell_limit"] = 10
+        cfg["max_orders_per_symbol_per_day"] = 3
+        cfg["market_profiles"]["KOSPI"]["max_positions"] = 2
+        cfg["rotation"] = {
+            "enabled": True,
+            "min_score_gap": 8.0,
+            "daily_limit": 1,
+            "min_holding_days": 2,
+        }
+        cfg = execution_svc._sync_primary_strategy_fields(cfg)
+
+        signals = [
+            {
+                "code": "AAA",
+                "name": "Weak Hold",
+                "market": "KOSPI",
+                "strategy_id": "alpha",
+                "strategy_name": "Alpha",
+                "signal_state": "hold",
+                "score": 55.0,
+                "size_recommendation": {"quantity": 0, "reason": "held"},
+                "risk_inputs": {},
+                "ev_metrics": {},
+                "risk_check": {"reason_code": "held", "message": ""},
+                "reason_codes": [],
+                "layer_events": [],
+            },
+            {
+                "code": "BBB",
+                "name": "Strong Hold",
+                "market": "KOSPI",
+                "strategy_id": "beta",
+                "strategy_name": "Beta",
+                "signal_state": "hold",
+                "score": 72.0,
+                "size_recommendation": {"quantity": 0, "reason": "held"},
+                "risk_inputs": {},
+                "ev_metrics": {},
+                "risk_check": {"reason_code": "held", "message": ""},
+                "reason_codes": [],
+                "layer_events": [],
+            },
+            {
+                "code": "CCC",
+                "name": "Rotation Buy",
+                "market": "KOSPI",
+                "strategy_id": "gamma",
+                "strategy_name": "Gamma",
+                "signal_state": "entry",
+                "score": 60.0,
+                "size_recommendation": {"quantity": 1, "reason": "ok"},
+                "risk_inputs": {"stop_loss_pct": 5.0, "take_profit_pct": 10.0},
+                "ev_metrics": {},
+                "risk_check": {"reason_code": "ok", "message": ""},
+                "reason_codes": [],
+                "layer_events": [],
+            },
+        ]
+
+        with patch.object(execution_svc, "get_execution_engine", return_value=engine), \
+             patch.object(execution_svc, "get_notification_service", return_value=_FakeNotifier()), \
+             patch.object(execution_svc, "is_market_open", return_value=True), \
+             patch.object(execution_svc, "_compute_technical_snapshot", return_value={"close": 1000.0}), \
+             patch.object(execution_svc, "_should_exit_by_indicators", return_value=None), \
+             patch.object(execution_svc, "build_signal_book", return_value={"signals": signals, "generated_at": "2026-04-10T09:00:00+09:00", "risk_guard_state": {}}), \
+             patch.object(execution_svc, "summarize_order_decision", side_effect=[
+                 {"orderable": False, "reason_code": "held", "action": "hold", "order_quantity": 0},
+                 {"orderable": False, "reason_code": "held", "action": "hold", "order_quantity": 0},
+                 {"orderable": True, "reason_code": "ok", "action": "allow", "order_quantity": 1},
+             ]), \
+             patch.object(execution_svc, "list_strategies", return_value=[
+                 {"strategy_id": "alpha", "market": "KOSPI", "enabled": True, "params": {"max_positions": 2}, "risk_limits": {"max_positions": 2}},
+                 {"strategy_id": "beta", "market": "KOSPI", "enabled": True, "params": {"max_positions": 2}, "risk_limits": {"max_positions": 2}},
+                 {"strategy_id": "gamma", "market": "KOSPI", "enabled": True, "params": {"max_positions": 2}, "risk_limits": {"max_positions": 2}},
+             ]), \
+             patch.object(execution_svc, "read_order_events", return_value=[]), \
+             patch.object(execution_svc, "_record_execution_order", side_effect=lambda payload: payload), \
+             patch.object(execution_svc, "append_signal_snapshots", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "append_engine_cycle", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "append_account_snapshot", side_effect=lambda payload: None):
+            summary = execution_svc._run_auto_trader_cycle(cfg)
+
+        self.assertEqual([], engine.placed_orders)
+        self.assertEqual(0, summary["rotation_summary"]["executed_count"])
+        self.assertIn("rotation_score_gap_too_small", summary["skip_reason_counts"])
+        self.assertIn("max_positions_reached", summary["skip_reason_counts"])
 
 
 if __name__ == "__main__":

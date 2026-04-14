@@ -28,6 +28,10 @@ interface PaperSettings {
   dailySellLimit: number;
   maxOrdersPerSymbol: number;
   intervalSeconds: number;
+  rotationEnabled: boolean;
+  rotationMinScoreGap: number;
+  rotationDailyLimit: number;
+  rotationMinHoldingDays: number;
 }
 
 const SETTINGS_KEY = 'console_paper_settings_v1';
@@ -45,6 +49,10 @@ function defaultSettings(): PaperSettings {
     dailySellLimit: 20,
     maxOrdersPerSymbol: 3,
     intervalSeconds: 300,
+    rotationEnabled: true,
+    rotationMinScoreGap: 8,
+    rotationDailyLimit: 1,
+    rotationMinHoldingDays: 2,
   };
 }
 
@@ -756,6 +764,12 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
           daily_buy_limit: settings.dailyBuyLimit,
           daily_sell_limit: settings.dailySellLimit,
           max_orders_per_symbol_per_day: settings.maxOrdersPerSymbol,
+          rotation: {
+            enabled: settings.rotationEnabled,
+            min_score_gap: settings.rotationMinScoreGap,
+            daily_limit: settings.rotationDailyLimit,
+            min_holding_days: settings.rotationMinHoldingDays,
+          },
         });
         if (!result.ok) {
           push('error', '모의투자 엔진 시작에 실패했습니다.', result.error || '', 'paper');
@@ -1031,6 +1045,48 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
           onCommit={(value) => setSettings((prev) => ({ ...prev, maxOrdersPerSymbol: Number(value ?? prev.maxOrdersPerSymbol) }))}
         />
       </label>
+      <div style={{ display: 'grid', gap: 8, padding: 12, border: '1px solid var(--border)', borderRadius: 12, background: 'var(--bg-soft)' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
+          <input
+            type="checkbox"
+            checked={settings.rotationEnabled}
+            onChange={(event) => setSettings((prev) => ({ ...prev, rotationEnabled: event.target.checked }))}
+          />
+          포지션 로테이션 켜기
+        </label>
+        <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+          포지션이 꽉 차면 기존 최약체 1개와 신규 최강 후보 1개를 비교해서, 점수 차가 충분할 때만 갈아타.
+        </div>
+        <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>최소 점수 차</span>
+            <NumericInput
+              value={settings.rotationMinScoreGap}
+              min={0}
+              style={{ padding: '0 12px' }}
+              onCommit={(value) => setSettings((prev) => ({ ...prev, rotationMinScoreGap: Number(value ?? prev.rotationMinScoreGap) }))}
+            />
+          </label>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>일일 교체 한도(건)</span>
+            <NumericInput
+              value={settings.rotationDailyLimit}
+              min={0}
+              style={{ padding: '0 12px' }}
+              onCommit={(value) => setSettings((prev) => ({ ...prev, rotationDailyLimit: Number(value ?? prev.rotationDailyLimit) }))}
+            />
+          </label>
+          <label style={{ display: 'grid', gap: 6 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>최소 보유일</span>
+            <NumericInput
+              value={settings.rotationMinHoldingDays}
+              min={0}
+              style={{ padding: '0 12px' }}
+              onCommit={(value) => setSettings((prev) => ({ ...prev, rotationMinHoldingDays: Number(value ?? prev.rotationMinHoldingDays) }))}
+            />
+          </label>
+        </div>
+      </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button
           type="button"
@@ -1081,6 +1137,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
   const stopLossPctDefault = toNumber(engineState.config?.stop_loss_pct, NaN);
   const takeProfitPctDefault = toNumber(engineState.config?.take_profit_pct, NaN);
   const skipReasonCounts = engineState.last_summary?.skip_reason_counts || {};
+  const rotationSummary = engineState.last_summary?.rotation_summary;
   const orderFailureSummary = engineState.order_failure_summary || {};
   const blockedReasonRows = reasonCountRows(
     engineState.last_summary?.blocked_reason_counts,
@@ -1589,6 +1646,7 @@ export function PaperPortfolioPage({ snapshot, loading, errorMessage, onRefresh 
                 <div>최근 실행 시각: {formatDateTime(engineState.last_run_at)}</div>
                 <div>다음 실행 시각: {formatDateTime(engineState.next_run_at)}</div>
                 <div>최근 오류: {engineState.last_error || '-'}</div>
+                <div>로테이션: {engineState.config?.rotation?.enabled ? '활성' : '비활성'} · 오늘 교체 {formatNumber(rotationSummary?.executed_count, 0)}건</div>
                 <div>
                   최근 실행 요약: 매수 {formatNumber(engineState.last_summary?.executed_buy_count, 0)}건 / 매도 {formatNumber(engineState.last_summary?.executed_sell_count, 0)}건
                 </div>

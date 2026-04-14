@@ -933,6 +933,12 @@ def _default_auto_trader_config() -> dict:
         "min_avg_volume": 100000,
         "min_avg_notional_krw": 50000000,
         "slippage_bps_base": 8.0,
+        "rotation": {
+            "enabled": True,
+            "min_score_gap": 8.0,
+            "daily_limit": 1,
+            "min_holding_days": 2,
+        },
         "market_profiles": profiles,
     }
     return base
@@ -1058,6 +1064,138 @@ def _coerce_positive_int(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _rotation_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    raw = cfg.get("rotation") if isinstance(cfg.get("rotation"), dict) else {}
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "min_score_gap": _to_float(raw.get("min_score_gap"), 8.0),
+        "daily_limit": max(0, int(_to_float(raw.get("daily_limit"), 1))),
+        "min_holding_days": max(0, int(_to_float(raw.get("min_holding_days"), 2))),
+    }
+
+
+def _rotation_today_count(market: str) -> int:
+    today = _today_kst_str()
+    normalized_market = normalize_strategy_market(market)
+    count = 0
+    for item in read_order_events(limit=500):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("timestamp") or "").startswith(today) is False:
+            continue
+        if str(item.get("market") or "").upper() != normalized_market:
+            continue
+        if not bool(item.get("success")):
+            continue
+        if str(item.get("trigger_type") or "").lower() != "rotation":
+            continue
+        if str(item.get("side") or "").lower() != "sell":
+            continue
+        count += 1
+    return count
+
+
+def _candidate_rotation_score(candidate: dict[str, Any]) -> float:
+    if not isinstance(candidate, dict):
+        return 0.0
+    score = _to_float(candidate.get("score"), 0.0)
+    if score:
+        return score
+    ev_metrics = candidate.get("ev_metrics") if isinstance(candidate.get("ev_metrics"), dict) else {}
+    expected_value = _to_float(ev_metrics.get("expected_value"), 0.0)
+    return expected_value * 100.0
+
+
+def _held_rotation_snapshot(position: dict[str, Any], signal_map: dict[str, dict[str, Any]], min_holding_days: int) -> dict[str, Any] | None:
+    code = str(position.get("code") or "").upper()
+    market = str(position.get("market") or "").upper()
+    if not code or not market:
+        return None
+    holding_days = _position_holding_days(position)
+    if holding_days < min_holding_days:
+        return None
+    signal = signal_map.get(code) if isinstance(signal_map.get(code), dict) else {}
+    reason_codes = [str(item or "") for item in (signal.get("reason_codes") or []) if str(item or "")]
+    if "do_not_touch" in reason_codes:
+        return None
+    return {
+        "code": code,
+        "name": str(position.get("name") or code),
+        "market": market,
+        "quantity": int(position.get("quantity") or 0),
+        "strategy_id": str(signal.get("strategy_id") or "").strip(),
+        "strategy_name": str(signal.get("strategy_name") or "").strip(),
+        "holding_days": holding_days,
+        "score": _candidate_rotation_score(signal),
+    }
+
+
+def _select_rotation_plan(
+    *,
+    account: dict[str, Any],
+    market: str,
+    cfg: dict[str, Any],
+    effective_candidates: list[dict[str, Any]],
+    signal_map: dict[str, dict[str, Any]],
+    held_codes: set[str],
+    strategy_position_counts: dict[str, int],
+    strategy_position_caps: dict[str, int],
+    max_orders_per_symbol: int,
+) -> dict[str, Any]:
+    rotation_cfg = _rotation_config(cfg)
+    if not rotation_cfg.get("enabled"):
+        return {"ok": False, "reason": "rotation_disabled"}
+    daily_limit = int(rotation_cfg.get("daily_limit") or 0)
+    if daily_limit > 0 and _rotation_today_count(market) >= daily_limit:
+        return {"ok": False, "reason": "rotation_daily_limit_reached"}
+
+    min_holding_days = int(rotation_cfg.get("min_holding_days") or 0)
+    held_candidates: list[dict[str, Any]] = []
+    for position in account.get("positions", []):
+        if str(position.get("market") or "").upper() != market:
+            continue
+        snapshot = _held_rotation_snapshot(position, signal_map, min_holding_days)
+        if snapshot is not None:
+            held_candidates.append(snapshot)
+    if not held_candidates:
+        return {"ok": False, "reason": "rotation_no_sellable_position"}
+
+    buy_candidates: list[dict[str, Any]] = []
+    for candidate in effective_candidates:
+        code = str(candidate.get("code") or "").upper()
+        strategy_id = str(candidate.get("strategy_id") or "").strip()
+        if not code or code in held_codes:
+            continue
+        strategy_cap = strategy_position_caps.get(strategy_id)
+        strategy_position_count = strategy_position_counts.get(strategy_id, 0)
+        if strategy_cap is not None and strategy_position_count >= strategy_cap:
+            continue
+        size_recommendation = candidate.get("size_recommendation") if isinstance(candidate.get("size_recommendation"), dict) else {}
+        if int(size_recommendation.get("quantity") or 0) <= 0:
+            continue
+        buy_candidates.append(candidate)
+    if not buy_candidates:
+        return {"ok": False, "reason": "rotation_no_buy_candidate"}
+
+    weakest = min(held_candidates, key=lambda item: (float(item.get("score") or 0.0), str(item.get("code") or "")))
+    strongest = max(buy_candidates, key=lambda item: (_candidate_rotation_score(item), str(item.get("code") or "")))
+    score_gap = round(_candidate_rotation_score(strongest) - _to_float(weakest.get("score"), 0.0), 4)
+    if score_gap < float(rotation_cfg.get("min_score_gap") or 0.0):
+        return {
+            "ok": False,
+            "reason": "rotation_score_gap_too_small",
+            "score_gap": score_gap,
+            "sell_code": weakest.get("code"),
+            "buy_code": strongest.get("code"),
+        }
+    return {
+        "ok": True,
+        "sell": weakest,
+        "buy": strongest,
+        "score_gap": score_gap,
+    }
 
 
 def _resolve_strategy_position_cap(strategy: dict[str, Any]) -> int | None:
@@ -1417,6 +1555,12 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
     executed_sells: list[dict] = []
     skipped: list[dict] = []
     blocked_reason_counts: dict[str, int] = {}
+    rotation_summary: dict[str, Any] = {
+        "attempted_count": 0,
+        "executed_count": 0,
+        "executed": [],
+        "blocked": [],
+    }
     brief_candidates: dict[str, list[dict[str, Any]]] = {
         "buy": [],
         "sell": [],
@@ -1551,13 +1695,6 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
         profile = _auto_trader_profile(cfg, market)
         max_positions = int(profile.max_positions)
         slots = max(0, max_positions - market_position_count)
-        if slots <= 0:
-            candidate_counts_by_market[market] = 0
-            skipped.append({
-                "market": market,
-                "reason": "max_positions_reached",
-            })
-            continue
         buy_count = _count_orders(market, "buy")
         signal_book = build_signal_book(
             markets=[market], cfg=cfg, account=account)
@@ -1653,6 +1790,222 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
 
         blocked_counts_by_market[market] = blocked_count
         candidate_counts_by_market[market] = len(market_signals)
+        signal_map = {
+            str(item.get("code") or "").upper(): dict(item)
+            for item in market_signals
+            if isinstance(item, dict) and str(item.get("code") or "").upper()
+        }
+        if slots <= 0:
+            rotation_summary["attempted_count"] += 1
+            rotation_plan = _select_rotation_plan(
+                account=account,
+                market=market,
+                cfg=cfg,
+                effective_candidates=effective_candidates,
+                signal_map=signal_map,
+                held_codes=held_codes,
+                strategy_position_counts=strategy_position_counts,
+                strategy_position_caps=strategy_position_caps,
+                max_orders_per_symbol=max_orders_per_symbol,
+            )
+            if rotation_plan.get("ok"):
+                sell_item = rotation_plan["sell"]
+                buy_candidate = rotation_plan["buy"]
+                sell_code = str(sell_item.get("code") or "").upper()
+                buy_code = str(buy_candidate.get("code") or "").upper()
+                sell_result = engine.place_order(
+                    side="sell",
+                    code=sell_code,
+                    market=market,
+                    quantity=int(sell_item.get("quantity") or 0),
+                    order_type="market",
+                )
+                if sell_result.get("ok"):
+                    sell_event = sell_result.get("event") or {}
+                    executed_sells.append({
+                        "code": sell_code,
+                        "market": market,
+                        "reason": "rotation_replace",
+                        "quantity": sell_event.get("quantity"),
+                    })
+                    _record_execution_order({
+                        "timestamp": sell_event.get("ts") or _now_iso(),
+                        "success": True,
+                        "side": "sell",
+                        "code": sell_code,
+                        "market": market,
+                        "strategy_id": sell_item.get("strategy_id"),
+                        "strategy_name": sell_item.get("strategy_name"),
+                        "quantity": sell_event.get("quantity"),
+                        "order_type": "market",
+                        "submitted_at": started_at,
+                        "filled_at": sell_event.get("ts"),
+                        "filled_price_local": sell_event.get("filled_price_local"),
+                        "filled_price_krw": sell_event.get("filled_price_krw"),
+                        "notional_krw": sell_event.get("notional_krw"),
+                        "failure_reason": "",
+                        "reason_code": "rotation_replace",
+                        "message": "",
+                        "originating_cycle_id": cycle_id,
+                        "originating_signal_key": f"{market}:{sell_code}",
+                        "trigger_type": "rotation",
+                        "replacement_code": buy_code,
+                        "rotation_score_gap": rotation_plan.get("score_gap"),
+                    })
+                    held_codes.discard(sell_code)
+                    if str(sell_item.get("strategy_id") or ""):
+                        strategy_id = str(sell_item.get("strategy_id") or "")
+                        strategy_position_counts[strategy_id] = max(0, strategy_position_counts.get(strategy_id, 0) - 1)
+                    market_position_count = max(0, market_position_count - 1)
+                    slots = max(0, max_positions - market_position_count)
+                    size_recommendation = buy_candidate.get("size_recommendation") if isinstance(buy_candidate.get("size_recommendation"), dict) else {}
+                    quantity = int(size_recommendation.get("quantity") or 0)
+                    risk_inputs = buy_candidate.get("risk_inputs") if isinstance(buy_candidate.get("risk_inputs"), dict) else {}
+                    buy_result = engine.place_order(
+                        side="buy",
+                        code=buy_code,
+                        market=market,
+                        quantity=quantity,
+                        order_type="market",
+                        stop_loss_pct=risk_inputs.get("stop_loss_pct"),
+                        take_profit_pct=risk_inputs.get("take_profit_pct"),
+                    )
+                    if buy_result.get("ok"):
+                        buy_event = buy_result.get("event") or {}
+                        buy_strategy_id = str(buy_candidate.get("strategy_id") or "").strip()
+                        buy_strategy_name = str(buy_candidate.get("strategy_name") or buy_strategy_id or "")
+                        buy_count += 1
+                        slots = max(0, slots - 1)
+                        held_codes.add(buy_code)
+                        if buy_strategy_id:
+                            strategy_position_counts[buy_strategy_id] = strategy_position_counts.get(buy_strategy_id, 0) + 1
+                        ev_metrics = buy_candidate.get("ev_metrics") if isinstance(buy_candidate.get("ev_metrics"), dict) else {}
+                        executed_buys.append({
+                            "code": buy_code,
+                            "name": str(buy_candidate.get("name") or buy_code),
+                            "market": market,
+                            "strategy_type": buy_candidate.get("strategy_type"),
+                            "expected_value": ev_metrics.get("expected_value"),
+                            "quantity": buy_event.get("quantity"),
+                            "filled_price_local": buy_event.get("filled_price_local"),
+                        })
+                        _record_execution_order({
+                            "timestamp": buy_event.get("ts") or _now_iso(),
+                            "success": True,
+                            "side": "buy",
+                            "code": buy_code,
+                            "market": market,
+                            "strategy_id": buy_strategy_id,
+                            "strategy_name": buy_strategy_name,
+                            "quantity": buy_event.get("quantity"),
+                            "order_type": "market",
+                            "submitted_at": started_at,
+                            "filled_at": buy_event.get("ts"),
+                            "filled_price_local": buy_event.get("filled_price_local"),
+                            "filled_price_krw": buy_event.get("filled_price_krw"),
+                            "notional_krw": buy_event.get("notional_krw"),
+                            "failure_reason": "",
+                            "reason_code": "rotation_replace",
+                            "message": "",
+                            "originating_cycle_id": cycle_id,
+                            "originating_signal_key": f"{market}:{buy_code}",
+                            "trigger_type": "rotation",
+                            "replaced_code": sell_code,
+                            "rotation_score_gap": rotation_plan.get("score_gap"),
+                        })
+                        rotation_summary["executed_count"] += 1
+                        rotation_summary["executed"].append({
+                            "market": market,
+                            "sell_code": sell_code,
+                            "buy_code": buy_code,
+                            "score_gap": rotation_plan.get("score_gap"),
+                        })
+                    else:
+                        failure_reason = buy_result.get("error") or "rotation_buy_failed"
+                        skipped.append({"code": buy_code, "name": str(buy_candidate.get("name") or buy_code), "market": market, "reason": failure_reason})
+                        _record_execution_order({
+                            "timestamp": _now_iso(),
+                            "success": False,
+                            "side": "buy",
+                            "code": buy_code,
+                            "market": market,
+                            "strategy_id": buy_candidate.get("strategy_id"),
+                            "strategy_name": buy_candidate.get("strategy_name"),
+                            "quantity": quantity,
+                            "order_type": "market",
+                            "submitted_at": _now_iso(),
+                            "filled_at": "",
+                            "filled_price_local": None,
+                            "filled_price_krw": None,
+                            "notional_krw": None,
+                            "failure_reason": failure_reason,
+                            "reason_code": failure_reason,
+                            "message": failure_reason,
+                            "originating_cycle_id": cycle_id,
+                            "originating_signal_key": f"{market}:{buy_code}",
+                            "trigger_type": "rotation",
+                            "replaced_code": sell_code,
+                            "rotation_score_gap": rotation_plan.get("score_gap"),
+                        })
+                        notifier.notify_order_failure({
+                            "code": buy_code,
+                            "market": market,
+                            "side": "buy",
+                            "failure_reason": failure_reason,
+                            "originating_cycle_id": cycle_id,
+                        })
+                else:
+                    failure_reason = sell_result.get("error") or "rotation_sell_failed"
+                    skipped.append({"code": sell_code, "market": market, "reason": failure_reason})
+                    _record_execution_order({
+                        "timestamp": _now_iso(),
+                        "success": False,
+                        "side": "sell",
+                        "code": sell_code,
+                        "market": market,
+                        "strategy_id": sell_item.get("strategy_id"),
+                        "strategy_name": sell_item.get("strategy_name"),
+                        "quantity": int(sell_item.get("quantity") or 0),
+                        "order_type": "market",
+                        "submitted_at": _now_iso(),
+                        "filled_at": "",
+                        "filled_price_local": None,
+                        "filled_price_krw": None,
+                        "notional_krw": None,
+                        "failure_reason": failure_reason,
+                        "reason_code": failure_reason,
+                        "message": failure_reason,
+                        "originating_cycle_id": cycle_id,
+                        "originating_signal_key": f"{market}:{sell_code}",
+                        "trigger_type": "rotation",
+                        "replacement_code": buy_code,
+                        "rotation_score_gap": rotation_plan.get("score_gap"),
+                    })
+                    notifier.notify_order_failure({
+                        "code": sell_code,
+                        "market": market,
+                        "side": "sell",
+                        "failure_reason": failure_reason,
+                        "originating_cycle_id": cycle_id,
+                    })
+            else:
+                rotation_summary["blocked"].append({
+                    "market": market,
+                    "reason": rotation_plan.get("reason") or "rotation_blocked",
+                    "sell_code": rotation_plan.get("sell_code"),
+                    "buy_code": rotation_plan.get("buy_code"),
+                    "score_gap": rotation_plan.get("score_gap"),
+                })
+                if rotation_plan.get("reason"):
+                    skipped.append({
+                        "market": market,
+                        "reason": str(rotation_plan.get("reason") or "rotation_blocked"),
+                    })
+                skipped.append({
+                    "market": market,
+                    "reason": "max_positions_reached",
+                })
+                continue
         for candidate in effective_candidates:
             if slots <= 0 or buy_count >= daily_buy_limit:
                 break
@@ -1823,6 +2176,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
         "executed_sells": executed_sells,
         "candidate_counts_by_market": candidate_counts_by_market,
         "blocked_reason_counts": blocked_reason_counts,
+        "rotation_summary": rotation_summary,
         "skip_reason_counts": skip_reason_counts,
         "brief_candidates": brief_candidates,
         "market_stats": market_stats,
@@ -1992,6 +2346,7 @@ def _start_auto_trader(config: dict) -> dict:
             1.0, min(80.0, float(merged.get("slippage_bps_base") or 8.0)))
         merged["validation_gate_enabled"] = _coerce_bool(
             merged.get("validation_gate_enabled"), True)
+        merged["rotation"] = _rotation_config(merged)
         merged["validation_min_trades"] = max(
             0, min(200, int(merged.get("validation_min_trades") or 8)))
         merged["validation_min_sharpe"] = max(
