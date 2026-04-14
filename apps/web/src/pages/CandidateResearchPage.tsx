@@ -5,6 +5,7 @@ import {
   fetchCandidateMonitorWatchlist,
   fetchCandidateResearchHistory,
   fetchCandidateResearchLatest,
+  fetchLiveMarket,
   fetchResearchStatus,
 } from '../api/domain';
 import { ConsoleActionBar } from '../components/ConsoleActionBar';
@@ -18,6 +19,7 @@ import type {
   CandidateMonitorSlot,
   CandidateMonitorStatusItem,
   CandidateResearchSnapshot,
+  LiveMarketResponse,
 } from '../types/domain';
 import { formatDateTime, formatDateTimeWithAge, formatNumber } from '../utils/format';
 
@@ -50,6 +52,21 @@ function buildMarketCounts(items: Array<{ market?: string }>): Record<SnapshotMa
 function filterByMarket<T extends { market?: string }>(items: T[], marketView: SnapshotMarketView): T[] {
   if (marketView === 'ALL') return items;
   return items.filter((item) => normalizeSnapshotMarket(item.market) === marketView);
+}
+
+function preferredMarketView(liveMarket: LiveMarketResponse | null): SnapshotMarketView {
+  const sessions = liveMarket?.market_sessions || {};
+  const krOpen = Boolean(sessions.KR?.is_open);
+  const usOpen = Boolean(sessions.US?.is_open);
+  if (usOpen && !krOpen) return 'NASDAQ';
+  if (krOpen && !usOpen) return 'KOSPI';
+  return 'ALL';
+}
+
+function marketSessionText(liveMarket: LiveMarketResponse | null, market: Exclude<SnapshotMarketView, 'ALL'>): string {
+  const session = market === 'KOSPI' ? liveMarket?.market_sessions?.KR : liveMarket?.market_sessions?.US;
+  if (!session) return '';
+  return session.status_label || session.status || '';
 }
 
 function snapshotGrade(item: CandidateResearchSnapshot): string {
@@ -211,6 +228,7 @@ interface MonitorSlotSectionProps {
   items: CandidateMonitorSlot[];
   loading: boolean;
   marketView: SnapshotMarketView;
+  liveMarket: LiveMarketResponse | null;
   onChangeMarketView: (view: SnapshotMarketView) => void;
   onSelect: (symbol: string, market: string) => void;
   emptyText: string;
@@ -223,6 +241,7 @@ function MonitorSlotSection({
   items,
   loading,
   marketView,
+  liveMarket,
   onChangeMarketView,
   onSelect,
   emptyText,
@@ -247,7 +266,9 @@ function MonitorSlotSection({
                 className={marketView === view ? 'ghost-button is-active' : 'ghost-button'}
                 onClick={() => onChangeMarketView(view)}
               >
-                {view === 'ALL' ? `전체 ${marketCounts.ALL}개` : `${view} ${marketCounts[view]}개`}
+                {view === 'ALL'
+                  ? `전체 ${marketCounts.ALL}개`
+                  : `${view} ${marketCounts[view]}개${marketSessionText(liveMarket, view) ? ` · ${marketSessionText(liveMarket, view)}` : ''}`}
               </button>
             ))}
           </div>
@@ -494,6 +515,7 @@ export function CandidateResearchPage({ snapshot, loading, errorMessage, onRefre
   const [latestSnapshot, setLatestSnapshot] = useState<CandidateResearchSnapshot | null>(null);
   const [history, setHistory] = useState<CandidateResearchSnapshot[]>([]);
   const [localResearchStatus, setLocalResearchStatus] = useState(snapshot.research || {});
+  const [liveMarket, setLiveMarket] = useState<LiveMarketResponse | null>(null);
   const [monitorStatus, setMonitorStatus] = useState<CandidateMonitorStatusItem[]>([]);
   const [watchlists, setWatchlists] = useState<CandidateMonitorMarketWatchlist[]>([]);
   const [pendingTargets, setPendingTargets] = useState<CandidateMonitorSlot[]>([]);
@@ -505,6 +527,8 @@ export function CandidateResearchPage({ snapshot, loading, errorMessage, onRefre
   const [queryLoading, setQueryLoading] = useState(false);
   const [queried, setQueried] = useState(false);
   const queryRequestIdRef = useRef(0);
+  const pendingFilterTouchedRef = useRef(false);
+  const activeFilterTouchedRef = useRef(false);
 
   const activeSlots = useMemo(
     () => watchlists.flatMap((item) => (Array.isArray(item.active_slots) ? item.active_slots : [])),
@@ -536,14 +560,16 @@ export function CandidateResearchPage({ snapshot, loading, errorMessage, onRefre
     setTargetsLoading(true);
     try {
       const monitorQuery = { market: ['KOSPI', 'NASDAQ'], refresh: forceRefresh };
-      const [researchStatusPayload, monitorStatusPayload, monitorWatchlistPayload, monitorPromotionsPayload] = await Promise.all([
+      const [researchStatusPayload, liveMarketPayload, monitorStatusPayload, monitorWatchlistPayload, monitorPromotionsPayload] = await Promise.all([
         fetchResearchStatus(),
+        fetchLiveMarket(),
         fetchCandidateMonitorStatus(monitorQuery),
         fetchCandidateMonitorWatchlist({ ...monitorQuery, limit: 60, mode: 'missing_or_stale' }),
         fetchCandidateMonitorPromotions({ ...monitorQuery, limit: 20 }),
       ]);
 
       setLocalResearchStatus(researchStatusPayload?.ok !== false ? researchStatusPayload : {});
+      setLiveMarket(liveMarketPayload || null);
       setMonitorStatus(monitorStatusPayload?.ok !== false && Array.isArray(monitorStatusPayload?.items) ? monitorStatusPayload.items : []);
       setWatchlists(monitorWatchlistPayload?.ok !== false && Array.isArray(monitorWatchlistPayload?.items) ? monitorWatchlistPayload.items : []);
       setPendingTargets(monitorWatchlistPayload?.ok !== false && Array.isArray(monitorWatchlistPayload?.pending_items) ? monitorWatchlistPayload.pending_items : []);
@@ -559,6 +585,7 @@ export function CandidateResearchPage({ snapshot, loading, errorMessage, onRefre
       }
     } catch {
       setLocalResearchStatus({});
+      setLiveMarket(null);
       setMonitorStatus([]);
       setWatchlists([]);
       setPendingTargets([]);
@@ -572,6 +599,16 @@ export function CandidateResearchPage({ snapshot, loading, errorMessage, onRefre
   useEffect(() => {
     void loadCandidateBoards(false, true);
   }, [loadCandidateBoards]);
+
+  useEffect(() => {
+    const preferred = preferredMarketView(liveMarket);
+    if (!pendingFilterTouchedRef.current) {
+      setPendingMarketView(preferred);
+    }
+    if (!activeFilterTouchedRef.current) {
+      setActiveMarketView(preferred);
+    }
+  }, [liveMarket]);
 
   const runQuery = useCallback(async (targetSymbol: string, targetMarket: string) => {
     const normalizedSymbol = targetSymbol.trim().toUpperCase();
@@ -716,8 +753,16 @@ export function CandidateResearchPage({ snapshot, loading, errorMessage, onRefre
               <div className="workspace-card-head">
                 <div>
                   <div className="section-title">감시 운영 요약</div>
-                  <div className="section-copy">핵심 감시와 승격 슬롯이 실제 리서치 우선순위를 결정해. 예전 scanner 후보 전체 목록은 여기서 끊었어.</div>
+                  <div className="section-copy">핵심 감시와 승격 슬롯이 실제 리서치 우선순위를 결정해. 지금은 열린 시장을 기본으로 먼저 보여주고, 닫힌 시장은 상태만 같이 표시해.</div>
                 </div>
+              </div>
+              <div className="workspace-chip-row" style={{ marginBottom: 12 }}>
+                <span className={liveMarket?.market_sessions?.KR?.is_open ? 'inline-badge is-success' : 'inline-badge'}>
+                  한국장 {liveMarket?.market_sessions?.KR?.status_label || '상태 대기'}
+                </span>
+                <span className={liveMarket?.market_sessions?.US?.is_open ? 'inline-badge is-success' : 'inline-badge'}>
+                  미국장 {liveMarket?.market_sessions?.US?.status_label || '상태 대기'}
+                </span>
               </div>
               <div className="workspace-mini-metrics">
                 <div className="workspace-mini-metric"><span>후보 풀</span><strong>{totalCandidatePoolCount}개</strong></div>
@@ -740,7 +785,11 @@ export function CandidateResearchPage({ snapshot, loading, errorMessage, onRefre
             items={pendingTargets}
             loading={targetsLoading}
             marketView={pendingMarketView}
-            onChangeMarketView={setPendingMarketView}
+            liveMarket={liveMarket}
+            onChangeMarketView={(view) => {
+              pendingFilterTouchedRef.current = true;
+              setPendingMarketView(view);
+            }}
             onSelect={handleSelectTarget}
             emptyText={targetsLoading ? '불러오는 중...' : `${pendingMarketView} 시장에서 지금 돌릴 리서치 대상이 없어.`}
             highlightPending
@@ -752,7 +801,11 @@ export function CandidateResearchPage({ snapshot, loading, errorMessage, onRefre
             items={activeSlots}
             loading={targetsLoading}
             marketView={activeMarketView}
-            onChangeMarketView={setActiveMarketView}
+            liveMarket={liveMarket}
+            onChangeMarketView={(view) => {
+              activeFilterTouchedRef.current = true;
+              setActiveMarketView(view);
+            }}
             onSelect={handleSelectTarget}
             emptyText={targetsLoading ? '불러오는 중...' : `${activeMarketView} 시장 감시 슬롯이 없어.`}
           />
