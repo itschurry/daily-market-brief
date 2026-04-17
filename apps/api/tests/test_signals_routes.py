@@ -33,7 +33,7 @@ class SignalsRouteTests(unittest.TestCase):
         with patch("routes.signals.get_execution_service", return_value=service):
             account = _load_runtime_account()
 
-        self.assertEqual([True], service.paper_account_calls)
+        self.assertEqual([False], service.paper_account_calls)
         self.assertEqual(
             {
                 "positions": [{"code": "005930", "qty": 1}],
@@ -59,7 +59,7 @@ class SignalsRouteTests(unittest.TestCase):
             status, payload = handle_signals_rank({"limit": ["1"]})
 
         self.assertEqual(200, status)
-        self.assertEqual([True], service.paper_account_calls)
+        self.assertEqual([False], service.paper_account_calls)
         self.assertEqual(1, payload["count"])
         self.assertEqual([{"code": "AAPL", "score": 95}], payload["signals"])
         self.assertTrue(payload["ok"])

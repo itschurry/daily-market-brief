@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  fetchEngineStatus,
+  fetchEngineSummary,
   fetchHannaBrief,
   fetchLiveMarket,
   fetchMacroLatest,
@@ -37,6 +37,7 @@ interface ConsoleDataRoute {
 interface ConsoleDataProfile {
   signalLimit: number;
   initialTargets: SnapshotKey[];
+  initialAwaitTargets?: SnapshotKey[];
   fastTargets: SnapshotKey[];
   midTargets: SnapshotKey[];
   slowTargets: SnapshotKey[];
@@ -69,10 +70,11 @@ function resolveDataProfile(route: ConsoleDataRoute): ConsoleDataProfile {
   if (route.page === 'operations-dashboard' && route.dashboardTab === 'overview') {
     return {
       signalLimit: 80,
-      initialTargets: ['engine', 'signals', 'research', 'portfolio', 'liveMarket', 'marketContext', 'strategies', 'validation', 'reports', 'todayPicks', 'hannaBrief', 'macro'],
+      initialTargets: ['engine', 'signals', 'research', 'portfolio', 'liveMarket', 'marketContext', 'validation', 'reports'],
+      initialAwaitTargets: ['engine'],
       fastTargets: ['engine', 'liveMarket'],
       midTargets: ['signals', 'portfolio'],
-      slowTargets: ['research', 'marketContext', 'strategies', 'validation', 'reports', 'todayPicks', 'hannaBrief', 'macro'],
+      slowTargets: ['research', 'marketContext', 'validation', 'reports'],
     };
   }
 
@@ -260,7 +262,7 @@ export function useConsoleData(route: ConsoleDataRoute) {
     ) as Record<SnapshotKey, number>;
 
     const tasks = targets.map((key) => {
-      if (key === 'engine') return fetchEngineStatus();
+      if (key === 'engine') return fetchEngineSummary();
       if (key === 'signals') return fetchSignals(profile.signalLimit);
       if (key === 'strategies') return fetchStrategies();
       if (key === 'scanner') return fetchScannerStatus(scannerRefresh, scannerCacheOnly);
@@ -319,6 +321,7 @@ export function useConsoleData(route: ConsoleDataRoute) {
       buckets.push(filtered);
     };
 
+    addBucket(profile.initialAwaitTargets || profile.fastTargets);
     addBucket(profile.fastTargets);
     addBucket(profile.midTargets);
     addBucket(profile.slowTargets);
@@ -335,7 +338,7 @@ export function useConsoleData(route: ConsoleDataRoute) {
     if (profile.initialTargets.includes('scanner')) {
       void fetchPartition(['scanner'], true, false).catch(() => undefined);
     }
-  }, [fetchPartition, profile.fastTargets, profile.initialTargets, profile.midTargets, profile.slowTargets]);
+  }, [fetchPartition, profile.fastTargets, profile.initialAwaitTargets, profile.initialTargets, profile.midTargets, profile.slowTargets]);
 
   useEffect(() => {
     void refresh();

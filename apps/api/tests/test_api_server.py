@@ -22,7 +22,10 @@ def _install_server_route_stubs() -> list[str]:
             "handle_candidate_monitor_status": lambda query: (200, {"query": query, "kind": "status"}),
             "handle_candidate_monitor_watchlist": lambda query: (200, {"query": query, "kind": "watchlist"}),
         },
-        "routes.engine": {"handle_engine_status": lambda: (200, {"ok": True})},
+        "routes.engine": {
+            "handle_engine_status": lambda: (200, {"ok": True}),
+            "handle_engine_summary": lambda: (200, {"ok": True, "kind": "summary"}),
+        },
         "routes.hanna": {"handle_hanna_brief": lambda date=None: (200, {"date": date, "owner": "hanna"})},
         "routes.market": {
             "handle_live_market": lambda: (200, {"ok": True}),
@@ -145,6 +148,11 @@ class ApiServerDispatchTests(unittest.TestCase):
 
         self.assertEqual((200, {"ok": True}), result)
         mock_handler.assert_called_once_with("2026-03-20")
+
+    def test_dispatch_get_routes_engine_summary(self):
+        result = dispatch_get("/api/engine/summary", {})
+
+        self.assertEqual((200, {"ok": True, "kind": "summary"}), result)
 
     def test_dispatch_get_routes_hanna_brief(self):
         with patch("server.handle_hanna_brief", return_value=(200, {"owner": "hanna"})) as mock_handler:

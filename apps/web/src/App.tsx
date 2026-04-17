@@ -25,10 +25,10 @@ interface RouteState {
 
 const WORKSPACE_PAGES: Array<{ id: WorkspacePage; label: string; path: string; hint: string }> = [
   { id: 'operations-dashboard', label: '운영 대시보드', path: '/operations-dashboard', hint: '운영 개요 · 스캐너 · 시나리오 · 성과' },
+  { id: 'research-ai', label: '리서치/AI', path: '/research-ai', hint: '현재 후보 리서치 조회' },
   { id: 'orders-execution', label: '주문/체결', path: '/orders-execution', hint: '주문 상태 · 차단 사유 · 포지션' },
   { id: 'lab', label: '실험실(Lab)', path: '/lab/validation', hint: '백테스트 · 탐색 · 재검증' },
   { id: 'watchlist', label: UI_TEXT.analysisTabs.watchlist, path: '/watchlist', hint: '관심 종목 저장과 분석' },
-  { id: 'research-ai', label: '리서치/AI', path: '/research-ai', hint: '현재 후보 리서치 조회' },
 ];
 
 const DASHBOARD_TABS: Array<{ id: DashboardTab; label: string; path: string; hint: string }> = [

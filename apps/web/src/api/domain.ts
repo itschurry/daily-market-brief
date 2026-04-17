@@ -80,6 +80,10 @@ function buildValidationQueryString(query?: BacktestQuery, settings?: Validation
   return queryString ? `?${queryString}` : '';
 }
 
+export function fetchEngineSummary() {
+  return getJSON<EngineStatusResponse>('/api/engine/summary', { noStore: true });
+}
+
 export function fetchEngineStatus() {
   return getJSON<EngineStatusResponse>('/api/engine/status', { noStore: true });
 }

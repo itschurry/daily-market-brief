@@ -9,7 +9,7 @@ def _load_runtime_account() -> dict:
     paper_account = getattr(service, "paper_account", None)
     if not callable(paper_account):
         return {}
-    _, payload = paper_account(True)
+    _, payload = paper_account(False)
     if not isinstance(payload, dict):
         return {}
     account = payload.get("account")

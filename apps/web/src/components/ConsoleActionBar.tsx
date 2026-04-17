@@ -337,97 +337,101 @@ export function ConsoleActionBar({
         <div className="console-overlay" onClick={() => { setLogOpen(false); setSettingsOpen(false); }} />
       )}
 
-      <aside className={`console-drawer ${logOpen ? 'open' : ''}`} aria-hidden={!logOpen}>
-        <div className="console-drawer-head">
-          <div>
-            <div className="console-drawer-title">실행 로그</div>
-            <div className="console-drawer-caption">레벨/작업별로 빠르게 필터링할 수 있습니다.</div>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              className="ghost-button"
-              onClick={() => setConfirmState({
-                title: UI_TEXT.confirm.clearLogsTitle,
-                message: UI_TEXT.confirm.clearLogsMessage,
-                details: ['현재 화면에 쌓인 로그가 모두 제거됩니다.', '삭제 후에는 복구할 수 없습니다.'],
-                tone: 'danger',
-                onConfirm: onClearLogs,
-              })}
-            >
-              로그 비우기
-            </button>
-            <button className="ghost-button" onClick={() => setLogOpen(false)}>닫기</button>
-          </div>
-        </div>
-        <div className="console-drawer-toolbar">
-          <input
-            className="console-search-input"
-            type="search"
-            placeholder="메시지, 상세 문구, 작업명을 검색하세요"
-            value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
-            aria-label="로그 검색"
-          />
-          <div className="filter-chip-row" role="tablist" aria-label="로그 레벨 필터">
-            {(['all', 'info', 'success', 'warning', 'error'] as const).map((level) => (
+      {logOpen && (
+        <aside className="console-drawer open" aria-hidden={false}>
+          <div className="console-drawer-head">
+            <div>
+              <div className="console-drawer-title">실행 로그</div>
+              <div className="console-drawer-caption">레벨/작업별로 빠르게 필터링할 수 있습니다.</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
               <button
-                key={level}
-                className={`filter-chip ${levelFilter === level ? 'active' : ''}`}
-                onClick={() => setLevelFilter(level)}
+                className="ghost-button"
+                onClick={() => setConfirmState({
+                  title: UI_TEXT.confirm.clearLogsTitle,
+                  message: UI_TEXT.confirm.clearLogsMessage,
+                  details: ['현재 화면에 쌓인 로그가 모두 제거됩니다.', '삭제 후에는 복구할 수 없습니다.'],
+                  tone: 'danger',
+                  onConfirm: onClearLogs,
+                })}
               >
-                {level === 'all' ? '전체' : levelText(level)}
+                로그 비우기
               </button>
+              <button className="ghost-button" onClick={() => setLogOpen(false)}>닫기</button>
+            </div>
+          </div>
+          <div className="console-drawer-toolbar">
+            <input
+              className="console-search-input"
+              type="search"
+              placeholder="메시지, 상세 문구, 작업명을 검색하세요"
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              aria-label="로그 검색"
+            />
+            <div className="filter-chip-row" role="tablist" aria-label="로그 레벨 필터">
+              {(['all', 'info', 'success', 'warning', 'error'] as const).map((level) => (
+                <button
+                  key={level}
+                  className={`filter-chip ${levelFilter === level ? 'active' : ''}`}
+                  onClick={() => setLevelFilter(level)}
+                >
+                  {level === 'all' ? '전체' : levelText(level)}
+                </button>
+              ))}
+            </div>
+            <div className="filter-chip-row" role="tablist" aria-label="로그 작업 필터">
+              {logSources.map((source) => (
+                <button
+                  key={source}
+                  className={`filter-chip ${sourceFilter === source ? 'active' : ''}`}
+                  onClick={() => setSourceFilter(source)}
+                >
+                  {sourceLabel(source)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="console-drawer-body">
+            {filteredLogs.length === 0 && (
+              <div className="console-drawer-empty">
+                {logs.length === 0 ? UI_TEXT.empty.noLogs : '선택한 조건과 일치하는 로그가 없습니다.'}
+              </div>
+            )}
+            {filteredLogs.map((log) => (
+              <div key={log.id} className={`console-log-item is-${log.level}`}>
+                <div className="console-log-head">
+                  <span>{levelText(log.level)}</span>
+                  <span>{formatDateTime(log.timestamp)}</span>
+                </div>
+                <div className="console-log-message">{log.message}</div>
+                <div className="console-log-meta">
+                  <span>{sourceLabel(log.source || 'all')}</span>
+                  {log.context && <span>상세 있음</span>}
+                </div>
+                {log.context && <div className="console-log-context">{log.context}</div>}
+              </div>
             ))}
           </div>
-          <div className="filter-chip-row" role="tablist" aria-label="로그 작업 필터">
-            {logSources.map((source) => (
-              <button
-                key={source}
-                className={`filter-chip ${sourceFilter === source ? 'active' : ''}`}
-                onClick={() => setSourceFilter(source)}
-              >
-                {sourceLabel(source)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="console-drawer-body">
-          {filteredLogs.length === 0 && (
-            <div className="console-drawer-empty">
-              {logs.length === 0 ? UI_TEXT.empty.noLogs : '선택한 조건과 일치하는 로그가 없습니다.'}
-            </div>
-          )}
-          {filteredLogs.map((log) => (
-            <div key={log.id} className={`console-log-item is-${log.level}`}>
-              <div className="console-log-head">
-                <span>{levelText(log.level)}</span>
-                <span>{formatDateTime(log.timestamp)}</span>
-              </div>
-              <div className="console-log-message">{log.message}</div>
-              <div className="console-log-meta">
-                <span>{sourceLabel(log.source || 'all')}</span>
-                {log.context && <span>상세 있음</span>}
-              </div>
-              {log.context && <div className="console-log-context">{log.context}</div>}
-            </div>
-          ))}
-        </div>
-      </aside>
+        </aside>
+      )}
 
-      <aside className={`console-drawer ${settingsOpen ? 'open' : ''}`} aria-hidden={!settingsOpen}>
-        <div className="console-drawer-head">
-          <div>
-            <div className="console-drawer-title">전략 설정 · 실행 준비</div>
-            <div className="console-drawer-caption">
-              {settingsDirty ? '저장되지 않은 변경 사항이 있습니다.' : settingsSavedAt ? `마지막 저장 ${formatDateTime(settingsSavedAt)}` : '저장된 설정이 아직 없습니다.'}
+      {settingsOpen && (
+        <aside className="console-drawer open" aria-hidden={false}>
+          <div className="console-drawer-head">
+            <div>
+              <div className="console-drawer-title">전략 설정 · 실행 준비</div>
+              <div className="console-drawer-caption">
+                {settingsDirty ? '저장되지 않은 변경 사항이 있습니다.' : settingsSavedAt ? `마지막 저장 ${formatDateTime(settingsSavedAt)}` : '저장된 설정이 아직 없습니다.'}
+              </div>
             </div>
+            <button className="ghost-button" onClick={() => setSettingsOpen(false)}>닫기</button>
           </div>
-          <button className="ghost-button" onClick={() => setSettingsOpen(false)}>닫기</button>
-        </div>
-        <div className="console-drawer-body">
-          {settingsPanel || <div className="console-drawer-empty">설정 항목이 없습니다.</div>}
-        </div>
-      </aside>
+          <div className="console-drawer-body">
+            {settingsPanel || <div className="console-drawer-empty">설정 항목이 없습니다.</div>}
+          </div>
+        </aside>
+      )}
 
       <ConsoleConfirmDialog
         open={Boolean(confirmState)}

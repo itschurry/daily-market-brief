@@ -5,7 +5,7 @@ from typing import Callable
 
 from routes.backtest import handle_backtest_run, handle_kospi_backtest
 from routes.candidate_monitor import handle_candidate_monitor_promotions, handle_candidate_monitor_status, handle_candidate_monitor_watchlist
-from routes.engine import handle_engine_status
+from routes.engine import handle_engine_status, handle_engine_summary
 from routes.hanna import handle_hanna_brief
 from routes.market import handle_live_market, handle_stock_price, handle_stock_search
 from routes.optimization import (
@@ -119,6 +119,7 @@ def _query_bool(query: QueryParams, name: str, default: bool) -> bool:
 
 
 GET_ROUTES: tuple[Route, ...] = (
+    Route("/api/engine/summary", lambda _path, _query: handle_engine_summary()),
     Route("/api/engine/status", lambda _path, _query: handle_engine_status()),
     Route("/api/monitor/status", lambda _path, query: handle_candidate_monitor_status(query)),
     Route("/api/monitor/watchlist", lambda _path, query: handle_candidate_monitor_watchlist(query)),
