@@ -14,6 +14,16 @@ import { WatchlistPage } from './pages/WatchlistPage';
 import { WealthPulseHomePage } from './pages/WealthPulseHomePage';
 import type { DashboardTab, LabTab, ResearchTab, WorkspacePage } from './types/navigation';
 
+function formatKstClock(date: Date): string {
+  return new Intl.DateTimeFormat('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Seoul',
+  }).format(date);
+}
+
 interface RouteState {
   page: WorkspacePage;
   dashboardTab: DashboardTab;
@@ -182,6 +192,7 @@ function replacePath(path: string, search = '') {
 export default function App() {
   const [route, setRoute] = useState<RouteState>(() => toRouteState(location.pathname, location.search));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [clockText, setClockText] = useState(() => formatKstClock(new Date()));
   const { snapshot, loading, hasError, errorMessage, refresh } = useConsoleData(route);
   const activePage = WORKSPACE_PAGES.find((page) => page.id === route.page) || WORKSPACE_PAGES[0];
   const activeDashboardTab = DASHBOARD_TABS.find((tab) => tab.id === route.dashboardTab);
@@ -221,6 +232,13 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setClockText(formatKstClock(new Date()));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   function navigateTo(targetPath: string) {
     const next = toRouteState(targetPath, route.search);
     pushPath(next.canonicalPath, next.search);
@@ -258,8 +276,16 @@ export default function App() {
 
       <aside className="app-sidebar" aria-label="작업 공간 탐색">
         <div className="app-sidebar-brand">
-          <div className="app-sidebar-kicker">WealthPulse</div>
-          <div className="app-sidebar-title">운영 작업 공간</div>
+          <div className="app-sidebar-brand-row">
+            <div>
+              <div className="app-sidebar-kicker">WealthPulse</div>
+              <div className="app-sidebar-title">운영 작업 공간</div>
+            </div>
+            <div className="app-sidebar-meta">
+              <span className="app-live-pill">LIVE</span>
+              <span className="app-sidebar-clock">{clockText}</span>
+            </div>
+          </div>
           <div className="app-sidebar-copy">{PAGE_COPY[route.page]}</div>
         </div>
 
