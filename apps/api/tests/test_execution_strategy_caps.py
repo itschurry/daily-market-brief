@@ -43,8 +43,10 @@ class _FakeEngine:
             "equity_krw": 1000000,
         }
         self.placed_orders: list[dict] = []
+        self.get_account_calls: list[bool] = []
 
     def get_account(self, refresh_quotes: bool = True):
+        self.get_account_calls.append(bool(refresh_quotes))
         return self.account
 
     def place_order(self, **kwargs):
@@ -235,6 +237,27 @@ class ExecutionStrategyCapTests(unittest.TestCase):
         self.assertIn("strategy_max_positions_reached", summary["skip_reason_counts"])
         self.assertEqual(1, summary["skip_reason_counts"]["strategy_max_positions_reached"])
         self.assertEqual(["DDD"], [item["code"] for item in engine.placed_orders])
+
+    def test_run_auto_trader_cycle_skips_quote_refresh_when_all_markets_closed(self):
+        engine = _FakeEngine()
+        notifier = _FakeNotifier()
+        cfg = execution_svc._default_auto_trader_config()
+        cfg["markets"] = ["KOSPI", "NASDAQ"]
+        cfg = execution_svc._sync_primary_strategy_fields(cfg)
+
+        with patch.object(execution_svc, "get_execution_engine", return_value=engine), \
+             patch.object(execution_svc, "get_notification_service", return_value=notifier), \
+             patch.object(execution_svc, "is_market_open", return_value=False), \
+             patch.object(execution_svc, "append_signal_snapshots", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "append_engine_cycle", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "append_account_snapshot", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "_should_send_market_open_brief", return_value=(False, "2026-04-19")):
+            summary = execution_svc._run_auto_trader_cycle(cfg)
+
+        self.assertEqual({"market_closed": 2}, summary["skip_reason_counts"])
+        self.assertEqual([], engine.placed_orders)
+        self.assertEqual([False], engine.get_account_calls)
+        self.assertEqual([], notifier.market_open_briefs)
 
     def test_run_auto_trader_cycle_builds_market_open_brief_candidates(self):
         engine = _FakeEngine()

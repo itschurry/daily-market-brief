@@ -1491,7 +1491,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
     notifier = get_notification_service()
     cycle_id = f"cycle-{datetime.datetime.now(_KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     started_at = _now_iso()
-    account = engine.get_account(refresh_quotes=True)
+    account = engine.get_account(refresh_quotes=False)
     if int(account.get("days_left") or 0) <= 0:
         raise RuntimeError("모의투자 기간이 종료되어 자동매매를 중지합니다.")
 
@@ -1576,6 +1576,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
     blocked_counts_by_market: dict[str, int] = {
         market: 0 for market in markets}
     risk_guard_state: dict[str, Any] = {}
+    any_market_open = False
 
     for market in markets:
         calendar_market = _MARKET_TO_CALENDAR.get(market, market)
@@ -1588,6 +1589,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
             })
             continue
 
+        any_market_open = True
         account = engine.get_account(refresh_quotes=True)
         market_positions = [
             position for position in account.get("positions", [])
@@ -2157,7 +2159,7 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
             ),
         }
 
-    final_account = engine.get_account(refresh_quotes=True)
+    final_account = engine.get_account(refresh_quotes=True) if any_market_open else account
     unrealized_pnl = sum(
         _to_float(position.get("unrealized_pnl_krw"), 0.0)
         for position in final_account.get("positions", [])
