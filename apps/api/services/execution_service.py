@@ -449,17 +449,133 @@ def _hydrate_auto_trader_state() -> None:
     _persist_auto_trader_state_locked()
 
 
+def _normalize_runtime_account(account: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(account, dict):
+        return {}
+
+    mode = str(account.get("mode") or "").strip().lower()
+    if mode != "real":
+        return account
+
+    summary = account.get("summary") if isinstance(account.get("summary"), dict) else {}
+    raw_positions = account.get("positions") if isinstance(account.get("positions"), list) else []
+    default_fx_rate = _to_float(
+        summary.get("fx_rate")
+        or account.get("fx_rate")
+        or _paper_fx_rate(),
+        0.0,
+    )
+    normalized_positions: list[dict[str, Any]] = []
+    aggregated_market_value_krw = 0.0
+    aggregated_market_value_usd = 0.0
+    aggregated_unrealized_pnl_krw = 0.0
+
+    for item in raw_positions:
+        if not isinstance(item, dict):
+            continue
+        quantity = int(_to_float(item.get("quantity"), 0.0) or 0)
+        market = str(item.get("market") or "KOSPI").strip().upper() or "KOSPI"
+        currency = str(item.get("currency") or ("USD" if market in {"NASDAQ", "NYSE", "AMEX", "US"} else "KRW")).strip().upper() or "KRW"
+        avg_price = _to_float(item.get("avg_price"), 0.0)
+        current_price = _to_float(item.get("current_price"), 0.0)
+        eval_amount = _to_float(item.get("eval_amount"), 0.0)
+        profit_loss = _to_float(item.get("profit_loss"), 0.0)
+        profit_loss_rate = _to_float(item.get("profit_loss_rate"), 0.0)
+        fx_rate = _to_float(item.get("fx_rate"), default_fx_rate if currency == "USD" else 1.0)
+        if currency != "USD":
+            fx_rate = 1.0
+
+        avg_price_krw = avg_price * fx_rate if currency == "USD" else avg_price
+        current_price_krw = current_price * fx_rate if currency == "USD" else current_price
+        market_value_krw = eval_amount * fx_rate if currency == "USD" else eval_amount
+        market_value_usd = eval_amount if currency == "USD" else 0.0
+        unrealized_pnl_krw = profit_loss * fx_rate if currency == "USD" else profit_loss
+
+        aggregated_market_value_krw += market_value_krw
+        aggregated_market_value_usd += market_value_usd
+        aggregated_unrealized_pnl_krw += unrealized_pnl_krw
+
+        normalized_positions.append({
+            "code": str(item.get("code") or "").strip().upper(),
+            "name": str(item.get("name") or "").strip(),
+            "market": "NASDAQ" if market in {"NASDAQ", "NYSE", "AMEX", "US"} else "KOSPI",
+            "currency": currency,
+            "quantity": quantity,
+            "entry_ts": str(item.get("entry_ts") or ""),
+            "avg_price_local": avg_price,
+            "avg_price_krw": avg_price_krw,
+            "last_price_local": current_price,
+            "last_price_krw": current_price_krw,
+            "stop_loss_pct": item.get("stop_loss_pct"),
+            "take_profit_pct": item.get("take_profit_pct"),
+            "fx_rate": fx_rate,
+            "updated_at": str(item.get("updated_at") or _now_iso()),
+            "market_value_usd": market_value_usd,
+            "market_value_krw": market_value_krw,
+            "unrealized_pnl_local": profit_loss,
+            "unrealized_pnl_krw": unrealized_pnl_krw,
+            "unrealized_pnl_pct": profit_loss_rate,
+            "orderable_quantity": int(_to_float(item.get("orderable_quantity"), 0.0) or 0),
+        })
+
+    cash_krw = _to_float(summary.get("cash_krw"), _to_float(summary.get("deposit"), 0.0))
+    cash_usd = _to_float(summary.get("cash_usd"), _to_float(account.get("cash_usd"), 0.0))
+    market_value_krw_native = _to_float(summary.get("eval_amount_krw"), aggregated_market_value_krw - (aggregated_market_value_usd * default_fx_rate))
+    market_value_usd = _to_float(summary.get("eval_amount_usd"), aggregated_market_value_usd)
+    market_value_krw = market_value_krw_native + (market_value_usd * default_fx_rate)
+    if market_value_krw == 0.0 and aggregated_market_value_krw > 0:
+        market_value_krw = aggregated_market_value_krw
+    equity_krw = _to_float(summary.get("total_amount_krw"), _to_float(summary.get("total_amount"), cash_krw + cash_usd * default_fx_rate + market_value_krw))
+    unrealized_pnl_krw_native = _to_float(summary.get("eval_profit_loss_krw"), aggregated_unrealized_pnl_krw)
+    unrealized_pnl_usd = _to_float(summary.get("eval_profit_loss_usd"), 0.0)
+    unrealized_pnl_krw = unrealized_pnl_krw_native + (unrealized_pnl_usd * default_fx_rate)
+
+    normalized = dict(account)
+    normalized.update({
+        "mode": "real",
+        "base_currency": "MULTI" if cash_usd > 0 else "KRW",
+        "created_at": str(account.get("created_at") or ""),
+        "updated_at": str(account.get("updated_at") or _now_iso()),
+        "paper_days": account.get("paper_days"),
+        "days_elapsed": account.get("days_elapsed"),
+        "days_left": account.get("days_left"),
+        "initial_cash_krw": _to_float(account.get("initial_cash_krw"), equity_krw),
+        "initial_cash_usd": _to_float(account.get("initial_cash_usd"), 0.0),
+        "cash_krw": cash_krw,
+        "cash_usd": cash_usd,
+        "market_value_krw": market_value_krw,
+        "market_value_usd": market_value_usd,
+        "equity_krw": equity_krw,
+        "starting_equity_krw": _to_float(account.get("starting_equity_krw"), equity_krw),
+        "fx_rate": default_fx_rate,
+        "realized_pnl_krw": _to_float(account.get("realized_pnl_krw"), 0.0),
+        "realized_pnl_usd": _to_float(account.get("realized_pnl_usd"), 0.0),
+        "unrealized_pnl_krw": unrealized_pnl_krw,
+        "total_fees_krw": _to_float(account.get("total_fees_krw"), 0.0),
+        "total_fees_usd": _to_float(account.get("total_fees_usd"), 0.0),
+        "positions": normalized_positions,
+        "orders": account.get("orders") if isinstance(account.get("orders"), list) else [],
+    })
+    return normalized
+
+
+def _runtime_account_snapshot(*, refresh_quotes: bool = False) -> dict[str, Any]:
+    engine = get_execution_engine(os.getenv("EXECUTION_MODE", "paper"))
+    return engine.get_account(refresh_quotes=refresh_quotes)
+
+
 def _build_status_payload(state: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
-    today_counts = _today_order_counts(account)
+    normalized_account = _normalize_runtime_account(account)
+    today_counts = _today_order_counts(normalized_account)
     running = state.get("engine_state") == "running"
     payload_state = dict(state)
     payload_state["running"] = running
     payload_state["config"] = dict(state.get("current_config") or {})
     payload_state["today_order_counts"] = today_counts
     payload_state["order_failure_summary"] = _order_failure_summary()
-    payload_state["today_realized_pnl"] = _today_realized_pnl(account)
+    payload_state["today_realized_pnl"] = _today_realized_pnl(normalized_account)
     payload_state["current_equity"] = round(
-        _to_float(account.get("equity_krw"), 0.0), 2)
+        _to_float(normalized_account.get("equity_krw"), 0.0), 2)
     payload_state["workflow_summary"] = build_workflow_summary(
         read_signal_snapshots(limit=120),
         read_order_events(limit=120),
@@ -470,7 +586,7 @@ def _build_status_payload(state: dict[str, Any], account: dict[str, Any]) -> dic
     return {
         "ok": True,
         "state": payload_state,
-        "account": account,
+        "account": normalized_account,
     }
 
 
@@ -1492,7 +1608,8 @@ def _run_auto_trader_cycle(cfg: dict) -> dict:
     cycle_id = f"cycle-{datetime.datetime.now(_KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     started_at = _now_iso()
     account = engine.get_account(refresh_quotes=False)
-    if int(account.get("days_left") or 0) <= 0:
+    account_mode = str(account.get("mode") or "paper").strip().lower()
+    if account_mode == "paper" and int(account.get("days_left") or 0) <= 0:
         raise RuntimeError("모의투자 기간이 종료되어 자동매매를 중지합니다.")
 
     orders = account.get("orders", [])
@@ -2311,7 +2428,7 @@ def _start_auto_trader(config: dict) -> dict:
         current_state = str(_auto_trader_state.get(
             "engine_state") or "stopped")
         if current_state in {"running", "paused"} and _auto_trader_thread and _auto_trader_thread.is_alive():
-            return _build_status_payload(dict(_auto_trader_state), _get_paper_engine().get_account(refresh_quotes=False))
+            return _build_status_payload(dict(_auto_trader_state), _runtime_account_snapshot(refresh_quotes=False))
         merged = _default_auto_trader_config()
         merged.update(config or {})
         merged["interval_seconds"] = max(
@@ -2390,7 +2507,7 @@ def _start_auto_trader(config: dict) -> dict:
         _persist_auto_trader_state_locked()
         _auto_trader_thread.start()
         get_notification_service().notify_engine_started(merged)
-        account = _get_paper_engine().get_account(refresh_quotes=False)
+        account = _runtime_account_snapshot(refresh_quotes=False)
         return _build_status_payload(dict(_auto_trader_state), account)
 
 
@@ -2412,14 +2529,14 @@ def _stop_auto_trader() -> dict:
     with _auto_trader_lock:
         state = dict(_auto_trader_state)
     get_notification_service().notify_engine_stopped({"reason": "manual_stop"})
-    return _build_status_payload(state, _get_paper_engine().get_account(refresh_quotes=False))
+    return _build_status_payload(state, _runtime_account_snapshot(refresh_quotes=False))
 
 
 def _pause_auto_trader() -> dict:
     _hydrate_auto_trader_state()
     with _auto_trader_lock:
         if str(_auto_trader_state.get("engine_state") or "") != "running":
-            return _build_status_payload(dict(_auto_trader_state), _get_paper_engine().get_account(refresh_quotes=False))
+            return _build_status_payload(dict(_auto_trader_state), _runtime_account_snapshot(refresh_quotes=False))
         _auto_trader_state["engine_state"] = "paused"
         _auto_trader_state["running"] = False
         _auto_trader_state["paused_at"] = _now_iso()
@@ -2427,7 +2544,7 @@ def _pause_auto_trader() -> dict:
         _persist_auto_trader_state_locked()
         state = dict(_auto_trader_state)
     get_notification_service().notify_engine_paused()
-    return _build_status_payload(state, _get_paper_engine().get_account(refresh_quotes=False))
+    return _build_status_payload(state, _runtime_account_snapshot(refresh_quotes=False))
 
 
 def _resume_auto_trader() -> dict:
@@ -2435,7 +2552,7 @@ def _resume_auto_trader() -> dict:
     start_cfg: dict[str, Any] | None = None
     with _auto_trader_lock:
         if str(_auto_trader_state.get("engine_state") or "") == "running":
-            return _build_status_payload(dict(_auto_trader_state), _get_paper_engine().get_account(refresh_quotes=False))
+            return _build_status_payload(dict(_auto_trader_state), _runtime_account_snapshot(refresh_quotes=False))
         if _auto_trader_thread is None or not _auto_trader_thread.is_alive():
             # 정지된 스레드는 재시작 시 start 흐름을 재사용한다.
             start_cfg = dict(_auto_trader_state.get(
@@ -2451,7 +2568,7 @@ def _resume_auto_trader() -> dict:
     if start_cfg is not None:
         return _start_auto_trader(start_cfg)
     get_notification_service().notify_engine_resumed()
-    return _build_status_payload(state, _get_paper_engine().get_account(refresh_quotes=False))
+    return _build_status_payload(state, _runtime_account_snapshot(refresh_quotes=False))
 
 
 def _auto_trader_status() -> dict:
@@ -2487,14 +2604,15 @@ def apply_quant_candidate_runtime_config(candidate: dict[str, Any]) -> dict[str,
         _auto_trader_state["optimized_params"] = _optimized_params_status()
         _persist_auto_trader_state_locked()
         state = dict(_auto_trader_state)
-    account = _get_paper_engine().get_account(refresh_quotes=False)
+    account = _runtime_account_snapshot(refresh_quotes=False)
     return _build_status_payload(state, account)
 
 
 def handle_paper_account(refresh_quotes: bool) -> tuple[int, dict]:
     try:
         engine = get_execution_engine(os.getenv("EXECUTION_MODE", "paper"))
-        return 200, engine.get_account(refresh_quotes=refresh_quotes)
+        account = engine.get_account(refresh_quotes=refresh_quotes)
+        return 200, _normalize_runtime_account(account)
     except Exception as exc:
         return 500, {"error": str(exc)}
 

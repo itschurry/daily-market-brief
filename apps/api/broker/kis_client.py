@@ -719,6 +719,23 @@ class KISClient:
             if tr_cont not in {"M", "F"}:
                 break
 
+        def _market_from_exchange_code(exchange_code: str) -> str:
+            normalized = str(exchange_code or "").strip().upper()
+            if normalized.startswith("NAS"):
+                return "NASDAQ"
+            if normalized.startswith("NYS") or normalized == "NYSE":
+                return "NYSE"
+            if normalized.startswith("AMS") or normalized == "AMEX":
+                return "AMEX"
+            return "NASDAQ"
+
+        def _summary_row(payload: Any) -> dict[str, Any]:
+            if isinstance(payload, dict):
+                return payload
+            if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+                return payload[0]
+            return {}
+
         positions = []
         for item in raw_positions:
             quantity = _to_int(
@@ -734,6 +751,9 @@ class KISClient:
                     or item.get("hts_kor_isnm")
                     or ""
                 ),
+                "market": "KOSPI",
+                "currency": "KRW",
+                "fx_rate": 1.0,
                 "quantity": quantity,
                 "orderable_quantity": _to_int(item.get("ord_psbl_qty")),
                 "avg_price": _to_float(item.get("pchs_avg_pric")),
@@ -752,13 +772,169 @@ class KISClient:
             ):
                 positions.append(position)
 
-        summary_row = (raw_summary or [{}])[0]
+        summary_row = _summary_row(raw_summary)
+        domestic_cash_krw = _to_float(summary_row.get("dnca_tot_amt")) or 0.0
+        domestic_buy_amount_krw = _to_float(summary_row.get("pchs_amt_smtl_amt")) or 0.0
+        domestic_eval_amount_krw = _to_float(summary_row.get("scts_evlu_amt")) or 0.0
+        domestic_eval_profit_loss_krw = _to_float(summary_row.get("evlu_pfls_smtl_amt")) or 0.0
+
+        overseas_raw_positions: list[dict[str, Any]] = []
+        overseas_raw_summaries: dict[str, list[dict[str, Any]]] = {}
+        overseas_errors: dict[str, str] = {}
+        overseas_cash_usd = 0.0
+        overseas_buy_amount_usd = 0.0
+        overseas_eval_amount_usd = 0.0
+        overseas_eval_profit_loss_usd = 0.0
+        fx_rates: list[float] = []
+
+        balance_exchange_codes = {
+            "NASDAQ": "NASD",
+            "NYSE": "NYSE",
+            "AMEX": "AMEX",
+        }
+
+        for market_name in ("NASDAQ", "NYSE", "AMEX"):
+            exchange_code = balance_exchange_codes[market_name]
+            fk200 = ""
+            nk200 = ""
+            exchange_tr_cont = ""
+            exchange_positions: list[dict[str, Any]] = []
+            exchange_summary: list[dict[str, Any]] = []
+
+            try:
+                while True:
+                    headers = self._auth_headers("TTTS3012R")
+                    if exchange_tr_cont:
+                        headers["tr_cont"] = exchange_tr_cont
+
+                    payload, response = self._request_full(
+                        "GET",
+                        "/uapi/overseas-stock/v1/trading/inquire-balance",
+                        headers=headers,
+                        params={
+                            "CANO": cano,
+                            "ACNT_PRDT_CD": product_code,
+                            "OVRS_EXCG_CD": exchange_code,
+                            "TR_CRCY_CD": "USD",
+                            "CTX_AREA_FK200": fk200,
+                            "CTX_AREA_NK200": nk200,
+                        },
+                    )
+                    exchange_positions.extend(payload.get("output1") or [])
+                    exchange_summary = payload.get("output2") or exchange_summary
+                    exchange_tr_cont = str(response.headers.get("tr_cont") or "")
+                    fk200 = str(payload.get("ctx_area_fk200") or "")
+                    nk200 = str(payload.get("ctx_area_nk200") or "")
+                    if exchange_tr_cont not in {"M", "F"}:
+                        break
+            except Exception as exc:
+                overseas_errors[market_name] = str(exc)
+                continue
+
+            overseas_raw_positions.extend(exchange_positions)
+            overseas_raw_summaries[market_name] = exchange_summary
+            exchange_summary_row = _summary_row(exchange_summary)
+            exchange_fx_rate = _pick_float(
+                exchange_summary_row,
+                "bass_exrt",
+                "base_exrt",
+                "frst_bltn_exrt",
+            )
+            if exchange_fx_rate and exchange_fx_rate > 0:
+                fx_rates.append(exchange_fx_rate)
+
+            overseas_cash_usd += _pick_float(
+                exchange_summary_row,
+                "frcr_dncl_amt_2",
+                "frcr_dncl_amt",
+                "ovrs_dncl_amt",
+                "dncl_amt",
+            ) or 0.0
+            overseas_buy_amount_usd += _pick_float(
+                exchange_summary_row,
+                "frcr_buy_amt_smtl1",
+                "frcr_pchs_amt1",
+                "frcr_pchs_amt",
+                "tot_frcr_pchs_amt",
+            ) or 0.0
+            overseas_eval_amount_usd += _pick_float(
+                exchange_summary_row,
+                "frcr_evlu_amt2",
+                "ovrs_stck_evlu_amt",
+                "frcr_evlu_amt",
+                "tot_evlu_amt",
+            ) or 0.0
+            overseas_eval_profit_loss_usd += _pick_float(
+                exchange_summary_row,
+                "frcr_evlu_pfls_amt",
+                "ovrs_tot_pfls",
+                "tot_evlu_pfls_amt",
+            ) or 0.0
+
+            for item in exchange_positions:
+                quantity = _to_int(
+                    item.get("cblc_qty13")
+                    or item.get("ovrs_cblc_qty")
+                    or item.get("cblc_qty")
+                    or item.get("ord_psbl_qty1")
+                    or item.get("ord_psbl_qty")
+                )
+                market = _market_from_exchange_code(
+                    _pick_str(item, "ovrs_excg_cd", "ovrs_excg_cd_name", "tr_mket_name") or exchange_code
+                )
+                fx_rate = _pick_float(
+                    item,
+                    "bass_exrt",
+                    "base_exrt",
+                    "frst_bltn_exrt",
+                ) or exchange_fx_rate or 0.0
+                position = {
+                    "code": _pick_str(item, "ovrs_pdno", "pdno", "prdt_no"),
+                    "name": _pick_str(item, "ovrs_item_name", "prdt_name", "prdt_abrv_name", "hts_kor_isnm"),
+                    "market": market,
+                    "currency": _pick_str(item, "tr_crcy_cd", "crcy_cd", "ovrs_crcy_cd") or "USD",
+                    "fx_rate": fx_rate,
+                    "quantity": quantity,
+                    "orderable_quantity": _to_int(item.get("ord_psbl_qty1") or item.get("ord_psbl_qty")),
+                    "avg_price": _pick_float(item, "pchs_avg_pric", "avg_unpr", "pchs_amt") ,
+                    "current_price": _pick_float(item, "now_pric2", "ovrs_nmix_prpr", "last", "trade_price"),
+                    "eval_amount": _pick_float(item, "ovrs_stck_evlu_amt", "frcr_evlu_amt2", "evlu_amt"),
+                    "profit_loss": _pick_float(item, "frcr_evlu_pfls_amt", "ovrs_evlu_pfls_amt", "evlu_pfls_amt"),
+                    "profit_loss_rate": _pick_float(item, "evlu_pfls_rt", "evlu_erng_rt", "profit_rt"),
+                }
+                if any(
+                    value not in (None, "", 0)
+                    for value in (
+                        position["quantity"],
+                        position["eval_amount"],
+                        position["profit_loss"],
+                    )
+                ):
+                    positions.append(position)
+
+        fx_rate = next((value for value in fx_rates if value and value > 0), 0.0)
+        total_eval_amount_krw = domestic_eval_amount_krw + (overseas_eval_amount_usd * fx_rate)
+        total_eval_profit_loss_krw = domestic_eval_profit_loss_krw + (overseas_eval_profit_loss_usd * fx_rate)
+        total_buy_amount_krw = domestic_buy_amount_krw + (overseas_buy_amount_usd * fx_rate)
+        total_cash_krw_equity = domestic_cash_krw + (overseas_cash_usd * fx_rate)
+        total_amount_krw = total_cash_krw_equity + total_eval_amount_krw
+
         summary = {
-            "deposit": _to_float(summary_row.get("dnca_tot_amt")),
-            "buy_amount": _to_float(summary_row.get("pchs_amt_smtl_amt")),
-            "eval_amount": _to_float(summary_row.get("scts_evlu_amt")),
-            "eval_profit_loss": _to_float(summary_row.get("evlu_pfls_smtl_amt")),
-            "total_amount": _to_float(summary_row.get("tot_evlu_amt")),
+            "deposit": domestic_cash_krw,
+            "buy_amount": total_buy_amount_krw,
+            "eval_amount": total_eval_amount_krw,
+            "eval_profit_loss": total_eval_profit_loss_krw,
+            "total_amount": total_amount_krw,
+            "cash_krw": domestic_cash_krw,
+            "cash_usd": overseas_cash_usd,
+            "buy_amount_krw": domestic_buy_amount_krw,
+            "buy_amount_usd": overseas_buy_amount_usd,
+            "eval_amount_krw": domestic_eval_amount_krw,
+            "eval_amount_usd": overseas_eval_amount_usd,
+            "eval_profit_loss_krw": domestic_eval_profit_loss_krw,
+            "eval_profit_loss_usd": overseas_eval_profit_loss_usd,
+            "total_amount_krw": total_amount_krw,
+            "fx_rate": fx_rate,
         }
         return {
             "mode": "real",
@@ -768,7 +944,10 @@ class KISClient:
             "raw": {
                 "positions": raw_positions,
                 "summary": raw_summary,
+                "overseas_positions": overseas_raw_positions,
+                "overseas_summaries": overseas_raw_summaries,
             },
+            **({"overseas_errors": overseas_errors} if overseas_errors else {}),
         }
 
     def get_orderable_amount(

@@ -259,6 +259,34 @@ class ExecutionStrategyCapTests(unittest.TestCase):
         self.assertEqual([False], engine.get_account_calls)
         self.assertEqual([], notifier.market_open_briefs)
 
+    def test_run_auto_trader_cycle_ignores_paper_days_for_live_account(self):
+        engine = _FakeEngine()
+        engine.account = {
+            "mode": "real",
+            "positions": [],
+            "orders": [],
+            "equity_krw": 1000000.0,
+        }
+        notifier = _FakeNotifier()
+        cfg = execution_svc._default_auto_trader_config()
+        cfg["markets"] = ["KOSPI"]
+        cfg = execution_svc._sync_primary_strategy_fields(cfg)
+
+        with patch.dict(execution_svc.os.environ, {"EXECUTION_MODE": "live"}, clear=False), \
+             patch.object(execution_svc, "get_execution_engine", return_value=engine), \
+             patch.object(execution_svc, "get_notification_service", return_value=notifier), \
+             patch.object(execution_svc, "is_market_open", return_value=False), \
+             patch.object(execution_svc, "append_signal_snapshots", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "append_engine_cycle", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "append_account_snapshot", side_effect=lambda payload: None), \
+             patch.object(execution_svc, "_should_send_market_open_brief", return_value=(False, "2026-04-19")):
+            summary = execution_svc._run_auto_trader_cycle(cfg)
+
+        self.assertEqual({"market_closed": 1}, summary["skip_reason_counts"])
+        self.assertEqual([], engine.placed_orders)
+        self.assertEqual([False], engine.get_account_calls)
+        self.assertEqual([], notifier.market_open_briefs)
+
     def test_run_auto_trader_cycle_builds_market_open_brief_candidates(self):
         engine = _FakeEngine()
         notifier = _FakeNotifier()

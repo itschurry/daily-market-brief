@@ -32,11 +32,12 @@ for _module_name in _INSTALLED_STUBS:
     sys.modules.pop(_module_name, None)
 
 
-def _response(payload: dict) -> Mock:
+def _response(payload: dict, headers: dict | None = None) -> Mock:
     response = Mock()
     response.raise_for_status = Mock()
     response.json.return_value = payload
     response.text = json.dumps(payload, ensure_ascii=False)
+    response.headers = headers or {}
     return response
 
 
@@ -160,6 +161,99 @@ class KISClientRetryTests(unittest.TestCase):
 
         self.assertEqual(["20260328", "20260329", "20260330"], [row["date"] for row in rows])
         self.assertEqual(2, mock_request.call_count)
+
+    def test_get_balance_combines_domestic_and_overseas_holdings(self):
+        client = KISClient(
+            KISCredentials(
+                app_key="app-key",
+                app_secret="app-secret",
+                base_url="https://example.com",
+                account_cano="12345678",
+                account_product_code="01",
+            )
+        )
+        client._access_token = "fresh-token"
+        client._token_expires_at = time.time() + 3600
+
+        responses = [
+            _response(
+                {
+                    "rt_cd": "0",
+                    "output1": [
+                        {
+                            "pdno": "005930",
+                            "prdt_name": "삼성전자",
+                            "hldg_qty": "3",
+                            "ord_psbl_qty": "3",
+                            "pchs_avg_pric": "70000",
+                            "prpr": "71000",
+                            "evlu_amt": "213000",
+                            "evlu_pfls_amt": "3000",
+                            "evlu_pfls_rt": "1.43",
+                        }
+                    ],
+                    "output2": [
+                        {
+                            "dnca_tot_amt": "2000000",
+                            "pchs_amt_smtl_amt": "210000",
+                            "scts_evlu_amt": "213000",
+                            "evlu_pfls_smtl_amt": "3000",
+                            "tot_evlu_amt": "2213000",
+                        }
+                    ],
+                }
+            ),
+            _response(
+                {
+                    "rt_cd": "0",
+                    "output1": [
+                        {
+                            "ovrs_pdno": "AAPL",
+                            "ovrs_item_name": "Apple Inc.",
+                            "ovrs_excg_cd": "NASD",
+                            "tr_crcy_cd": "USD",
+                            "cblc_qty13": "2",
+                            "ord_psbl_qty1": "2",
+                            "pchs_avg_pric": "150.5",
+                            "now_pric2": "160.0",
+                            "ovrs_stck_evlu_amt": "320.0",
+                            "frcr_evlu_pfls_amt": "19.0",
+                            "evlu_pfls_rt": "6.31",
+                            "bass_exrt": "1450.0",
+                        }
+                    ],
+                    "output2": [
+                        {
+                            "frcr_dncl_amt_2": "1000.0",
+                            "frcr_buy_amt_smtl1": "301.0",
+                            "frcr_evlu_amt2": "320.0",
+                            "frcr_evlu_pfls_amt": "19.0",
+                            "tot_evlu_pfls_amt": "19.0",
+                            "bass_exrt": "1450.0",
+                        }
+                    ],
+                }
+            ),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+        ]
+
+        with patch("broker.kis_client.requests.request", side_effect=responses) as mock_request:
+            payload = client.get_balance()
+
+        self.assertEqual(4, mock_request.call_count)
+        self.assertEqual("real", payload["mode"])
+        self.assertEqual(2, len(payload["positions"]))
+        self.assertEqual(2000000.0, payload["summary"]["cash_krw"])
+        self.assertEqual(1000.0, payload["summary"]["cash_usd"])
+        self.assertEqual(213000.0, payload["summary"]["eval_amount_krw"])
+        self.assertEqual(320.0, payload["summary"]["eval_amount_usd"])
+        nasdaq = next(item for item in payload["positions"] if item["code"] == "AAPL")
+        self.assertEqual("NASDAQ", nasdaq["market"])
+        self.assertEqual("USD", nasdaq["currency"])
+        self.assertEqual(2, nasdaq["quantity"])
+        self.assertEqual(1450.0, nasdaq["fx_rate"])
+        self.assertEqual(320.0, nasdaq["eval_amount"])
 
 
 if __name__ == "__main__":
