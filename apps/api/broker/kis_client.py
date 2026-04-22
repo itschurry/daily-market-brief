@@ -773,10 +773,24 @@ class KISClient:
                 positions.append(position)
 
         summary_row = _summary_row(raw_summary)
-        domestic_cash_krw = _to_float(summary_row.get("dnca_tot_amt")) or 0.0
         domestic_buy_amount_krw = _to_float(summary_row.get("pchs_amt_smtl_amt")) or 0.0
         domestic_eval_amount_krw = _to_float(summary_row.get("scts_evlu_amt")) or 0.0
         domestic_eval_profit_loss_krw = _to_float(summary_row.get("evlu_pfls_smtl_amt")) or 0.0
+        domestic_total_amount_krw_raw = _pick_float(summary_row, "tot_evlu_amt", "nass_amt")
+        domestic_total_amount_krw = domestic_total_amount_krw_raw or 0.0
+        domestic_cash_krw = (
+            max(domestic_total_amount_krw - domestic_eval_amount_krw, 0.0)
+            if domestic_total_amount_krw_raw is not None
+            else (
+                _pick_float(
+                    summary_row,
+                    "prvs_rcdl_excc_amt",
+                    "nxdy_excc_amt",
+                    "dnca_tot_amt",
+                )
+                or 0.0
+            )
+        )
 
         overseas_raw_positions: list[dict[str, Any]] = []
         overseas_raw_summaries: dict[str, list[dict[str, Any]]] = {}
@@ -916,8 +930,12 @@ class KISClient:
         total_eval_amount_krw = domestic_eval_amount_krw + (overseas_eval_amount_usd * fx_rate)
         total_eval_profit_loss_krw = domestic_eval_profit_loss_krw + (overseas_eval_profit_loss_usd * fx_rate)
         total_buy_amount_krw = domestic_buy_amount_krw + (overseas_buy_amount_usd * fx_rate)
-        total_cash_krw_equity = domestic_cash_krw + (overseas_cash_usd * fx_rate)
-        total_amount_krw = total_cash_krw_equity + total_eval_amount_krw
+        domestic_total_for_rollup_krw = (
+            domestic_total_amount_krw
+            if domestic_total_amount_krw_raw is not None
+            else (domestic_cash_krw + domestic_eval_amount_krw)
+        )
+        total_amount_krw = domestic_total_for_rollup_krw + (overseas_cash_usd * fx_rate) + (overseas_eval_amount_usd * fx_rate)
 
         summary = {
             "deposit": domestic_cash_krw,

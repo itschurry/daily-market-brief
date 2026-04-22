@@ -255,6 +255,222 @@ class KISClientRetryTests(unittest.TestCase):
         self.assertEqual(1450.0, nasdaq["fx_rate"])
         self.assertEqual(320.0, nasdaq["eval_amount"])
 
+    def test_get_balance_prefers_settled_cash_and_raw_total_for_domestic_summary(self):
+        client = KISClient(
+            KISCredentials(
+                app_key="app-key",
+                app_secret="app-secret",
+                base_url="https://example.com",
+                account_cano="12345678",
+                account_product_code="01",
+            )
+        )
+        client._access_token = "fresh-token"
+        client._token_expires_at = time.time() + 3600
+
+        responses = [
+            _response(
+                {
+                    "rt_cd": "0",
+                    "output1": [
+                        {
+                            "pdno": "003850",
+                            "prdt_name": "보령",
+                            "hldg_qty": "18",
+                            "ord_psbl_qty": "18",
+                            "pchs_avg_pric": "9890",
+                            "prpr": "9870",
+                            "evlu_amt": "177660",
+                            "evlu_pfls_amt": "-360",
+                            "evlu_pfls_rt": "-0.20",
+                        },
+                        {
+                            "pdno": "085310",
+                            "prdt_name": "엔케이",
+                            "hldg_qty": "160",
+                            "ord_psbl_qty": "160",
+                            "pchs_avg_pric": "1152",
+                            "prpr": "1144",
+                            "evlu_amt": "183040",
+                            "evlu_pfls_amt": "-1280",
+                            "evlu_pfls_rt": "-0.69",
+                        },
+                    ],
+                    "output2": [
+                        {
+                            "dnca_tot_amt": "2507620",
+                            "nxdy_excc_amt": "2145268",
+                            "pchs_amt_smtl_amt": "362340",
+                            "bfdy_tlex_amt": "12",
+                            "scts_evlu_amt": "360700",
+                            "evlu_pfls_smtl_amt": "-1640",
+                            "tot_evlu_amt": "2505968",
+                            "nass_amt": "2505968",
+                        }
+                    ],
+                }
+            ),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+        ]
+
+        with patch("broker.kis_client.requests.request", side_effect=responses) as mock_request:
+            payload = client.get_balance()
+
+        self.assertEqual(4, mock_request.call_count)
+        self.assertEqual(2145268.0, payload["summary"]["deposit"])
+        self.assertEqual(2145268.0, payload["summary"]["cash_krw"])
+        self.assertEqual(360700.0, payload["summary"]["eval_amount_krw"])
+        self.assertEqual(2505968.0, payload["summary"]["total_amount"])
+        self.assertEqual(2505968.0, payload["summary"]["total_amount_krw"])
+
+    def test_get_balance_prefers_current_settlement_cash_when_same_day_buys_exist(self):
+        client = KISClient(
+            KISCredentials(
+                app_key="app-key",
+                app_secret="app-secret",
+                base_url="https://example.com",
+                account_cano="12345678",
+                account_product_code="01",
+            )
+        )
+        client._access_token = "fresh-token"
+        client._token_expires_at = time.time() + 3600
+
+        responses = [
+            _response(
+                {
+                    "rt_cd": "0",
+                    "output1": [
+                        {
+                            "pdno": "003850",
+                            "prdt_name": "보령",
+                            "hldg_qty": "18",
+                            "ord_psbl_qty": "18",
+                            "pchs_avg_pric": "9890",
+                            "prpr": "9860",
+                            "evlu_amt": "177480",
+                            "evlu_pfls_amt": "-540",
+                            "evlu_pfls_rt": "-0.30",
+                        },
+                        {
+                            "pdno": "085310",
+                            "prdt_name": "엔케이",
+                            "hldg_qty": "160",
+                            "ord_psbl_qty": "160",
+                            "pchs_avg_pric": "1152",
+                            "prpr": "1153",
+                            "evlu_amt": "184480",
+                            "evlu_pfls_amt": "160",
+                            "evlu_pfls_rt": "0.08",
+                        },
+                        {
+                            "pdno": "241560",
+                            "prdt_name": "두산밥캣",
+                            "hldg_qty": "3",
+                            "ord_psbl_qty": "3",
+                            "pchs_avg_pric": "72500",
+                            "prpr": "72400",
+                            "evlu_amt": "217200",
+                            "evlu_pfls_amt": "-300",
+                            "evlu_pfls_rt": "-0.13",
+                        },
+                        {
+                            "pdno": "294870",
+                            "prdt_name": "IPARK현대산업개발",
+                            "hldg_qty": "8",
+                            "ord_psbl_qty": "8",
+                            "pchs_avg_pric": "24000",
+                            "prpr": "24050",
+                            "evlu_amt": "192400",
+                            "evlu_pfls_amt": "400",
+                            "evlu_pfls_rt": "0.20",
+                        },
+                    ],
+                    "output2": [
+                        {
+                            "dnca_tot_amt": "2507620",
+                            "nxdy_excc_amt": "2145268",
+                            "prvs_rcdl_excc_amt": "1735755",
+                            "pchs_amt_smtl_amt": "771840",
+                            "bfdy_tlex_amt": "12",
+                            "thdt_tlex_amt": "13",
+                            "scts_evlu_amt": "771560",
+                            "evlu_pfls_smtl_amt": "-280",
+                            "tot_evlu_amt": "2507315",
+                            "nass_amt": "2507315",
+                        }
+                    ],
+                }
+            ),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+        ]
+
+        with patch("broker.kis_client.requests.request", side_effect=responses):
+            payload = client.get_balance()
+
+        self.assertEqual(1735755.0, payload["summary"]["deposit"])
+        self.assertEqual(1735755.0, payload["summary"]["cash_krw"])
+        self.assertEqual(771560.0, payload["summary"]["eval_amount_krw"])
+        self.assertEqual(2507315.0, payload["summary"]["total_amount"])
+        self.assertEqual(payload["summary"]["cash_krw"] + payload["summary"]["eval_amount_krw"], payload["summary"]["total_amount"])
+
+    def test_get_balance_falls_back_to_cash_plus_eval_when_domestic_total_is_missing(self):
+        client = KISClient(
+            KISCredentials(
+                app_key="app-key",
+                app_secret="app-secret",
+                base_url="https://example.com",
+                account_cano="12345678",
+                account_product_code="01",
+            )
+        )
+        client._access_token = "fresh-token"
+        client._token_expires_at = time.time() + 3600
+
+        responses = [
+            _response(
+                {
+                    "rt_cd": "0",
+                    "output1": [
+                        {
+                            "pdno": "005930",
+                            "prdt_name": "삼성전자",
+                            "hldg_qty": "3",
+                            "ord_psbl_qty": "3",
+                            "pchs_avg_pric": "70000",
+                            "prpr": "71000",
+                            "evlu_amt": "213000",
+                            "evlu_pfls_amt": "3000",
+                            "evlu_pfls_rt": "1.43",
+                        }
+                    ],
+                    "output2": [
+                        {
+                            "prvs_rcdl_excc_amt": "2000000",
+                            "pchs_amt_smtl_amt": "210000",
+                            "scts_evlu_amt": "213000",
+                            "evlu_pfls_smtl_amt": "3000",
+                        }
+                    ],
+                }
+            ),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+            _response({"rt_cd": "0", "output1": [], "output2": [{}]}),
+        ]
+
+        with patch("broker.kis_client.requests.request", side_effect=responses):
+            payload = client.get_balance()
+
+        self.assertEqual(2000000.0, payload["summary"]["cash_krw"])
+        self.assertEqual(213000.0, payload["summary"]["eval_amount_krw"])
+        self.assertEqual(2213000.0, payload["summary"]["total_amount"])
+        self.assertEqual(2213000.0, payload["summary"]["total_amount_krw"])
+
 
 if __name__ == "__main__":
     unittest.main()
