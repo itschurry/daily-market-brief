@@ -59,6 +59,6 @@ services:
       WEALTHPULSE_API_BASE_URL: http://api:8001
     env_file:
       - ./apps/api/.env
-    restart: unless-stopped
+    restart: "no"
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -46,7 +46,7 @@ docker compose logs -f research-loop
 
 - `api`: Python 3.11, FastAPI, `uvicorn api_server:app --host 0.0.0.0 --port 8001`
 - `web`: React 빌드 산출물을 Nginx가 서빙
-- `research-loop`: `scripts/run_market_research_loop.sh`가 장중에 후보 갱신과 OpenAI 리서치를 반복 실행
+- `research-loop`: `scripts/run_market_research_loop.sh`가 장중에 후보 갱신과 OpenAI 리서치를 반복 실행해. runner가 실패하면 컨테이너는 종료된 채 남고 자동 재시작하지 않아.
 - API 포트: `8001`
 - Web 포트: `8081`
 - API 컨테이너 볼륨: `./storage/reports:/reports`, `./storage/logs:/logs`
@@ -118,7 +118,7 @@ TELEGRAM_CHAT_ID=
 - `WEALTHPULSE_RESEARCH_MODE=missing_or_stale`: 비어 있거나 낡은 리서치만 다시 채워.
 - `WEALTHPULSE_RESEARCH_TIMEOUT=600`: 종목 1개 OpenAI 리서치 timeout 초야.
 - `WEALTHPULSE_RESEARCH_CONCURRENCY=3`: 동시에 돌릴 종목 리서치 수야. 처음엔 3으로 둬.
-- `WEALTHPULSE_RESEARCH_LOOP_INTERVAL_SECONDS=60`: 장중 `research-loop` 반복 간격 초야.
+- `WEALTHPULSE_RESEARCH_LOOP_INTERVAL_SECONDS=60`: 장중 `research-loop`가 성공한 다음 반복하기까지 대기할 초야. 실패하면 반복하지 않고 서비스가 종료돼.
 - `WEALTHPULSE_RESEARCH_CLOSED_INTERVAL_SECONDS=600`: 장 마감/휴장 때 다시 확인하기까지 대기할 초야.
 - `WEALTHPULSE_RESEARCH_DRY_RUN=0`: `1`이면 후보만 모으고 OpenAI 호출은 안 해.
 - `DART_API_KEY`: 있으면 OpenDART 공시 evidence를 붙여.
@@ -322,12 +322,21 @@ docker compose exec api python scripts/openai_research_runner.py \
 docker compose exec api /app/scripts/run_market_research.sh
 ```
 
-장중 상시 실행은 crontab이 아니라 Compose 서비스로 돌려. 서비스는 계속 떠 있고, KRX 정규장인 평일 09:00~15:30에만 runner를 실행해. 장 마감/휴장에는 OpenAI 호출 없이 `WEALTHPULSE_RESEARCH_CLOSED_INTERVAL_SECONDS`만큼 잔다. 리서치 루프는 프리마켓과 애프터마켓에 돌지 않아.
+장중 상시 실행은 crontab이 아니라 Compose 서비스로 돌려. 정상 상태에선 서비스가 계속 떠 있고, KRX 정규장인 평일 09:00~15:30에만 runner를 실행해. 장 마감/휴장에는 OpenAI 호출 없이 `WEALTHPULSE_RESEARCH_CLOSED_INTERVAL_SECONDS`만큼 잔다. 리서치 루프는 프리마켓과 애프터마켓에 돌지 않아.
+
+runner가 한 번이라도 실패하면 `research-loop`는 종료되고 Compose가 자동 재시작하지 않아. API 할당량, 자격 증명, 응답 형식 같은 원인을 먼저 고친 다음 수동으로 다시 시작해. 실패 상태는 아래 명령으로 확인해.
 
 ```bash
 docker compose up -d --build research-loop
+docker compose ps -a research-loop
 docker compose logs -f research-loop
 tail -f storage/logs/runtime/openai_research_runner.log
+```
+
+원인을 고친 뒤 다시 시작:
+
+```bash
+docker compose up -d research-loop
 ```
 
 리서치 crontab이 남아 있으면 지워. `research-loop`와 cron을 같이 켜면 같은 종목을 중복 분석하고 OpenAI 비용이 늘어.
@@ -476,6 +485,8 @@ KIS가 매수 주문가능수량 `0`을 반복 반환하면 같은 날 신규 �
 
 `live` 모드는 KIS를 통해 실계좌 경로를 쓴다. `EXECUTION_MODE=live`를 켜기 전에 `/api/broker/kis/status`, 계좌 상태, 주문 제한을 직접 봐야 해. KOSPI 실계좌 매수는 주문 직전에 KIS 주문가능수량을 조회하고, 시장가 요청이면 현재가 지정가로 바꿔 주문 금액 초과를 줄인다. 요청 수량이 주문가능수량보다 크면 주문가능수량으로 낮춰 한 번만 낸다. KIS `EGW00133` 접근토큰 발급 제한은 rate-limit 계열로 처리해 연속 주문 중 토큰 제한 실패를 줄인다.
 `paper`에서 `live`로 자동 전환하는 경로는 없다. 실거래는 사용자가 `.env`의 `EXECUTION_MODE=live`와 `LIVE_TRADING_APPROVED=true`를 모두 직접 설정한 뒤 API 컨테이너를 재생성해야 한다. 하나라도 빠지면 `/api/runtime/engine/start`는 `403 live_trading_manual_approval_required`를 반환한다.
+
+첫 실거래일은 승인 전에 OpenAI 최소 호출, 전체 리서치 실행, `fresh_symbol_count`, KIS 실계좌 잔고를 확인한다. 하나라도 실패하면 `LIVE_TRADING_APPROVED=false`를 유지한다. 첫날 운영값은 신규 매수 1건, 최대 2종목, 종목당 20% 이하, 시장 노출 40% 이하, 거래당 위험 0.5%, 일 손실 1%, 누적 낙폭 3%, 추가매수와 rotation 비활성화다. 전체 리서치가 성공한 뒤에만 승인값을 `true`로 바꾸고 저장된 설정을 `/api/runtime/engine/start`에 명시적으로 전달한다.
 
 ## 주문 판단과 리스크
 

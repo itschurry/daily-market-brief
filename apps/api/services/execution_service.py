@@ -1530,9 +1530,15 @@ def _sync_primary_strategy_fields(cfg: dict) -> dict:
         if _is_active_auto_trade_market(normalize_strategy_market(market))
     ] or ["KOSPI"]
     profile_map = _auto_trader_profile_map(cfg, markets)
+    requested_max_positions = cfg.get("max_positions_per_market")
     for market_key, profile in list(profile_map.items()):
         if isinstance(profile, dict):
             profile = dict(profile)
+            if requested_max_positions not in (None, ""):
+                profile["max_positions"] = max(
+                    1,
+                    min(20, int(_to_float(requested_max_positions, 5))),
+                )
             profile["stop_loss_pct"] = _RUNTIME_STOP_LOSS_PCT
             profile["take_profit_pct"] = _RUNTIME_TAKE_PROFIT_PCT
             profile_map[market_key] = profile
@@ -1555,10 +1561,22 @@ def _sync_primary_strategy_fields(cfg: dict) -> dict:
     cfg["stop_loss_pct"] = _RUNTIME_STOP_LOSS_PCT
     cfg["take_profit_pct"] = _RUNTIME_TAKE_PROFIT_PCT
     cfg["max_holding_days"] = int(primary.get("max_holding_days") or 30)
-    cfg["risk_per_trade_pct"] = max(0.8, _to_float(cfg.get("risk_per_trade_pct"), 0.8))
-    cfg["max_symbol_weight_pct"] = max(30.0, _to_float(cfg.get("max_symbol_weight_pct"), 30.0))
-    cfg["max_sector_weight_pct"] = max(50.0, _to_float(cfg.get("max_sector_weight_pct"), 50.0))
-    cfg["max_market_exposure_pct"] = max(95.0, _to_float(cfg.get("max_market_exposure_pct"), 95.0))
+    cfg["risk_per_trade_pct"] = max(
+        0.05,
+        min(5.0, _to_float(cfg.get("risk_per_trade_pct"), 0.8)),
+    )
+    cfg["max_symbol_weight_pct"] = max(
+        1.0,
+        min(100.0, _to_float(cfg.get("max_symbol_weight_pct"), 30.0)),
+    )
+    cfg["max_sector_weight_pct"] = max(
+        1.0,
+        min(100.0, _to_float(cfg.get("max_sector_weight_pct"), 50.0)),
+    )
+    cfg["max_market_exposure_pct"] = max(
+        1.0,
+        min(100.0, _to_float(cfg.get("max_market_exposure_pct"), 95.0)),
+    )
     allocation_mode = str(cfg.get("allocation_mode") or "concentrated").strip().lower()
     cfg["allocation_mode"] = allocation_mode if allocation_mode in {"diversified", "concentrated"} else "concentrated"
     cfg["bluechip_top_n_kospi"] = max(1, int(_to_float(cfg.get("bluechip_top_n_kospi"), 20)))

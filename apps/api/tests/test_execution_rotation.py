@@ -68,6 +68,23 @@ def _primary_buy_snapshot() -> dict:
 
 
 class ExecutionRotationTests(unittest.TestCase):
+    def test_explicit_conservative_live_limits_are_preserved(self) -> None:
+        config = _sync_primary_strategy_fields({
+            **_default_auto_trader_config(),
+            "max_positions_per_market": 2,
+            "risk_per_trade_pct": 0.5,
+            "max_symbol_weight_pct": 20.0,
+            "max_sector_weight_pct": 35.0,
+            "max_market_exposure_pct": 40.0,
+        })
+
+        self.assertEqual(config["max_positions_per_market"], 2)
+        self.assertEqual(config["market_profiles"]["KOSPI"]["max_positions"], 2)
+        self.assertEqual(config["risk_per_trade_pct"], 0.5)
+        self.assertEqual(config["max_symbol_weight_pct"], 20.0)
+        self.assertEqual(config["max_sector_weight_pct"], 35.0)
+        self.assertEqual(config["max_market_exposure_pct"], 40.0)
+
     def test_exit_monitor_interval_is_separate_and_capped_at_sixty_seconds(self) -> None:
         default_config = _default_auto_trader_config()
         self.assertEqual(default_config["exit_monitor_interval_seconds"], 60)
