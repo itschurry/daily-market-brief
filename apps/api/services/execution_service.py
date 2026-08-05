@@ -95,6 +95,7 @@ _ENTRY_BUY_RATINGS = {"strong_buy", "overweight"}
 _ENTRY_BUY_ACTIONS = {"buy", "buy_watch"}
 _ENTRY_MIN_CLOSE_VS_SMA = 1.0
 _ENTRY_MIN_VOLUME_RATIO = 0.8
+_BUY_WATCH_MAX_DAILY_CHANGE_PCT = 10.0
 _ACTIVE_TRADING_INTERVAL_SECONDS = 60
 _DEFAULT_EXIT_MONITOR_INTERVAL_SECONDS = 60
 _STALE_RUNTIME_STATE_KEYS = {"optimized_params"}
@@ -1788,7 +1789,7 @@ def _candidate_technical_features(candidate: dict[str, Any]) -> dict[str, Any]:
     layer_c = _candidate_layer_c(candidate)
     features = layer_c.get("technical_features") if isinstance(layer_c.get("technical_features"), dict) else {}
     technical_snapshot = candidate.get("technical_snapshot") if isinstance(candidate.get("technical_snapshot"), dict) else {}
-    return {**technical_snapshot, **features}
+    return {**features, **technical_snapshot}
 
 
 def _candidate_entry_trend_ok(candidate: dict[str, Any]) -> bool:
@@ -1807,6 +1808,19 @@ def _candidate_entry_trend_ok(candidate: dict[str, Any]) -> bool:
         and close_vs_sma60 >= _ENTRY_MIN_CLOSE_VS_SMA
         and volume_ratio >= _ENTRY_MIN_VOLUME_RATIO
     )
+
+
+def _candidate_buy_watch_daily_change_block_reason(candidate: dict[str, Any]) -> str:
+    _rating, action = _candidate_research_rating_action(candidate)
+    if action != "buy_watch":
+        return ""
+    features = _candidate_technical_features(candidate)
+    change_pct = _to_float(features.get("change_pct"), None)
+    if change_pct is None:
+        return "buy_watch_daily_change_required"
+    if change_pct >= _BUY_WATCH_MAX_DAILY_CHANGE_PCT:
+        return "buy_watch_daily_change_too_high"
+    return ""
 
 
 def _candidate_leadership_rank(candidate: dict[str, Any]) -> tuple[float, ...]:
@@ -1869,7 +1883,12 @@ def _is_aggressive_operator_review_entry_candidate(candidate: dict[str, Any]) ->
         return False
     layer_e = candidate.get("final_action_snapshot") if isinstance(candidate.get("final_action_snapshot"), dict) else {}
     quant_decision = layer_e.get("quant_decision") if isinstance(layer_e.get("quant_decision"), dict) else {}
+    agent_decision = layer_e.get("agent_decision") if isinstance(layer_e.get("agent_decision"), dict) else {}
     if str(quant_decision.get("decision") or "").strip().lower() != "operator_review":
+        return False
+    if str(agent_decision.get("decision") or "").strip().lower() != "agent_primary_buy":
+        return False
+    if not bool(agent_decision.get("order_ready")):
         return False
     if bool(candidate.get("research_unavailable")):
         return False
@@ -1877,6 +1896,8 @@ def _is_aggressive_operator_review_entry_candidate(candidate: dict[str, Any]) ->
     if research_status in {"missing", "stale", "stale_ingest", "research_unavailable"}:
         return False
     if not _candidate_has_buy_research_intent(candidate):
+        return False
+    if _candidate_buy_watch_daily_change_block_reason(candidate):
         return False
     if not _candidate_entry_trend_ok(candidate):
         return False
@@ -2050,6 +2071,9 @@ def _position_has_managed_exit_plan(position: dict[str, Any]) -> bool:
 
 
 def _candidate_execution_risk_plan(candidate: dict[str, Any]) -> dict[str, Any]:
+    buy_watch_change_block = _candidate_buy_watch_daily_change_block_reason(candidate)
+    if buy_watch_change_block:
+        return {"ok": False, "reason": buy_watch_change_block}
     current_price = _candidate_unit_price_local(candidate)
     entry_price = _candidate_entry_plan_price(candidate)
     stop_loss_price = _candidate_stop_loss_price(candidate)

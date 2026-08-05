@@ -176,7 +176,7 @@ React 앱은 라우터 라이브러리 없이 `App.tsx`에서 URL path를 해석
 - `/lab/strategies`: 전략 프리셋
 - `/lab/universe`: 유니버스
 
-`buy_watch` / `watch_only`는 기본적으로 관찰 신호야. 다만 `overweight + buy_watch`가 fresh/healthy 리서치, A/B 검증, 최소 추세/거래량, 리스크 게이트를 통과하면 소액 주문 검토인 `review_for_entry`까지 승격될 수 있어.
+`buy_watch` / `watch_only`는 기본적으로 관찰 신호야. 다만 `overweight + buy_watch`가 fresh/healthy 리서치, A/B 검증, 최소 추세/거래량, 당일 상승률 `10%` 미만, 리스크 게이트를 모두 통과하고 agent가 직접 승인할 때만 소액 주문 검토인 `review_for_entry`까지 승격될 수 있어. quant 단독 승격은 막아.
 
 콘솔 데이터는 `apps/web/src/hooks/useConsoleData.ts`가 페이지별 polling profile로 가져와.
 
@@ -422,7 +422,7 @@ Layer E에서 `review_for_entry`가 나오려면 대체로 이 조건이 맞아�
 - research validation grade가 A 또는 B여야 해
 - source quality가 충분해야 해
 - RSI/이평/거래량 같은 technical sanity가 깨지면 안 돼
-- `buy_watch` 승격은 `close_vs_sma20 >= 1.0` 또는 `close_vs_sma60 >= 1.0`이고, `volume_ratio >= 0.35`여야 해
+- `buy_watch` 승격은 `change_pct`가 반드시 있고 `10.0` 미만이며, `close_vs_sma20 >= 1.0` 또는 `close_vs_sma60 >= 1.0`이고, `volume_ratio >= 0.35`여야 해. agent 품질 검증이 실패하면 quant 점수가 높아도 주문으로 넘기지 않아
 - Layer D risk가 막지 않아야 해
 
 ## 런타임 엔진 흐름

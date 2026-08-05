@@ -37,6 +37,7 @@ def _buy_research_layer() -> dict:
         "rating": "overweight",
         "action": "buy",
         "technical_features": {
+            "change_pct": 3.0,
             "close_vs_sma20": 1.03,
             "close_vs_sma60": 1.06,
             "volume_ratio": 1.25,
@@ -482,6 +483,36 @@ class ExecutionRotationTests(unittest.TestCase):
         self.assertEqual(plan["take_profit_pct"], 12.0)
         self.assertEqual(plan["reward_risk"], 2.0)
 
+    def test_execution_risk_plan_blocks_surging_buy_watch(self) -> None:
+        candidate = {
+            "code": "006340",
+            "market": "KOSPI",
+            "action": "buy_watch",
+            "rating": "overweight",
+            "technical_snapshot": {"current_price": 15770, "change_pct": 14.36},
+            "layer_c": {
+                "action": "buy_watch",
+                "rating": "overweight",
+                "trade_plan": {
+                    "entry_price": 15600,
+                    "stop_loss": 14550,
+                    "take_profit": 18350,
+                },
+                "invalidation_trigger": {"stop_loss": 14550},
+                "technical_features": {
+                    "change_pct": 6.0,
+                    "close_vs_sma20": 1.04,
+                    "close_vs_sma60": 1.06,
+                    "volume_ratio": 1.2,
+                },
+            },
+        }
+
+        plan = _candidate_execution_risk_plan(candidate)
+
+        self.assertFalse(plan["ok"])
+        self.assertEqual(plan["reason"], "buy_watch_daily_change_too_high")
+
     def test_refresh_trailing_profit_peak_only_raises_peak(self) -> None:
         position = {"unrealized_pnl_pct": 4.0}
         _refresh_trailing_profit_peak(position)
@@ -613,7 +644,12 @@ class ExecutionRotationTests(unittest.TestCase):
             "size_recommendation": {"quantity": 0, "reason": "signal_only"},
             "final_action_snapshot": {
                 "quant_decision": {"decision": "operator_review", "order_ready": False},
-                "agent_decision": {"decision": "agent_primary_buy", "rating": "overweight", "action": "buy"},
+                "agent_decision": {
+                    "decision": "agent_primary_buy",
+                    "order_ready": True,
+                    "rating": "overweight",
+                    "action": "buy",
+                },
             },
             "layer_c": _buy_research_layer(),
         }
@@ -634,7 +670,7 @@ class ExecutionRotationTests(unittest.TestCase):
         self.assertEqual(promoted["active_entry_reason"], "operator_review_high_momentum_entry")
         self.assertGreater(promoted["size_recommendation"]["quantity"], 0)
 
-    def test_operator_review_buy_watch_promotes_when_momentum_is_strong(self) -> None:
+    def test_operator_review_buy_watch_without_agent_approval_is_not_promoted(self) -> None:
         candidate = {
             "code": "000660",
             "market": "KOSPI",
@@ -669,10 +705,57 @@ class ExecutionRotationTests(unittest.TestCase):
 
         promoted = _promote_operator_review_candidate_for_entry(candidate, account, cfg)
 
-        self.assertTrue(promoted["entry_allowed"])
-        self.assertEqual(promoted["final_action"], "review_for_entry")
-        self.assertEqual(promoted["active_entry_reason"], "operator_review_high_momentum_entry")
-        self.assertGreater(promoted["size_recommendation"]["quantity"], 0)
+        self.assertFalse(promoted.get("entry_allowed", False))
+        self.assertEqual(promoted["final_action"], "watch_only")
+
+    def test_operator_review_surging_buy_watch_is_not_promoted(self) -> None:
+        candidate = {
+            "code": "006340",
+            "market": "KOSPI",
+            "signal_state": "entry",
+            "score": 98,
+            "bluechip": True,
+            "research_score": 0.82,
+            "research_status": "healthy",
+            "final_action": "watch_only",
+            "technical_snapshot": {"current_price": 15770, "change_pct": 14.36},
+            "risk_inputs": {"stop_loss_pct": 5},
+            "ev_metrics": {"expected_value": 1.2, "reliability": "high"},
+            "size_recommendation": {"quantity": 0, "reason": "signal_only"},
+            "final_action_snapshot": {
+                "quant_decision": {"decision": "operator_review", "order_ready": False},
+                "agent_decision": {
+                    "decision": "agent_primary_buy",
+                    "order_ready": True,
+                    "rating": "overweight",
+                    "action": "buy_watch",
+                },
+            },
+            "layer_c": {
+                **_buy_research_layer(),
+                "action": "buy_watch",
+                "technical_features": {
+                    "change_pct": 6.0,
+                    "close_vs_sma20": 1.04,
+                    "close_vs_sma60": 1.06,
+                    "volume_ratio": 1.25,
+                },
+            },
+        }
+        account = {"cash_krw": 1000000, "equity_krw": 5000000, "positions": []}
+        cfg = {
+            "allocation_mode": "concentrated",
+            "risk_per_trade_pct": 0.8,
+            "bluechip_risk_per_trade_pct": 1.5,
+            "max_symbol_weight_pct": 30.0,
+            "max_sector_weight_pct": 50.0,
+            "max_market_exposure_pct": 95.0,
+        }
+
+        promoted = _promote_operator_review_candidate_for_entry(candidate, account, cfg)
+
+        self.assertFalse(promoted.get("entry_allowed", False))
+        self.assertEqual(promoted["final_action"], "watch_only")
 
     def test_operator_review_buy_watch_with_weak_trend_is_not_promoted(self) -> None:
         candidate = {

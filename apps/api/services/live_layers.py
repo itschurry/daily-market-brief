@@ -14,6 +14,7 @@ _NEGATIVE_RATINGS = {"underweight", "sell"}
 _NEGATIVE_ACTIONS = {"reduce", "sell", "block"}
 _ENTRY_MIN_CLOSE_VS_SMA = 1.0
 _ENTRY_MIN_VOLUME_RATIO = 0.8
+_BUY_WATCH_MAX_DAILY_CHANGE_PCT = 10.0
 
 
 def _normalized_execution_mode(source_context: dict[str, Any] | None) -> str:
@@ -90,6 +91,18 @@ def _entry_trend_ok(research: dict[str, Any], *, action: str = "") -> bool:
         and close_vs_sma60 >= _ENTRY_MIN_CLOSE_VS_SMA
         and volume_ratio >= _ENTRY_MIN_VOLUME_RATIO
     )
+
+
+def _buy_watch_daily_change_block_reason(research: dict[str, Any], *, action: str) -> str:
+    if action != "buy_watch":
+        return ""
+    features = research.get("technical_features") if isinstance(research.get("technical_features"), dict) else {}
+    change_pct = _optional_float(features.get("change_pct"))
+    if change_pct is None:
+        return "buy_watch_daily_change_required"
+    if change_pct >= _BUY_WATCH_MAX_DAILY_CHANGE_PCT:
+        return "buy_watch_daily_change_too_high"
+    return ""
 
 
 def _evidence_ok(research: dict[str, Any]) -> bool:
@@ -253,6 +266,7 @@ def build_layer_e_snapshot(*, signal_state: str, quant_score: float, research: d
     confidence_threshold = 0.75 if action == "buy" else 0.65
     technical_ok = _technical_sanity_ok(research)
     entry_trend_ok = _entry_trend_ok(research, action=action)
+    buy_watch_change_block = _buy_watch_daily_change_block_reason(research, action=action)
     evidence_ok = _evidence_ok(research)
     quality = research.get("research_quality") if isinstance(research.get("research_quality"), dict) else {}
     validation_ok = _grade_allows_entry(validation)
@@ -266,6 +280,7 @@ def build_layer_e_snapshot(*, signal_state: str, quant_score: float, research: d
         and research_score_num >= 0.45
         and buy_intent
         and entry_trend_ok
+        and not buy_watch_change_block
         and not warnings
     )
     if signal_state == "exit":
@@ -285,7 +300,7 @@ def build_layer_e_snapshot(*, signal_state: str, quant_score: float, research: d
         agent_decision = {"decision": "agent_exit_or_block", "order_ready": False, "reason": "negative_rating_or_action", "rating": rating, "action": action}
     elif action == "hold" or rating == "hold":
         agent_decision = {"decision": "agent_hold", "order_ready": False, "reason": "hold_rating_or_action", "rating": rating, "action": action}
-    elif buy_intent and confidence >= confidence_threshold and validation_ok and technical_ok and entry_trend_ok and evidence_ok and not warnings:
+    elif buy_intent and confidence >= confidence_threshold and validation_ok and technical_ok and entry_trend_ok and not buy_watch_change_block and evidence_ok and not warnings:
         order_ready = execution_mode in {"agent_primary_quant_assisted", "agent_only"} or quant_entry_ready
         reason = "agent_buy_confirmed" if order_ready else "agent_buy_without_quant_entry"
         agent_decision = {
@@ -300,7 +315,9 @@ def build_layer_e_snapshot(*, signal_state: str, quant_score: float, research: d
             "analysis_mode": "agent_research",
         }
     elif buy_intent:
-        if str(quality.get("blocked_reason") or ""):
+        if buy_watch_change_block:
+            quality_reason = buy_watch_change_block
+        elif str(quality.get("blocked_reason") or ""):
             quality_reason = str(quality.get("blocked_reason"))
         elif not validation_ok:
             quality_reason = "research_quality_gate_failed"
@@ -341,6 +358,12 @@ def build_layer_e_snapshot(*, signal_state: str, quant_score: float, research: d
     elif agent_decision.get("order_ready"):
         final_action = "review_for_entry"
         decision_reason = "agent_primary_buy" if not quant_entry_ready else "agent_and_quant_aligned"
+    elif buy_watch_change_block:
+        final_action = "watch_only"
+        decision_reason = buy_watch_change_block
+    elif action == "buy_watch" and quant_decision.get("order_ready"):
+        final_action = "watch_only"
+        decision_reason = "buy_watch_agent_not_ready"
     elif buy_intent and agent_decision.get("reason") == "agent_buy_without_quant_entry":
         final_action = "watch_only"
         decision_reason = "agent_buy_without_quant_entry"

@@ -23,6 +23,7 @@ def _base_research(**overrides: object) -> dict:
         "confidence": 0.72,
         "validation": {"grade": "B"},
         "technical_features": {
+            "change_pct": 3.0,
             "close_vs_sma20": 1.04,
             "close_vs_sma60": 1.06,
             "volume_ratio": 1.2,
@@ -88,6 +89,7 @@ class LiveLayerDecisionTests(unittest.TestCase):
                 action="buy_watch",
                 confidence=0.9,
                 technical_features={
+                    "change_pct": 6.0,
                     "close_vs_sma20": 1.04,
                     "close_vs_sma60": 0.97,
                     "volume_ratio": 0.42,
@@ -102,6 +104,56 @@ class LiveLayerDecisionTests(unittest.TestCase):
         self.assertEqual(layer["final_action"], "review_for_entry")
         self.assertTrue(layer["agent_decision"]["order_ready"])
 
+    def test_buy_watch_daily_surge_stays_watch_only(self) -> None:
+        layer = build_layer_e_snapshot(
+            signal_state="entry",
+            quant_score=91,
+            research=_base_research(
+                action="buy_watch",
+                confidence=0.9,
+                technical_features={
+                    "change_pct": 15.59,
+                    "close_vs_sma20": 1.04,
+                    "close_vs_sma60": 1.06,
+                    "volume_ratio": 1.2,
+                    "rsi14": 55,
+                },
+            ),
+            risk={"blocked": False},
+            timestamp="2026-08-04T00:28:00+00:00",
+            source_context={"execution_mode": "agent_primary_quant_assisted"},
+        )
+
+        self.assertEqual(layer["final_action"], "watch_only")
+        self.assertEqual(layer["decision_reason"], "buy_watch_daily_change_too_high")
+        self.assertFalse(layer["agent_decision"]["order_ready"])
+
+    def test_buy_watch_quant_cannot_override_agent_quality_rejection(self) -> None:
+        layer = build_layer_e_snapshot(
+            signal_state="entry",
+            quant_score=91,
+            research=_base_research(
+                action="buy_watch",
+                confidence=0.9,
+                validation={"grade": "C"},
+                technical_features={
+                    "change_pct": 6.0,
+                    "close_vs_sma20": 1.04,
+                    "close_vs_sma60": 1.06,
+                    "volume_ratio": 1.2,
+                    "rsi14": 55,
+                },
+            ),
+            risk={"blocked": False},
+            timestamp="2026-08-05T00:19:00+00:00",
+            source_context={"execution_mode": "agent_primary_quant_assisted"},
+        )
+
+        self.assertTrue(layer["quant_decision"]["order_ready"])
+        self.assertFalse(layer["agent_decision"]["order_ready"])
+        self.assertEqual(layer["final_action"], "watch_only")
+        self.assertEqual(layer["decision_reason"], "buy_watch_agent_not_ready")
+
     def test_buy_watch_with_weak_trend_stays_watch_only(self) -> None:
         layer = build_layer_e_snapshot(
             signal_state="entry",
@@ -110,6 +162,7 @@ class LiveLayerDecisionTests(unittest.TestCase):
                 action="buy_watch",
                 confidence=0.9,
                 technical_features={
+                    "change_pct": 6.0,
                     "close_vs_sma20": 0.98,
                     "close_vs_sma60": 0.97,
                     "volume_ratio": 0.42,
