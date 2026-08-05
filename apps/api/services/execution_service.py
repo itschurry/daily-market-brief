@@ -386,6 +386,48 @@ def _filter_order_events_for_runtime_mode(events: list[dict[str, Any]], mode: st
     return filtered
 
 
+def _order_event_timestamp(item: dict[str, Any]) -> datetime.datetime | None:
+    raw = str(item.get("submitted_at") or item.get("timestamp") or item.get("logged_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def _matching_unknown_live_buy(
+    events: list[dict[str, Any]],
+    *,
+    symbol_key: str,
+    entry_ts: str,
+) -> dict[str, Any]:
+    try:
+        entry_at = datetime.datetime.fromisoformat(str(entry_ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return {}
+    if entry_at.tzinfo is None:
+        entry_at = entry_at.replace(tzinfo=datetime.timezone.utc)
+    entry_at = entry_at.astimezone(datetime.timezone.utc)
+
+    matched: list[dict[str, Any]] = []
+    for item in events:
+        if _order_event_runtime_mode(item) != "unknown":
+            continue
+        if not bool(item.get("success")) or str(item.get("side") or "").lower() != "buy":
+            continue
+        item_key = f"{str(item.get('market') or '').upper()}:{str(item.get('code') or '').upper()}"
+        event_at = _order_event_timestamp(item)
+        if item_key != symbol_key or event_at is None:
+            continue
+        if abs((event_at - entry_at).total_seconds()) <= 15 * 60:
+            matched.append(item)
+    return max(matched, key=lambda item: _order_event_timestamp(item) or entry_at, default={})
+
+
 def _sanitize_last_summary_for_account_mode(state: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
     payload_state = dict(state)
     summary = payload_state.get("last_summary")
@@ -452,6 +494,13 @@ def _hydrate_live_runtime_account(
         if not symbol_key.strip(":"):
             continue
         latest_buy = latest_buy_by_symbol.get(symbol_key) or {}
+        entry_marker = str(position.get("entry_ts") or existing_registry.get(symbol_key) or "").strip()
+        if not latest_buy and entry_marker:
+            latest_buy = _matching_unknown_live_buy(
+                raw_order_events,
+                symbol_key=symbol_key,
+                entry_ts=entry_marker,
+            )
         resolved_entry_ts = str(
             position.get("entry_ts")
             or existing_registry.get(symbol_key)
@@ -1166,6 +1215,9 @@ def _notification_order_hook(event: dict[str, Any], _account: dict[str, Any]) ->
 
 def _record_execution_order(payload: dict[str, Any]) -> dict[str, Any]:
     order_payload = enrich_order_payload(payload)
+    order_payload["execution_mode"] = str(
+        order_payload.get("execution_mode") or _current_execution_mode()
+    ).strip().lower()
     order_payload["order_id"] = order_payload.get("order_id") or order_payload.get("trace_id") or str(uuid.uuid4())
     order_payload["trace_id"] = order_payload.get("trace_id") or order_payload["order_id"]
     order_payload["reason_code"] = normalize_execution_reason(
@@ -1607,9 +1659,9 @@ def _sync_primary_strategy_fields(cfg: dict) -> dict:
     rotation_raw = cfg.get("rotation") if isinstance(cfg.get("rotation"), dict) else {}
     cfg["rotation"] = {
         "enabled": bool(rotation_raw.get("enabled", True)),
-        "min_score_gap": min(5.0, _to_float(rotation_raw.get("min_score_gap"), 2.0)),
-        "daily_limit": max(6, int(_to_float(rotation_raw.get("daily_limit"), 6))),
-        "min_holding_days": max(0, int(_to_float(rotation_raw.get("min_holding_days"), 0))),
+        "min_score_gap": max(8.0, _to_float(rotation_raw.get("min_score_gap"), 8.0)),
+        "daily_limit": min(1, max(0, int(_to_float(rotation_raw.get("daily_limit"), 1)))),
+        "min_holding_days": max(2, int(_to_float(rotation_raw.get("min_holding_days"), 2))),
         "min_holding_minutes": max(
             _ROTATION_MIN_HOLDING_MINUTES,
             int(_to_float(rotation_raw.get("min_holding_minutes"), _ROTATION_MIN_HOLDING_MINUTES)),
@@ -2709,7 +2761,11 @@ def _run_auto_trader_cycle(cfg: dict, *, entry_scan: bool = True) -> dict:
             continue
 
         any_market_open = True
-        account = engine.get_account(refresh_quotes=True)
+        account = _normalize_runtime_account(
+            engine.get_account(refresh_quotes=True),
+            persist_live_reconciled_fills=True,
+            notify_live_fills=True,
+        )
         market_positions = [
             position for position in account.get("positions", [])
             if str(position.get("market") or "").upper() == market

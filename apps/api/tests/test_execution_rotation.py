@@ -17,6 +17,7 @@ from services.execution_service import (
     _candidate_execution_risk_plan,
     _buy_capacity_block_reason_from_orders,
     _default_auto_trader_config,
+    _hydrate_live_runtime_account,
     _promote_operator_review_candidate_for_entry,
     _promote_priority_candidate_for_entry,
     _position_exit_reason_by_pnl,
@@ -84,6 +85,24 @@ class ExecutionRotationTests(unittest.TestCase):
         self.assertEqual(config["max_symbol_weight_pct"], 20.0)
         self.assertEqual(config["max_sector_weight_pct"], 35.0)
         self.assertEqual(config["max_market_exposure_pct"], 40.0)
+
+    def test_stale_rotation_config_is_normalized_to_safe_limits(self) -> None:
+        config = _sync_primary_strategy_fields({
+            **_default_auto_trader_config(),
+            "rotation": {
+                "enabled": False,
+                "min_score_gap": 5.0,
+                "daily_limit": 6,
+                "min_holding_days": 0,
+                "min_holding_minutes": 30,
+            },
+        })
+
+        self.assertFalse(config["rotation"]["enabled"])
+        self.assertEqual(config["rotation"]["min_score_gap"], 8.0)
+        self.assertEqual(config["rotation"]["daily_limit"], 1)
+        self.assertEqual(config["rotation"]["min_holding_days"], 2)
+        self.assertEqual(config["rotation"]["min_holding_minutes"], 1440)
 
     def test_exit_monitor_interval_is_separate_and_capped_at_sixty_seconds(self) -> None:
         default_config = _default_auto_trader_config()
@@ -176,6 +195,114 @@ class ExecutionRotationTests(unittest.TestCase):
         self.assertEqual(summary["executed_buy_count"], 0)
         technicals.assert_not_called()
         signal_book.assert_not_called()
+
+    def test_exit_monitor_restores_live_risk_plan_before_sell_check(self) -> None:
+        raw_account = {
+            "mode": "real",
+            "cash_krw": 3_100_000,
+            "equity_krw": 3_750_000,
+            "orders": [],
+            "positions": [{
+                "market": "KOSPI",
+                "code": "073240",
+                "name": "금호타이어",
+                "quantity": 33,
+                "avg_price_local": 7020,
+                "last_price_local": 6660,
+                "unrealized_pnl_pct": -5.12,
+                "orderable_quantity": 33,
+            }],
+        }
+        engine = Mock()
+        engine.get_account.return_value = raw_account
+        engine.place_order.return_value = {
+            "ok": True,
+            "event": {"quantity": 33, "filled_at": "2026-08-03T06:00:00+00:00"},
+            "account": {"orders": []},
+        }
+
+        normalize_calls = 0
+
+        def normalize(account: dict, **_: object) -> dict:
+            nonlocal normalize_calls
+            normalize_calls += 1
+            normalized = {**account, "positions": [dict(item) for item in account["positions"]]}
+            if normalize_calls >= 2:
+                normalized["positions"][0].update({
+                    "entry_plan_price": 7150,
+                    "stop_loss_price": 6265,
+                    "take_profit_price": 8100,
+                })
+            return normalized
+
+        with (
+            patch("services.execution_service._runtime_engine", return_value=engine),
+            patch("services.execution_service._normalize_runtime_account", side_effect=normalize),
+            patch("services.execution_service._runtime_order_attempts", return_value=[]),
+            patch("services.execution_service.is_market_open", return_value=True),
+            patch("services.execution_service._persist_live_runtime_account"),
+            patch("services.execution_service._record_execution_order"),
+            patch("services.execution_service.append_signal_snapshots"),
+            patch("services.execution_service.append_engine_cycle"),
+            patch("services.execution_service.append_account_snapshot"),
+            patch("services.execution_service._should_send_market_open_brief", return_value=(False, "")),
+            patch("services.execution_service.get_notification_service", return_value=Mock()),
+        ):
+            summary = _run_auto_trader_cycle(
+                _default_auto_trader_config(),
+                entry_scan=False,
+            )
+
+        self.assertGreaterEqual(normalize_calls, 3)
+        self.assertEqual(summary["executed_sell_count"], 1)
+        self.assertEqual(summary["executed_sells"][0]["reason"], "비상손절")
+        engine.place_order.assert_called_once_with(
+            side="sell",
+            code="073240",
+            market="KOSPI",
+            quantity=33,
+            order_type="market",
+        )
+
+    def test_live_account_restores_plan_from_matching_legacy_order_event(self) -> None:
+        account = {
+            "mode": "real",
+            "account_product_code": "01",
+            "positions": [{
+                "market": "KOSPI",
+                "code": "073240",
+                "entry_ts": "2026-07-31T05:45:42+00:00",
+                "stop_loss_price": None,
+                "take_profit_price": None,
+                "entry_plan_price": None,
+            }],
+        }
+        legacy_live_order = {
+            "success": True,
+            "side": "buy",
+            "market": "KOSPI",
+            "code": "073240",
+            "submitted_at": "2026-07-31T05:40:41+00:00",
+            "order_id": "legacy-uuid-without-mode",
+            "stop_loss_price": 6265,
+            "take_profit_price": 8100,
+            "entry_plan_price": 7150,
+        }
+
+        with (
+            patch("services.execution_service.read_order_events", return_value=[legacy_live_order]),
+            patch("services.execution_service.read_execution_events", return_value=[]),
+            patch("services.execution_service._load_live_position_entries", return_value={
+                "real:01": {"KOSPI:073240": "2026-07-31T05:45:42+00:00"},
+            }),
+            patch("services.execution_service._save_live_position_entries"),
+        ):
+            hydrated = _hydrate_live_runtime_account(account)
+
+        position = hydrated["positions"][0]
+        self.assertEqual(position["entry_plan_price"], 7150)
+        self.assertEqual(position["stop_loss_price"], 6265)
+        self.assertEqual(position["take_profit_price"], 8100)
 
     def test_symbol_reentry_is_blocked_for_three_days_after_sell(self) -> None:
         orders = [{
