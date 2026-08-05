@@ -884,6 +884,194 @@ class KISClient:
             "raw": output,
         }
 
+    def get_domestic_daily_fills(self, date_key: str) -> dict[str, Any]:
+        """KIS 원장의 특정 거래일 국내주식 체결 내역을 반환한다."""
+        query_date = _normalize_kis_date(date_key)
+        cano, product_code = self._account_parts()
+        fk100 = ""
+        nk100 = ""
+        request_tr_cont = ""
+        raw_orders: list[dict[str, Any]] = []
+        raw_summary: dict[str, Any] = {}
+
+        while True:
+            headers = self._auth_headers("TTTC0081R")
+            if request_tr_cont:
+                headers["tr_cont"] = request_tr_cont
+            payload, response = self._request_full(
+                "GET",
+                "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+                headers=headers,
+                params={
+                    "CANO": cano,
+                    "ACNT_PRDT_CD": product_code,
+                    "INQR_STRT_DT": query_date,
+                    "INQR_END_DT": query_date,
+                    "SLL_BUY_DVSN_CD": "00",
+                    "PDNO": "",
+                    "CCLD_DVSN": "01",
+                    "INQR_DVSN": "01",
+                    "INQR_DVSN_3": "00",
+                    "ORD_GNO_BRNO": "",
+                    "ODNO": "",
+                    "INQR_DVSN_1": "",
+                    "CTX_AREA_FK100": fk100,
+                    "CTX_AREA_NK100": nk100,
+                    "EXCG_ID_DVSN_CD": "KRX",
+                },
+            )
+            raw_orders.extend(item for item in (payload.get("output1") or []) if isinstance(item, dict))
+            summary_payload = payload.get("output2")
+            if isinstance(summary_payload, dict):
+                raw_summary = summary_payload
+            elif isinstance(summary_payload, list) and summary_payload and isinstance(summary_payload[0], dict):
+                raw_summary = summary_payload[0]
+            response_tr_cont = str(response.headers.get("tr_cont") or "")
+            fk100 = str(payload.get("ctx_area_fk100") or "")
+            nk100 = str(payload.get("ctx_area_nk100") or "")
+            if response_tr_cont not in {"M", "F"}:
+                break
+            request_tr_cont = "N"
+
+        orders: list[dict[str, Any]] = []
+        for item in raw_orders:
+            quantity = _to_int(item.get("tot_ccld_qty"))
+            if quantity is None or quantity <= 0:
+                continue
+            side_code = str(item.get("sll_buy_dvsn_cd") or "").strip()
+            side = {"01": "sell", "02": "buy"}.get(side_code)
+            order_id = str(item.get("odno") or "").strip()
+            code = str(item.get("pdno") or "").strip()
+            filled_price = _to_float(item.get("avg_prvs"))
+            notional = _to_float(item.get("tot_ccld_amt"))
+            if not side or not order_id or not code or filled_price is None or notional is None:
+                raise KISAPIError("KIS 일별 체결 응답 필드가 누락됐습니다.")
+            filled_at = _kis_fill_timestamp(item.get("ord_dt"), item.get("ord_tmd"))
+            orders.append({
+                "order_id": order_id,
+                "broker_order_id": order_id,
+                "branch_no": str(item.get("ord_gno_brno") or "").strip(),
+                "ts": filled_at,
+                "submitted_at": filled_at,
+                "filled_at": filled_at,
+                "status": "filled",
+                "lifecycle_state": "filled",
+                "execution_status": "filled",
+                "success": True,
+                "side": side,
+                "code": code,
+                "name": str(item.get("prdt_name") or code).strip(),
+                "market": "KOSPI",
+                "currency": "KRW",
+                "quantity": quantity,
+                "filled_quantity": quantity,
+                "filled_price_local": filled_price,
+                "filled_price_krw": filled_price,
+                "notional_local": notional,
+                "notional_krw": notional,
+                "fx_rate": 1.0,
+                "broker_source": "kis_inquire_daily_ccld",
+            })
+
+        total_cost = _to_float(raw_summary.get("prsm_tlex_smtl"))
+        if total_cost is None:
+            raise KISAPIError("KIS 일별 체결 비용 합계가 누락됐습니다.")
+        return {
+            "date": date_key,
+            "orders": sorted(orders, key=lambda item: str(item.get("filled_at") or "")),
+            "summary": {
+                "filled_quantity": _to_int(raw_summary.get("tot_ccld_qty")) or 0,
+                "filled_amount_krw": _to_float(raw_summary.get("tot_ccld_amt")) or 0.0,
+                "fees_and_tax_krw": total_cost,
+            },
+        }
+
+    def get_domestic_period_trade_profit(self, date_key: str) -> dict[str, Any]:
+        """KIS 원장의 특정 거래일 종목별 확정 실현손익을 반환한다."""
+        query_date = _normalize_kis_date(date_key)
+        cano, product_code = self._account_parts()
+        fk100 = ""
+        nk100 = ""
+        request_tr_cont = ""
+        raw_trades: list[dict[str, Any]] = []
+        raw_summary: dict[str, Any] = {}
+
+        while True:
+            headers = self._auth_headers("TTTC8715R")
+            if request_tr_cont:
+                headers["tr_cont"] = request_tr_cont
+            payload, response = self._request_full(
+                "GET",
+                "/uapi/domestic-stock/v1/trading/inquire-period-trade-profit",
+                headers=headers,
+                params={
+                    "CANO": cano,
+                    "ACNT_PRDT_CD": product_code,
+                    "SORT_DVSN": "01",
+                    "INQR_STRT_DT": query_date,
+                    "INQR_END_DT": query_date,
+                    "CBLC_DVSN": "00",
+                    "PDNO": "",
+                    "CTX_AREA_FK100": fk100,
+                    "CTX_AREA_NK100": nk100,
+                },
+            )
+            raw_trades.extend(item for item in (payload.get("output1") or []) if isinstance(item, dict))
+            summary_payload = payload.get("output2")
+            if isinstance(summary_payload, dict):
+                raw_summary = summary_payload
+            elif isinstance(summary_payload, list) and summary_payload and isinstance(summary_payload[0], dict):
+                raw_summary = summary_payload[0]
+            response_tr_cont = str(response.headers.get("tr_cont") or "")
+            fk100 = str(payload.get("ctx_area_fk100") or "")
+            nk100 = str(payload.get("ctx_area_nk100") or "")
+            if response_tr_cont not in {"M", "F"}:
+                break
+            request_tr_cont = "N"
+
+        trades: list[dict[str, Any]] = []
+        for item in raw_trades:
+            quantity = _to_int(item.get("sll_qty"))
+            if quantity is None or quantity <= 0:
+                continue
+            code = str(item.get("pdno") or "").strip()
+            entry_price = _to_float(item.get("pchs_unpr"))
+            exit_price = _to_float(item.get("sll_pric"))
+            realized_pnl = _to_float(item.get("rlzt_pfls"))
+            fee = _to_float(item.get("fee"))
+            tax = _to_float(item.get("tl_tax"))
+            if not code or None in {entry_price, exit_price, realized_pnl, fee, tax}:
+                raise KISAPIError("KIS 기간별 매매손익 응답 필드가 누락됐습니다.")
+            trade_date = dt.datetime.strptime(str(item.get("trad_dt") or ""), "%Y%m%d").date().isoformat()
+            trades.append({
+                "date": trade_date,
+                "code": code,
+                "name": str(item.get("prdt_name") or code).strip(),
+                "market": "KOSPI",
+                "quantity": quantity,
+                "entry_price_krw": entry_price,
+                "exit_price_krw": exit_price,
+                "buy_quantity": _to_int(item.get("buy_qty")) or 0,
+                "buy_notional_krw": _to_float(item.get("buy_amt")) or 0.0,
+                "sell_notional_krw": _to_float(item.get("sll_amt")) or 0.0,
+                "realized_pnl_krw": realized_pnl,
+                "fee_krw": fee,
+                "tax_krw": tax,
+                "total_cost_krw": fee + tax,
+                "return_pct": _to_float(item.get("pfls_rt")),
+                "realized_pnl_includes_all_costs": True,
+                "broker_source": "kis_inquire_period_trade_profit",
+            })
+        return {
+            "date": date_key,
+            "trades": trades,
+            "summary": {
+                "realized_pnl_krw": _to_float(raw_summary.get("tot_rlzt_pfls")) or 0.0,
+                "fee_krw": _to_float(raw_summary.get("tot_fee")) or 0.0,
+                "tax_krw": _to_float(raw_summary.get("tot_tltx")) or 0.0,
+            },
+        }
+
     # ── 주문 ─────────────────────────────────────────────────────────────────
 
     def place_cash_order(
@@ -1017,6 +1205,20 @@ def _to_float(value: Any) -> float | None:
         return float(str(value).replace(",", ""))
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_kis_date(date_key: str) -> str:
+    parsed = dt.date.fromisoformat(str(date_key or ""))
+    if parsed.isoformat() != date_key:
+        raise ValueError(f"잘못된 날짜 형식: {date_key}")
+    return parsed.strftime("%Y%m%d")
+
+
+def _kis_fill_timestamp(raw_date: Any, raw_time: Any) -> str:
+    date_value = str(raw_date or "").strip()
+    time_value = str(raw_time or "").strip().zfill(6)
+    parsed = dt.datetime.strptime(f"{date_value}{time_value}", "%Y%m%d%H%M%S")
+    return parsed.replace(tzinfo=dt.timezone(dt.timedelta(hours=9))).isoformat(timespec="seconds")
 
 
 def _read_json_file(path: Path) -> dict[str, Any] | None:

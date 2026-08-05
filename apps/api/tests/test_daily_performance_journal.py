@@ -14,7 +14,7 @@ API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
-from services.daily_performance_journal import _validate_date_key, build_daily_performance_journal
+from services.daily_performance_journal import _account_orders, _validate_date_key, build_daily_performance_journal
 
 
 KST = ZoneInfo("Asia/Seoul")
@@ -135,6 +135,97 @@ class DailyPerformanceJournalTests(unittest.TestCase):
         self.assertEqual(result["pnl_attribution"]["carry_in_exit_contribution_krw"], 1_480)
         self.assertEqual(result["pnl_attribution"]["unattributed_krw"], 0)
         self.assertEqual(result["diagnostics"]["engine_cycle_count"], 2)
+
+    def test_live_journal_uses_kis_fills_and_realized_profit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cycles_dir = root / "engine_cycles"
+            journals_dir = root / "daily_performance"
+            cycles_dir.mkdir()
+            journals_dir.mkdir()
+            submitted_buy = {
+                "order_id": "1001", "timestamp": "2026-08-05T00:19:45+00:00",
+                "side": "buy", "code": "006340", "quantity": 16,
+                "status": "submitted", "lifecycle_state": "submitted",
+            }
+            filled_buy = {
+                **submitted_buy,
+                "filled_at": "2026-08-05T00:19:45+00:00",
+                "filled_price_krw": 15760,
+                "lifecycle_state": "filled",
+                "execution_status": "filled",
+            }
+            self.assertEqual(len(_account_orders({"orders": [submitted_buy, filled_buy]})), 1)
+            cycles = [
+                {
+                    "started_at": "2026-08-04T23:50:00+00:00",
+                    "account": {
+                        "mode": "real", "equity_krw": 3_758_490, "cash_krw": 3_758_490,
+                        "positions": [], "orders": [],
+                    },
+                },
+                {
+                    "started_at": "2026-08-05T06:39:00+00:00",
+                    "account": {
+                        "mode": "real", "equity_krw": 3_757_330, "cash_krw": 3_757_330,
+                        "market_value_krw": 0, "positions": [], "orders": [submitted_buy, filled_buy],
+                    },
+                    "executed_buys": [{"code": "006340", "name": "대원전선"}],
+                    "executed_sells": [{"code": "006340", "reason": "본전보호"}],
+                },
+            ]
+            (cycles_dir / "2026-08-05.jsonl").write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in cycles),
+                encoding="utf-8",
+            )
+            broker_activity = {
+                "fills": {
+                    "orders": [
+                        {
+                            "order_id": "1001", "filled_at": "2026-08-05T09:19:45+09:00",
+                            "side": "buy", "code": "006340", "name": "대원전선", "market": "KOSPI",
+                            "quantity": 16, "filled_price_krw": 15760, "notional_krw": 252160,
+                            "lifecycle_state": "filled",
+                        },
+                        {
+                            "order_id": "1002", "filled_at": "2026-08-05T09:39:49+09:00",
+                            "side": "sell", "code": "006340", "name": "대원전선", "market": "KOSPI",
+                            "quantity": 16, "filled_price_krw": 15720, "notional_krw": 251520,
+                            "execution_status": "filled",
+                        },
+                    ],
+                    "summary": {"fees_and_tax_krw": 520},
+                },
+                "profits": {
+                    "trades": [{
+                        "date": "2026-08-05", "code": "006340", "name": "대원전선", "market": "KOSPI",
+                        "quantity": 16, "entry_price_krw": 15760, "exit_price_krw": 15720,
+                        "buy_quantity": 16, "buy_notional_krw": 252160, "sell_notional_krw": 251520,
+                        "realized_pnl_krw": -1160, "total_cost_krw": 520,
+                    }],
+                },
+            }
+            with (
+                patch("services.daily_performance_journal.ENGINE_CYCLES_DIR", cycles_dir),
+                patch("services.daily_performance_journal.JOURNAL_DIR", journals_dir),
+                patch("services.daily_performance_journal.RUNTIME_DIR", root),
+                patch("services.daily_performance_journal.load_engine_state", return_value={}),
+            ):
+                result = build_daily_performance_journal(
+                    "2026-08-05",
+                    market_payload={"kospi_history": [{"date": "2026-08-05", "close": 1, "pct": 3.76}]},
+                    broker_activity=broker_activity,
+                )
+
+        self.assertEqual(result["account"]["net_pnl_krw"], -1160)
+        self.assertEqual(result["account"]["fees_krw"], 520)
+        self.assertEqual(result["trading"]["buy_count"], 1)
+        self.assertEqual(result["trading"]["sell_count"], 1)
+        self.assertEqual(result["trading"]["round_trip_count"], 1)
+        self.assertEqual(result["trading"]["trades"][0]["realized_pnl_krw"], -1160)
+        self.assertEqual(result["trading"]["trades"][0]["exit_reason"], "본전보호")
+        self.assertEqual(result["pnl_attribution"]["unattributed_krw"], 0)
+        self.assertEqual(result["diagnostics"]["trade_ledger_source"], "kis")
 
 
 if __name__ == "__main__":

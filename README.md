@@ -108,7 +108,7 @@ TELEGRAM_CHAT_ID=
 - `LIVE_TRADING_APPROVED=false`: `EXECUTION_MODE=live`여도 실거래 엔진 시작을 거부해. 사용자가 직접 `true`로 바꾸고 API 컨테이너를 재생성해야 실거래를 시작할 수 있어.
 - `PAPER_INITIAL_CASH_KRW=5000000`: 모의계좌 초기 현금이야. 실계좌 기준과 같은 500만원으로 검증해.
 - `LIVE_PERFORMANCE_STARTING_EQUITY_KRW=5000000`: 실계좌 통합 수익률 기준 평가금액이야. `/api/performance/summary`는 이 값을 시작 자산으로 보고 현재 총 평가금액 대비 수익률을 계산해.
-- 일별 성과 저널은 직전 거래일 `15:40 KST` 마감 자산과 당일 `15:40 KST` 마감 자산의 차이를 기준으로 `storage/logs/runtime/daily_performance/YYYY-MM-DD.json`에 자동 생성돼. API가 장 마감 뒤 재시작되면 당일 누락분을 즉시 생성해.
+- 일별 성과 저널은 직전 거래일 `15:40 KST` 마감 자산과 당일 `15:40 KST` 마감 자산의 차이를 기준으로 `storage/logs/runtime/daily_performance/YYYY-MM-DD.json`에 자동 생성돼. 실거래는 KIS `주식일별주문체결조회`와 `기간별매매손익현황조회`의 체결가·실현손익·수수료·세금을 원장으로 쓰며, 조회에 실패하면 0원 기록을 만들지 않고 생성을 실패시켜. API가 장 마감 뒤 재시작되면 당일 누락분을 즉시 생성해.
 - `/api/system/mode`: `EXECUTION_MODE`만 기준으로 모드를 보여줘. 별도 모드 변수로 우회하지 않아.
 - `WEALTHPULSE_AGENT_EXECUTION_MODE=agent_primary_quant_assisted`: OpenAI 리서치 buy 판단이 품질/리스크를 통과하면 퀀트 entry 없이도 주문 검토로 올라갈 수 있어.
 - `OPENAI_RESEARCH_MAX_OUTPUT_TOKENS=6000`: 리서치 JSON 잘림을 피하려고 현재 기준값으로 둬.

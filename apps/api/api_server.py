@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 import uvicorn
 
 from api_contract import normalize_api_response
+from helpers import _get_kis_client
 from routes.market import handle_live_market
 from server import dispatch_get, dispatch_post
 from services.daily_performance_journal import (
@@ -39,9 +40,22 @@ def _load_market_for_daily_journal() -> dict:
     return payload
 
 
+def _load_broker_activity_for_daily_journal(date_key: str) -> dict:
+    client = _get_kis_client()
+    if client is None:
+        raise RuntimeError("KIS 클라이언트가 설정되지 않음")
+    return {
+        "fills": client.get_domestic_daily_fills(date_key),
+        "profits": client.get_domestic_period_trade_profit(date_key),
+    }
+
+
 @app.on_event("startup")
 def start_daily_journal_scheduler() -> None:
-    start_daily_performance_journal_scheduler(_load_market_for_daily_journal)
+    start_daily_performance_journal_scheduler(
+        _load_market_for_daily_journal,
+        _load_broker_activity_for_daily_journal,
+    )
 
 
 @app.on_event("shutdown")

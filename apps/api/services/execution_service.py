@@ -2867,6 +2867,7 @@ def _run_auto_trader_cycle(cfg: dict, *, entry_scan: bool = True) -> dict:
                 executed_sells.append(
                     {"code": code, "market": market, "reason": reason, "quantity": event.get("quantity")})
                 _record_execution_order({
+                    "order_id": event.get("order_id"),
                     "timestamp": event.get("ts") or _now_iso(),
                     "success": True,
                     "side": "sell",
@@ -3148,6 +3149,7 @@ def _run_auto_trader_cycle(cfg: dict, *, entry_scan: bool = True) -> dict:
                         "quantity": sell_event.get("quantity"),
                     })
                     _record_execution_order({
+                        "order_id": sell_event.get("order_id"),
                         "timestamp": sell_event.get("ts") or _now_iso(),
                         "success": True,
                         "side": "sell",
@@ -3235,6 +3237,7 @@ def _run_auto_trader_cycle(cfg: dict, *, entry_scan: bool = True) -> dict:
                             "filled_price_local": buy_event.get("filled_price_local"),
                         })
                         _record_execution_order({
+                            "order_id": buy_event.get("order_id"),
                             "timestamp": buy_event.get("ts") or _now_iso(),
                             "success": True,
                             "side": "buy",
@@ -3473,6 +3476,7 @@ def _run_auto_trader_cycle(cfg: dict, *, entry_scan: bool = True) -> dict:
                     "filled_price_local": event.get("filled_price_local"),
                 })
                 _record_execution_order({
+                    "order_id": event.get("order_id"),
                     "timestamp": event.get("ts") or _now_iso(),
                     "success": True,
                     "side": "buy",
