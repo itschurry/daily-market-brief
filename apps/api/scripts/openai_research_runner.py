@@ -28,6 +28,11 @@ ALLOWED_AGENT_RATINGS = {"strong_buy", "overweight", "hold", "underweight", "sel
 ALLOWED_AGENT_ACTIONS = {"buy", "buy_watch", "hold", "reduce", "sell", "block"}
 _QUOTE_FETCH_LOCK = threading.Lock()
 
+
+class _ResearchQualityRejection(ValueError):
+    pass
+
+
 _REQUIRED_OUTPUT_FIELDS = {
     "symbol": "string; target symbol/code",
     "market": "string; normalized Korean market such as KOSPI or KOSDAQ",
@@ -419,7 +424,10 @@ def run(
             feature_pack = build_feature_pack(target)
             raw_analysis = call_openai_research(feature_pack, timeout=timeout)
             analysis = _merge_analysis_with_target(raw_analysis, target)
-            ingest_payload = build_agent_research_ingest_payload({"items": [analysis]})
+            try:
+                ingest_payload = build_agent_research_ingest_payload({"items": [analysis]})
+            except ValueError as exc:
+                raise _ResearchQualityRejection(str(exc)) from exc
             ingest_status, ingest_result = handle_research_ingest_bulk(ingest_payload, base_url=api_base_url)
             accepted = int(ingest_result.get("accepted") or 0) if isinstance(ingest_result, dict) else 0
             ingest_row = {
@@ -433,9 +441,32 @@ def run(
                 raise RuntimeError(f"ingest_failed:{ingest_status}:accepted={accepted}")
             _log(f"[research] {index}/{total} ok {market}:{symbol} ingest_status={ingest_status} accepted={accepted}", enabled=progress)
             return {"ok": True, "analysis": analysis, "ingest_result": ingest_row, "symbol": symbol, "market": market}
+        except _ResearchQualityRejection as exc:
+            _log(f"[research] {index}/{total} rejected {market}:{symbol} error={exc}", enabled=progress)
+            return {
+                "ok": False,
+                "error": {
+                    "symbol": symbol,
+                    "market": market,
+                    "error": str(exc),
+                    "failure_kind": "quality_rejection",
+                },
+                "symbol": symbol,
+                "market": market,
+            }
         except Exception as exc:
             _log(f"[research] {index}/{total} failed {market}:{symbol} error={exc}", enabled=progress)
-            return {"ok": False, "error": {"symbol": symbol, "market": market, "error": str(exc)}, "symbol": symbol, "market": market}
+            return {
+                "ok": False,
+                "error": {
+                    "symbol": symbol,
+                    "market": market,
+                    "error": str(exc),
+                    "failure_kind": "system_failure",
+                },
+                "symbol": symbol,
+                "market": market,
+            }
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = [
@@ -456,13 +487,32 @@ def run(
                 if isinstance(error_row, dict):
                     errors.append(error_row)
 
+    quality_rejections = [
+        item for item in errors
+        if str(item.get("failure_kind") or "") == "quality_rejection"
+    ]
+    system_failures = [
+        item for item in errors
+        if str(item.get("failure_kind") or "") != "quality_rejection"
+    ]
+    if system_failures:
+        run_status = "partial_failure" if analyses else "failed"
+    elif analyses:
+        run_status = "success"
+    elif quality_rejections:
+        run_status = "quality_rejected"
+    else:
+        run_status = "noop"
+
     run_status_payload = {
         "provider": DEFAULT_RESEARCH_PROVIDER,
         "agent_provider": "openai",
         "selected_count": len(target_items),
         "success_count": len(analyses),
-        "failure_count": len(errors),
-        "partial_failure": bool(analyses and errors),
+        "failure_count": len(system_failures),
+        "quality_rejection_count": len(quality_rejections),
+        "partial_failure": bool(analyses and system_failures),
+        "status": run_status,
         "errors": errors,
         "duration_seconds": round(time.monotonic() - started_monotonic, 2),
         "avg_seconds_per_success": round((time.monotonic() - started_monotonic) / max(1, len(analyses)), 2) if analyses else None,
@@ -470,7 +520,7 @@ def run(
     }
     handle_research_run_status_save(run_status_payload, base_url=api_base_url)
 
-    if not analyses:
+    if not analyses and system_failures:
         _log(f"[research] all OpenAI calls or ingests failed errors={len(errors)}", enabled=progress)
         return 502, {
             "ok": False,
@@ -481,11 +531,34 @@ def run(
             "duration_seconds": run_status_payload["duration_seconds"],
             "avg_seconds_per_success": run_status_payload["avg_seconds_per_success"],
             "concurrency": worker_count,
+            "quality_rejection_count": len(quality_rejections),
+            "system_failure_count": len(system_failures),
             "errors": errors,
             "ingest_results": ingest_results,
         }
 
-    if errors:
+    if not analyses:
+        _log(f"[research] all targets rejected by quality gate errors={len(errors)}", enabled=progress)
+        return 200, {
+            "ok": True,
+            "stage": "quality_rejected",
+            "markets": markets,
+            "mode": mode,
+            "selected_count": len(target_items),
+            "agent_success_count": 0,
+            "agent_error_count": len(errors),
+            "accepted_count": 0,
+            "duration_seconds": run_status_payload["duration_seconds"],
+            "avg_seconds_per_success": run_status_payload["avg_seconds_per_success"],
+            "concurrency": worker_count,
+            "partial_failure": False,
+            "quality_rejection_count": len(quality_rejections),
+            "system_failure_count": 0,
+            "errors": errors,
+            "ingest_results": ingest_results,
+        }
+
+    if system_failures:
         return 207, {
             "ok": False,
             "stage": "partial_failure",
@@ -499,18 +572,22 @@ def run(
             "avg_seconds_per_success": run_status_payload["avg_seconds_per_success"],
             "concurrency": worker_count,
             "partial_failure": True,
+            "quality_rejection_count": len(quality_rejections),
+            "system_failure_count": len(system_failures),
             "errors": errors,
             "ingest_results": ingest_results,
         }
 
     return 200, {
         "ok": True,
-        "stage": "ingested_incremental",
+        "stage": "ingested_with_quality_rejections" if quality_rejections else "ingested_incremental",
         "markets": markets,
         "mode": mode,
         "selected_count": len(target_items),
         "agent_success_count": len(analyses),
         "agent_error_count": len(errors),
+        "quality_rejection_count": len(quality_rejections),
+        "system_failure_count": 0,
         "accepted_count": sum(int(item.get("accepted") or 0) for item in ingest_results),
         "duration_seconds": run_status_payload["duration_seconds"],
         "avg_seconds_per_success": run_status_payload["avg_seconds_per_success"],
@@ -533,6 +610,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _runner_exit_code(status_code: int, payload: dict[str, Any]) -> int:
+    error_count = int(payload.get("agent_error_count") or 0)
+    quality_rejection_count = int(payload.get("quality_rejection_count") or 0)
+    system_failure_count = int(payload.get("system_failure_count") or 0)
+    if (
+        error_count > 0
+        and quality_rejection_count == error_count
+        and system_failure_count == 0
+    ):
+        return 0
+    if status_code == 207 or payload.get("partial_failure"):
+        return 2
+    return 0 if 200 <= status_code < 300 else 1
+
+
 def main() -> int:
     args = build_parser().parse_args()
     status_code, payload = run(
@@ -546,9 +638,7 @@ def main() -> int:
         progress=not bool(args.no_progress),
     )
     print(json.dumps({"status_code": status_code, **payload}, ensure_ascii=False, indent=2))
-    if status_code == 207 or payload.get("partial_failure"):
-        return 2
-    return 0 if 200 <= status_code < 300 else 1
+    return _runner_exit_code(status_code, payload)
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ docker compose logs -f research-loop
 
 - `api`: Python 3.11, FastAPI, `uvicorn api_server:app --host 0.0.0.0 --port 8001`
 - `web`: React 빌드 산출물을 Nginx가 서빙
-- `research-loop`: `scripts/run_market_research_loop.sh`가 장중에 후보 갱신과 OpenAI 리서치를 반복 실행해. runner가 실패하면 컨테이너는 종료된 채 남고 자동 재시작하지 않아.
+- `research-loop`: `scripts/run_market_research_loop.sh`가 장중에 후보 갱신과 OpenAI 리서치를 반복 실행해. 전체 대상이 품질 검증에서 탈락해도 해당 종목만 제외하고 계속 돌며, 시스템 실패면 컨테이너는 종료된 채 남고 자동 재시작하지 않아.
 - API 포트: `8001`
 - Web 포트: `8081`
 - API 컨테이너 볼륨: `./storage/reports:/reports`, `./storage/logs:/logs`
@@ -118,7 +118,7 @@ TELEGRAM_CHAT_ID=
 - `WEALTHPULSE_RESEARCH_MODE=missing_or_stale`: 비어 있거나 낡은 리서치만 다시 채워.
 - `WEALTHPULSE_RESEARCH_TIMEOUT=600`: 종목 1개 OpenAI 리서치 timeout 초야.
 - `WEALTHPULSE_RESEARCH_CONCURRENCY=3`: 동시에 돌릴 종목 리서치 수야. 처음엔 3으로 둬.
-- `WEALTHPULSE_RESEARCH_LOOP_INTERVAL_SECONDS=60`: 장중 `research-loop`가 성공한 다음 반복하기까지 대기할 초야. 실패하면 반복하지 않고 서비스가 종료돼.
+- `WEALTHPULSE_RESEARCH_LOOP_INTERVAL_SECONDS=60`: 장중 `research-loop`가 성공하거나 일부·전체 종목이 품질 검증에서 탈락한 다음 반복하기까지 대기할 초야. API·인증·할당량·ingest 같은 시스템 실패면 서비스가 종료돼.
 - `WEALTHPULSE_RESEARCH_CLOSED_INTERVAL_SECONDS=600`: 장 마감/휴장 때 다시 확인하기까지 대기할 초야.
 - `WEALTHPULSE_RESEARCH_DRY_RUN=0`: `1`이면 후보만 모으고 OpenAI 호출은 안 해.
 - `DART_API_KEY`: 있으면 OpenDART 공시 evidence를 붙여.
@@ -324,7 +324,7 @@ docker compose exec api /app/scripts/run_market_research.sh
 
 장중 상시 실행은 crontab이 아니라 Compose 서비스로 돌려. 정상 상태에선 서비스가 계속 떠 있고, KRX 정규장인 평일 09:00~15:30에만 runner를 실행해. 장 마감/휴장에는 OpenAI 호출 없이 `WEALTHPULSE_RESEARCH_CLOSED_INTERVAL_SECONDS`만큼 잔다. 리서치 루프는 프리마켓과 애프터마켓에 돌지 않아.
 
-runner가 한 번이라도 실패하면 `research-loop`는 종료되고 Compose가 자동 재시작하지 않아. API 할당량, 자격 증명, 응답 형식 같은 원인을 먼저 고친 다음 수동으로 다시 시작해. 실패 상태는 아래 명령으로 확인해.
+runner에서 일부 또는 전체 종목이 손절가·익절가·스키마 품질 검증에 탈락하면 해당 종목은 저장하지 않고 다음 loop를 계속 실행해. API 할당량, 자격 증명, 후보 생성, ingest 같은 시스템 실패가 발생하면 `research-loop`는 종료되고 Compose가 자동 재시작하지 않아. 원인을 먼저 고친 다음 수동으로 다시 시작해. 실패 상태는 아래 명령으로 확인해.
 
 ```bash
 docker compose up -d --build research-loop
