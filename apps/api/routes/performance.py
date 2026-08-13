@@ -11,7 +11,11 @@ from services.execution_service import _current_execution_mode, _normalize_runti
 from services.runtime_account_cache import read_cached_live_runtime_account
 from services.operations_report_service import build_operations_report
 from services.runtime_store import load_engine_state, read_execution_events, read_order_events
-from services.daily_performance_journal import list_daily_performance_journals, read_daily_performance_journal
+from services.daily_performance_journal import (
+    get_daily_performance_journal_scheduler_status,
+    list_daily_performance_journals,
+    read_daily_performance_journal,
+)
 
 _ACCOUNT_STATE_PATH = RUNTIME_DIR / "accounts" / "simulated_account_state.json"
 _LIVE_PERFORMANCE_BASELINE_PATH = RUNTIME_DIR / "accounts" / "live_performance_baseline.json"
@@ -357,9 +361,18 @@ def handle_performance_summary() -> tuple[int, dict]:
 
 def handle_daily_performance_journal(date_key: str = "", limit: int = 20) -> tuple[int, dict]:
     try:
+        scheduler = get_daily_performance_journal_scheduler_status()
         if date_key:
-            return 200, {"ok": True, "journal": read_daily_performance_journal(date_key)}
-        return 200, {"ok": True, "journals": list_daily_performance_journals(limit)}
+            return 200, {
+                "ok": True,
+                "journal": read_daily_performance_journal(date_key),
+                "scheduler": scheduler,
+            }
+        return 200, {
+            "ok": True,
+            "journals": list_daily_performance_journals(limit),
+            "scheduler": scheduler,
+        }
     except FileNotFoundError:
         return 404, {"ok": False, "error": "daily_performance_journal_not_found"}
     except ValueError as exc:

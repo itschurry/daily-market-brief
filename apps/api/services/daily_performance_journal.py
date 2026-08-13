@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import threading
 from collections import Counter
 from pathlib import Path
@@ -12,15 +13,34 @@ from config.market_calendar import is_market_trading_day
 from config.settings import RUNTIME_DIR
 from market_utils import lookup_company_listing
 from services.json_utils import json_dump_text
-from services.runtime_store import load_engine_state
+from services.runtime_store import load_engine_state, read_order_events
 
 
 KST = ZoneInfo("Asia/Seoul")
+logger = logging.getLogger(__name__)
 JOURNAL_DIR = RUNTIME_DIR / "daily_performance"
 ENGINE_CYCLES_DIR = RUNTIME_DIR / "engine_cycles"
 JOURNAL_TIME_KST = datetime.time(hour=15, minute=40, tzinfo=KST)
+ENTRY_PLAN_KEYS = (
+    "entry_plan_price",
+    "stop_loss_price",
+    "take_profit_price",
+    "stop_loss_pct",
+    "take_profit_pct",
+)
 _scheduler_stop = threading.Event()
 _scheduler_thread: threading.Thread | None = None
+_scheduler_state_lock = threading.Lock()
+_scheduler_state: dict[str, str] = {
+    "started_at": "",
+    "stopped_at": "",
+    "last_attempted_date": "",
+    "last_attempt_at": "",
+    "last_successful_date": "",
+    "last_success_at": "",
+    "last_error": "",
+    "last_error_at": "",
+}
 
 
 def _validate_date_key(date_key: str) -> str:
@@ -129,16 +149,57 @@ def _merge_filled_orders(left: dict[str, Any], right: dict[str, Any]) -> dict[st
     return merged
 
 
+def _entry_plan_snapshot(*sources: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in ENTRY_PLAN_KEYS:
+        result[key] = None
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            nested = source.get("entry_plan") if isinstance(source.get("entry_plan"), dict) else {}
+            value = source.get(key)
+            if value in (None, ""):
+                value = nested.get(key)
+            if value not in (None, ""):
+                result[key] = value
+                break
+    return result
+
+
 def _account_orders(account: dict[str, Any]) -> list[dict[str, Any]]:
     orders = account.get("orders") if isinstance(account.get("orders"), list) else []
-    deduplicated: dict[str, dict[str, Any]] = {}
+    metadata: dict[str, dict[str, Any]] = {}
+    filled: dict[str, dict[str, Any]] = {}
     for order in orders:
-        if not isinstance(order, dict) or _order_state(order) not in {"filled", "partial_fill"}:
+        if not isinstance(order, dict):
             continue
         item = dict(order)
         key = _order_identity(item)
-        deduplicated[key] = _merge_filled_orders(deduplicated.get(key, {}), item)
+        metadata[key] = _merge_filled_orders(metadata.get(key, {}), item)
+        if _order_state(item) in {"filled", "partial_fill"}:
+            filled[key] = _merge_filled_orders(filled.get(key, {}), item)
+    deduplicated = {
+        key: _merge_filled_orders(metadata.get(key, {}), item)
+        for key, item in filled.items()
+    }
     return sorted(deduplicated.values(), key=lambda item: str(_order_timestamp(item) or ""))
+
+
+def _runtime_order_metadata(
+    orders: list[dict[str, Any]],
+    date_key: str,
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for order in orders:
+        if not isinstance(order, dict):
+            continue
+        timestamp = _order_timestamp(order)
+        execution_mode = str(order.get("execution_mode") or "").strip().lower()
+        if not timestamp or _kst_date(timestamp) != date_key or execution_mode not in {"", "live", "real"}:
+            continue
+        key = _order_identity(order)
+        result[key] = _merge_filled_orders(result.get(key, {}), order)
+    return result
 
 
 def _daily_orders(cycles: list[dict[str, Any]], date_key: str) -> list[dict[str, Any]]:
@@ -217,10 +278,16 @@ def _aggregate_broker_profits(trades: list[dict[str, Any]], date_key: str) -> di
 def _live_broker_orders(
     broker_activity: dict[str, Any],
     date_key: str,
+    runtime_orders: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float]:
     fills_payload = broker_activity.get("fills") if isinstance(broker_activity.get("fills"), dict) else {}
     profits_payload = broker_activity.get("profits") if isinstance(broker_activity.get("profits"), dict) else {}
-    fills = _account_orders({"orders": fills_payload.get("orders") or []})
+    broker_fills = _account_orders({"orders": fills_payload.get("orders") or []})
+    runtime_metadata = _runtime_order_metadata(runtime_orders or [], date_key)
+    fills = [
+        _merge_filled_orders(runtime_metadata.get(_order_identity(order), {}), order)
+        for order in broker_fills
+    ]
     for order in fills:
         timestamp = _order_timestamp(order)
         if not timestamp or _kst_date(timestamp) != date_key:
@@ -320,6 +387,7 @@ def _build_closed_trades(
             continue
         if not buys_by_code.get(code):
             prior = entry_meta.get(code, {})
+            prior_plan = _entry_plan_snapshot(prior)
             prior_quantity = int(_safe_float(prior.get("quantity")))
             prior_entry_at = prior.get("entry_at")
             prior_entry_price = prior.get("entry_price_krw")
@@ -334,6 +402,7 @@ def _build_closed_trades(
                     "ts": prior_entry_at,
                     "filled_at": prior_entry_at,
                     "_remaining_quantity": prior_quantity,
+                    **prior_plan,
                 }]
         if not buys_by_code.get(code):
             continue
@@ -389,13 +458,7 @@ def _build_closed_trades(
             "expected_value": meta.get("expected_value"),
             "realized_pnl_includes_all_costs": bool(order.get("realized_pnl_includes_all_costs")),
             "broker_source": order.get("broker_source"),
-            "entry_plan": {
-                "entry_plan_price": buy.get("entry_plan_price"),
-                "stop_loss_price": buy.get("stop_loss_price"),
-                "take_profit_price": buy.get("take_profit_price"),
-                "stop_loss_pct": buy.get("stop_loss_pct"),
-                "take_profit_pct": buy.get("take_profit_pct"),
-            },
+            "entry_plan": _entry_plan_snapshot(buy, meta),
         }
         if _kst_date(exit_ts) != date_key:
             continue
@@ -446,6 +509,7 @@ def _build_open_at_close(
             ), 2),
             "unrealized_pnl_krw": round(unrealized, 2),
             "return_pct": round(_safe_float(position.get("unrealized_pnl_pct")), 4),
+            "entry_plan": _entry_plan_snapshot(buy, position, meta),
         })
     return result
 
@@ -538,6 +602,7 @@ def build_daily_performance_journal(
     market_payload: dict[str, Any],
     broker_activity: dict[str, Any] | None = None,
     broker_activity_loader: Callable[[str], dict[str, Any]] | None = None,
+    runtime_order_events: list[dict[str, Any]] | None = None,
     generated_at: datetime.datetime | None = None,
 ) -> dict[str, Any]:
     date_key = _validate_date_key(date_key)
@@ -556,7 +621,12 @@ def build_daily_performance_journal(
             broker_activity = broker_activity_loader(date_key)
         if not isinstance(broker_activity, dict):
             raise ValueError("KIS 체결·손익 원장 형식 오류")
-        orders, all_orders, daily_fees_krw = _live_broker_orders(broker_activity, date_key)
+        local_order_events = read_order_events(limit=None) if runtime_order_events is None else runtime_order_events
+        orders, all_orders, daily_fees_krw = _live_broker_orders(
+            broker_activity,
+            date_key,
+            local_order_events,
+        )
     else:
         orders = _daily_orders(cycles, date_key)
         all_orders = _account_orders(last_account)
@@ -743,6 +813,61 @@ def _journal_is_due(now: datetime.datetime) -> bool:
     return is_market_trading_day("KR", local_now) and local_now.timetz() >= JOURNAL_TIME_KST
 
 
+def _update_scheduler_state(**updates: str) -> None:
+    with _scheduler_state_lock:
+        _scheduler_state.update(updates)
+
+
+def get_daily_performance_journal_scheduler_status() -> dict[str, Any]:
+    with _scheduler_state_lock:
+        status: dict[str, Any] = dict(_scheduler_state)
+    thread = _scheduler_thread
+    running = bool(thread is not None and thread.is_alive() and not _scheduler_stop.is_set())
+    status["running"] = running
+    status["state"] = "error" if status.get("last_error") else ("running" if running else "stopped")
+    return status
+
+
+def _run_scheduler_iteration(
+    now: datetime.datetime,
+    attempted_dates: set[str],
+    market_loader: Callable[[], dict[str, Any]],
+    broker_activity_loader: Callable[[str], dict[str, Any]] | None,
+) -> None:
+    date_key = now.date().isoformat()
+    path = JOURNAL_DIR / f"{date_key}.json"
+    if not _journal_is_due(now) or date_key in attempted_dates or path.exists():
+        return
+
+    attempted_dates.add(date_key)
+    attempted_at = now.astimezone(KST).isoformat(timespec="seconds")
+    _update_scheduler_state(
+        last_attempted_date=date_key,
+        last_attempt_at=attempted_at,
+    )
+    try:
+        generate_daily_performance_journal(
+            date_key,
+            market_loader=market_loader,
+            broker_activity_loader=broker_activity_loader,
+            generated_at=now,
+        )
+    except Exception as exc:
+        _update_scheduler_state(
+            last_error=str(exc),
+            last_error_at=attempted_at,
+        )
+        logger.exception("일별 성과 저널 생성 실패: date=%s", date_key)
+        return
+
+    _update_scheduler_state(
+        last_successful_date=date_key,
+        last_success_at=attempted_at,
+        last_error="",
+        last_error_at="",
+    )
+
+
 def _scheduler_loop(
     market_loader: Callable[[], dict[str, Any]],
     broker_activity_loader: Callable[[str], dict[str, Any]] | None,
@@ -750,16 +875,12 @@ def _scheduler_loop(
     attempted_dates: set[str] = set()
     while not _scheduler_stop.is_set():
         now = datetime.datetime.now(KST)
-        date_key = now.date().isoformat()
-        path = JOURNAL_DIR / f"{date_key}.json"
-        if _journal_is_due(now) and date_key not in attempted_dates and not path.exists():
-            attempted_dates.add(date_key)
-            generate_daily_performance_journal(
-                date_key,
-                market_loader=market_loader,
-                broker_activity_loader=broker_activity_loader,
-                generated_at=now,
-            )
+        _run_scheduler_iteration(
+            now,
+            attempted_dates,
+            market_loader,
+            broker_activity_loader,
+        )
         _scheduler_stop.wait(30)
 
 
@@ -771,6 +892,12 @@ def start_daily_performance_journal_scheduler(
     if _scheduler_thread is not None and _scheduler_thread.is_alive():
         return
     _scheduler_stop.clear()
+    _update_scheduler_state(
+        started_at=datetime.datetime.now(KST).isoformat(timespec="seconds"),
+        stopped_at="",
+        last_error="",
+        last_error_at="",
+    )
     _scheduler_thread = threading.Thread(
         target=_scheduler_loop,
         args=(market_loader, broker_activity_loader),
@@ -785,3 +912,6 @@ def stop_daily_performance_journal_scheduler() -> None:
     thread = _scheduler_thread
     if thread is not None:
         thread.join(timeout=2)
+    _update_scheduler_state(
+        stopped_at=datetime.datetime.now(KST).isoformat(timespec="seconds"),
+    )

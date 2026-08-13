@@ -14,7 +14,9 @@ API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
+from services import daily_performance_journal as journal_service
 from services.daily_performance_journal import _account_orders, _validate_date_key, build_daily_performance_journal
+from routes.performance import handle_daily_performance_journal
 
 
 KST = ZoneInfo("Asia/Seoul")
@@ -147,6 +149,9 @@ class DailyPerformanceJournalTests(unittest.TestCase):
                 "order_id": "1001", "timestamp": "2026-08-05T00:19:45+00:00",
                 "side": "buy", "code": "006340", "quantity": 16,
                 "status": "submitted", "lifecycle_state": "submitted",
+                "entry_plan_price": 15600, "stop_loss_price": 14550,
+                "take_profit_price": 18350, "stop_loss_pct": 6.73,
+                "take_profit_pct": 17.63,
             }
             filled_buy = {
                 **submitted_buy,
@@ -155,7 +160,15 @@ class DailyPerformanceJournalTests(unittest.TestCase):
                 "lifecycle_state": "filled",
                 "execution_status": "filled",
             }
-            self.assertEqual(len(_account_orders({"orders": [submitted_buy, filled_buy]})), 1)
+            merged_orders = _account_orders({"orders": [submitted_buy, filled_buy]})
+            self.assertEqual(len(merged_orders), 1)
+            self.assertEqual(merged_orders[0]["entry_plan_price"], 15600)
+            submitted_sell = {
+                "order_id": "1002", "timestamp": "2026-08-05T00:39:49+00:00",
+                "side": "sell", "code": "006340", "quantity": 16,
+                "status": "submitted", "lifecycle_state": "submitted",
+                "filled_price_krw": None,
+            }
             cycles = [
                 {
                     "started_at": "2026-08-04T23:50:00+00:00",
@@ -215,6 +228,7 @@ class DailyPerformanceJournalTests(unittest.TestCase):
                     "2026-08-05",
                     market_payload={"kospi_history": [{"date": "2026-08-05", "close": 1, "pct": 3.76}]},
                     broker_activity=broker_activity,
+                    runtime_order_events=[submitted_buy, filled_buy, submitted_sell],
                 )
 
         self.assertEqual(result["account"]["net_pnl_krw"], -1160)
@@ -223,9 +237,213 @@ class DailyPerformanceJournalTests(unittest.TestCase):
         self.assertEqual(result["trading"]["sell_count"], 1)
         self.assertEqual(result["trading"]["round_trip_count"], 1)
         self.assertEqual(result["trading"]["trades"][0]["realized_pnl_krw"], -1160)
+        self.assertEqual(result["trading"]["trades"][0]["exit_price_krw"], 15720)
+        self.assertEqual(result["trading"]["trades"][0]["entry_plan"], {
+            "entry_plan_price": 15600,
+            "stop_loss_price": 14550,
+            "take_profit_price": 18350,
+            "stop_loss_pct": 6.73,
+            "take_profit_pct": 17.63,
+        })
         self.assertEqual(result["trading"]["trades"][0]["exit_reason"], "본전보호")
         self.assertEqual(result["pnl_attribution"]["unattributed_krw"], 0)
         self.assertEqual(result["diagnostics"]["trade_ledger_source"], "kis")
+
+    def test_live_carry_in_exit_preserves_prior_day_entry_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            cycles_dir = root / "engine_cycles"
+            journals_dir = root / "daily_performance"
+            cycles_dir.mkdir()
+            journals_dir.mkdir()
+            plan = {
+                "entry_plan_price": 10000,
+                "stop_loss_price": 9400,
+                "take_profit_price": 11200,
+                "stop_loss_pct": 6.0,
+                "take_profit_pct": 12.0,
+            }
+            buy_time = "2026-08-10T00:10:00+00:00"
+            day1_position = {
+                "code": "000660", "name": "SK하이닉스", "market": "KOSPI",
+                "quantity": 2, "entry_ts": buy_time, "avg_price_krw": 10000,
+                "last_price_krw": 10500, "market_value_krw": 21000,
+                "unrealized_pnl_krw": 1000, "unrealized_pnl_pct": 5.0,
+            }
+            day1_cycles = [
+                {
+                    "started_at": "2026-08-09T23:50:00+00:00",
+                    "account": {"mode": "real", "equity_krw": 100000, "cash_krw": 100000, "positions": []},
+                },
+                {
+                    "started_at": "2026-08-10T06:39:00+00:00",
+                    "account": {
+                        "mode": "real", "equity_krw": 101000, "cash_krw": 80000,
+                        "market_value_krw": 21000, "positions": [day1_position],
+                    },
+                },
+            ]
+            (cycles_dir / "2026-08-10.jsonl").write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in day1_cycles),
+                encoding="utf-8",
+            )
+            day1_broker_activity = {
+                "fills": {
+                    "orders": [{
+                        "order_id": "2001", "filled_at": buy_time, "side": "buy",
+                        "code": "000660", "name": "SK하이닉스", "market": "KOSPI",
+                        "quantity": 2, "filled_price_krw": 10000,
+                        "lifecycle_state": "filled",
+                    }],
+                    "summary": {"fees_and_tax_krw": 0},
+                },
+                "profits": {"trades": []},
+            }
+            day1_runtime_orders = [{
+                "order_id": "2001", "timestamp": buy_time, "side": "buy",
+                "code": "000660", "quantity": 2, "execution_mode": "live",
+                "lifecycle_state": "submitted", **plan,
+            }]
+
+            sell_time = "2026-08-11T00:20:00+00:00"
+            day2_cycles = [
+                {
+                    "started_at": "2026-08-10T23:50:00+00:00",
+                    "account": {
+                        "mode": "real", "equity_krw": 101000, "cash_krw": 80000,
+                        "market_value_krw": 21000, "positions": [day1_position],
+                    },
+                },
+                {
+                    "started_at": "2026-08-11T06:39:00+00:00",
+                    "account": {
+                        "mode": "real", "equity_krw": 102000, "cash_krw": 102000,
+                        "market_value_krw": 0, "positions": [],
+                    },
+                    "executed_sells": [{"code": "000660", "reason": "익절"}],
+                },
+            ]
+            (cycles_dir / "2026-08-11.jsonl").write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in day2_cycles),
+                encoding="utf-8",
+            )
+            day2_broker_activity = {
+                "fills": {
+                    "orders": [{
+                        "order_id": "2002", "filled_at": sell_time, "side": "sell",
+                        "code": "000660", "name": "SK하이닉스", "market": "KOSPI",
+                        "quantity": 2, "filled_price_krw": 11000,
+                        "lifecycle_state": "filled",
+                    }],
+                    "summary": {"fees_and_tax_krw": 100},
+                },
+                "profits": {"trades": [{
+                    "date": "2026-08-11", "code": "000660", "name": "SK하이닉스",
+                    "market": "KOSPI", "quantity": 2, "entry_price_krw": 10000,
+                    "exit_price_krw": 11000, "buy_quantity": 2,
+                    "buy_notional_krw": 20000, "sell_notional_krw": 22000,
+                    "realized_pnl_krw": 1900, "total_cost_krw": 100,
+                }]},
+            }
+
+            with (
+                patch("services.daily_performance_journal.ENGINE_CYCLES_DIR", cycles_dir),
+                patch("services.daily_performance_journal.JOURNAL_DIR", journals_dir),
+                patch("services.daily_performance_journal.RUNTIME_DIR", root),
+                patch("services.daily_performance_journal.load_engine_state", return_value={}),
+            ):
+                day1 = build_daily_performance_journal(
+                    "2026-08-10",
+                    market_payload={"kospi_history": [{"date": "2026-08-10", "close": 1, "pct": 0.5}]},
+                    broker_activity=day1_broker_activity,
+                    runtime_order_events=day1_runtime_orders,
+                )
+                (journals_dir / "2026-08-10.json").write_text(
+                    json.dumps(day1, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                day2 = build_daily_performance_journal(
+                    "2026-08-11",
+                    market_payload={"kospi_history": [{"date": "2026-08-11", "close": 1, "pct": 0.5}]},
+                    broker_activity=day2_broker_activity,
+                    runtime_order_events=[],
+                )
+
+        self.assertEqual(day1["trading"]["open_at_close"][0]["entry_plan"], plan)
+        self.assertEqual(day2["trading"]["carry_in_exits"][0]["entry_plan"], plan)
+        self.assertEqual(day2["trading"]["carry_in_exits"][0]["exit_price_krw"], 11000)
+
+    def test_scheduler_isolates_failure_and_runs_next_trading_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scheduler_state = {key: "" for key in journal_service._scheduler_state}
+            generate_side_effects = [
+                FileNotFoundError("engine_cycles/2026-08-10.jsonl"),
+                {"date": "2026-08-11"},
+            ]
+            with (
+                patch.object(journal_service, "JOURNAL_DIR", Path(tmpdir)),
+                patch.object(journal_service, "_scheduler_state", scheduler_state),
+                patch.object(journal_service, "_journal_is_due", return_value=True),
+                patch.object(
+                    journal_service,
+                    "generate_daily_performance_journal",
+                    side_effect=generate_side_effects,
+                ) as generate,
+            ):
+                attempted_dates: set[str] = set()
+                journal_service._run_scheduler_iteration(
+                    datetime.datetime(2026, 8, 10, 15, 40, tzinfo=KST),
+                    attempted_dates,
+                    lambda: {},
+                    None,
+                )
+                failed_status = journal_service.get_daily_performance_journal_scheduler_status()
+                self.assertEqual(failed_status["state"], "error")
+                self.assertEqual(failed_status["last_attempted_date"], "2026-08-10")
+                self.assertIn("engine_cycles/2026-08-10.jsonl", failed_status["last_error"])
+
+                journal_service._run_scheduler_iteration(
+                    datetime.datetime(2026, 8, 10, 15, 41, tzinfo=KST),
+                    attempted_dates,
+                    lambda: {},
+                    None,
+                )
+                self.assertEqual(generate.call_count, 1)
+
+                journal_service._run_scheduler_iteration(
+                    datetime.datetime(2026, 8, 11, 15, 40, tzinfo=KST),
+                    attempted_dates,
+                    lambda: {},
+                    None,
+                )
+                recovered_status = journal_service.get_daily_performance_journal_scheduler_status()
+
+        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(
+            [call.args[0] for call in generate.call_args_list],
+            ["2026-08-10", "2026-08-11"],
+        )
+        self.assertEqual(recovered_status["last_successful_date"], "2026-08-11")
+        self.assertEqual(recovered_status["last_error"], "")
+
+    def test_journal_api_exposes_scheduler_status(self) -> None:
+        scheduler = {
+            "state": "error",
+            "running": True,
+            "last_error": "engine cycle missing",
+        }
+        with (
+            patch("routes.performance.list_daily_performance_journals", return_value=[]),
+            patch(
+                "routes.performance.get_daily_performance_journal_scheduler_status",
+                return_value=scheduler,
+            ),
+        ):
+            status, payload = handle_daily_performance_journal(limit=5)
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["journals"], [])
+        self.assertEqual(payload["scheduler"], scheduler)
 
 
 if __name__ == "__main__":
