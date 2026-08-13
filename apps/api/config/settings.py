@@ -56,6 +56,14 @@ class Settings(BaseSettings):
         default="https://openapi.koreainvestment.com:9443",
         alias="KIS_BASE_URL",
     )
+    kis_general_requests_per_second: float = Field(
+        default=8.0,
+        alias="KIS_GENERAL_REQUESTS_PER_SECOND",
+    )
+    kis_trading_request_interval_seconds: float = Field(
+        default=1.2,
+        alias="KIS_TRADING_REQUEST_INTERVAL_SECONDS",
+    )
 
     report_output_dir: Path = Field(default=REPORTS_DIR, alias="REPORT_OUTPUT_DIR")
     logs_dir: Path = Field(default=LOGS_DIR, alias="LOGS_DIR")
@@ -115,6 +123,8 @@ KIS_APP_SECRET = settings.kis_app_secret
 KIS_ACCOUNT_CANO = settings.kis_account_cano
 KIS_ACCOUNT_ACNT_PRDT_CD = settings.kis_account_acnt_prdt_cd
 KIS_BASE_URL = settings.kis_base_url
+KIS_GENERAL_REQUESTS_PER_SECOND = settings.kis_general_requests_per_second
+KIS_TRADING_REQUEST_INTERVAL_SECONDS = settings.kis_trading_request_interval_seconds
 
 REPORT_OUTPUT_DIR = settings.report_output_dir
 LOGS_DIR = settings.logs_dir

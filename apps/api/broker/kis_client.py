@@ -3,14 +3,16 @@
 변경 사항:
   - [추가] _get_hashkey(): 주문 POST 시 hashkey 헤더 발급
   - [추가] _auth_headers_with_hash(): 매수/매도 전용 헤더 빌더
-  - [추가] Rate Limit: 초당 최대 ~16건으로 제한 (_rate_limit_wait)
+  - [추가] Rate Limit: 앱키 단위 공유 잠금으로 일반 8rps, 거래 원장 응답 완료 후 1.2초 간격 제한
   - [수정] check_connection(): base_url 기준으로 mode 자동 분기
   - [추가] SELL_TAX_RATE_DOMESTIC: 국내 증권거래세 상수 (0.18%)
 """
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import json
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -26,6 +28,8 @@ from config.settings import (
     KIS_APP_KEY,
     KIS_APP_SECRET,
     KIS_BASE_URL,
+    KIS_GENERAL_REQUESTS_PER_SECOND,
+    KIS_TRADING_REQUEST_INTERVAL_SECONDS,
     CACHE_DIR,
 )
 
@@ -33,11 +37,9 @@ from config.settings import (
 # 상수
 # ────────────────────────────────────────────────────────────────────────────
 
-# KIS REST API 공식 제한은 앱 단위로 적용된다. 화면 여러 곳에서 잔고/시세/히스토리를
-# 동시에 조회하므로 클라이언트 인스턴스별 16rps는 실제로 초과를 자주 만든다.
-# 전역 8rps로 낮추고 EGW00201 응답은 짧게 재시도해 KIS 공통 기능을 안정화한다.
-_KIS_RATE_LIMIT_INTERVAL: float = 1.0 / 8  # ≈ 0.125초
-_KIS_RATE_LIMIT_RETRY_DELAYS: tuple[float, ...] = (1.1, 2.2)
+# KIS 제한은 앱키 단위다. 모든 클라이언트와 프로세스가 같은 파일 잠금을 사용하고,
+# 원장/주문(`/trading/`) 호출은 일반 조회보다 더 보수적으로 응답 완료 뒤 간격을 둔다.
+_KIS_REQUEST_BUDGET_PATH = CACHE_DIR / "kis_request_budget.lock"
 
 # 국내주식 매도 시 증권거래세 (2025년 기준, 코스피/코스닥 공통)
 # execution_engine.py의 sell_fee_rate와 별도로 적용해야 함
@@ -82,8 +84,8 @@ class KISClient:
     """토큰 발급과 시세/거래 조회를 위한 최소 REST 클라이언트."""
 
     _TOKEN_CACHE_PATH = CACHE_DIR / "secrets" / "kis_token_cache.json"
-    _GLOBAL_RATE_LOCK = threading.Lock()
-    _GLOBAL_LAST_REQUEST_AT = 0.0
+    _REQUEST_BUDGET_PATH = _KIS_REQUEST_BUDGET_PATH
+    _PROCESS_REQUEST_LOCK = threading.Lock()
 
     def __init__(
         self,
@@ -95,10 +97,6 @@ class KISClient:
         self._access_token = ""
         self._token_expires_at = 0.0
         self._token_lock = threading.RLock()
-
-        # Rate Limit 상태
-        self._last_request_at = 0.0
-        self._rate_lock = threading.Lock()
 
     @classmethod
     def from_env(cls, timeout: float = 10.0) -> "KISClient":
@@ -118,14 +116,107 @@ class KISClient:
 
     # ── Rate Limit ───────────────────────────────────────────────────────────
 
-    def _rate_limit_wait(self) -> None:
-        """KIS 앱 단위 전역 rate limit을 강제한다 (thread-safe)."""
-        with KISClient._GLOBAL_RATE_LOCK:
-            elapsed = time.monotonic() - KISClient._GLOBAL_LAST_REQUEST_AT
-            wait = _KIS_RATE_LIMIT_INTERVAL - elapsed
-            if wait > 0:
-                time.sleep(wait)
-            KISClient._GLOBAL_LAST_REQUEST_AT = time.monotonic()
+    @staticmethod
+    def _request_budget_intervals(path: str) -> tuple[float, float]:
+        try:
+            general_rps = float(KIS_GENERAL_REQUESTS_PER_SECOND)
+            trading_interval = float(KIS_TRADING_REQUEST_INTERVAL_SECONDS)
+        except (TypeError, ValueError) as exc:
+            raise KISConfigError("KIS 호출 예산 설정이 숫자가 아닙니다.") from exc
+        if not math.isfinite(general_rps) or general_rps <= 0:
+            raise KISConfigError("KIS_GENERAL_REQUESTS_PER_SECOND는 0보다 커야 합니다.")
+        if not math.isfinite(trading_interval) or trading_interval <= 0:
+            raise KISConfigError("KIS_TRADING_REQUEST_INTERVAL_SECONDS는 0보다 커야 합니다.")
+        return 1.0 / general_rps, trading_interval if "/trading/" in path else 0.0
+
+    @classmethod
+    def _send_serialized_request(
+        cls,
+        method: str,
+        path: str,
+        *,
+        url: str,
+        headers: dict[str, str] | None,
+        params: dict[str, Any] | None,
+        json_body: dict[str, Any] | None,
+        timeout: float,
+    ) -> requests.Response:
+        """앱키 단위 요청 예산을 프로세스 간 공유하며 실제 HTTP 구간까지 직렬화한다."""
+        general_interval, trading_interval = cls._request_budget_intervals(path)
+        budget_path = cls._REQUEST_BUDGET_PATH
+
+        with cls._PROCESS_REQUEST_LOCK:
+            handle = None
+            locked = False
+            try:
+                try:
+                    budget_path.parent.mkdir(parents=True, exist_ok=True)
+                    handle = budget_path.open("a+", encoding="utf-8")
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                    locked = True
+                    handle.seek(0)
+                    raw_state = handle.read().strip()
+                    state = json.loads(raw_state) if raw_state else {}
+                    if not isinstance(state, dict):
+                        raise ValueError("request budget state must be an object")
+
+                    now = time.time()
+                    last_request_at = float(state.get("last_request_at") or 0.0)
+                    if not math.isfinite(last_request_at) or last_request_at < 0:
+                        raise ValueError("last_request_at must be a finite non-negative number")
+                    if last_request_at > now:
+                        raise ValueError("last_request_at cannot be in the future")
+                    wait_seconds = max(0.0, general_interval - (now - last_request_at))
+                    if trading_interval > 0:
+                        last_trading_request_at = float(state.get("last_trading_request_at") or 0.0)
+                        if not math.isfinite(last_trading_request_at) or last_trading_request_at < 0:
+                            raise ValueError("last_trading_request_at must be a finite non-negative number")
+                        if last_trading_request_at > now:
+                            raise ValueError("last_trading_request_at cannot be in the future")
+                        wait_seconds = max(
+                            wait_seconds,
+                            trading_interval - (now - last_trading_request_at),
+                        )
+                    if wait_seconds > 0:
+                        time.sleep(wait_seconds)
+
+                except (OSError, TypeError, ValueError, OverflowError) as exc:
+                    raise KISAPIError(f"KIS 호출 예산 잠금 실패: {exc}") from exc
+
+                try:
+                    return requests.request(
+                        method=method,
+                        url=url,
+                        headers=headers,
+                        params=params,
+                        json=json_body,
+                        timeout=timeout,
+                    )
+                finally:
+                    try:
+                        completed_at = time.time()
+                        state["last_request_at"] = completed_at
+                        if trading_interval > 0:
+                            state["last_trading_request_at"] = completed_at
+                        handle.seek(0)
+                        handle.truncate()
+                        json.dump(state, handle, ensure_ascii=False, separators=(",", ":"))
+                        handle.flush()
+                    except (OSError, TypeError, ValueError, OverflowError) as exc:
+                        raise KISAPIError(
+                            f"KIS 요청 완료 후 호출 예산 상태 저장 실패; 브로커 처리 결과 확인 필요: {exc}"
+                        ) from exc
+            finally:
+                if handle is not None:
+                    if locked:
+                        try:
+                            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                        except OSError as exc:
+                            raise KISAPIError(f"KIS 호출 예산 잠금 해제 실패: {exc}") from exc
+                    try:
+                        handle.close()
+                    except OSError as exc:
+                        raise KISAPIError(f"KIS 호출 예산 잠금 파일 닫기 실패: {exc}") from exc
 
     # ── HTTP 요청 ────────────────────────────────────────────────────────────
 
@@ -155,18 +246,14 @@ class KISClient:
         params: dict[str, Any] | None = None,
         json_body: dict[str, Any] | None = None,
         _retry_with_fresh_token: bool = True,
-        _rate_limit_retries: int = 0,
     ) -> tuple[dict[str, Any], requests.Response]:
-        # 토큰 발급 경로는 Rate Limit 제외 (재귀 방지)
-        if path != "/oauth2/tokenP":
-            self._rate_limit_wait()
-
-        response = requests.request(
+        response = self._send_serialized_request(
             method=method,
+            path=path,
             url=f"{self.credentials.base_url}{path}",
             headers=headers,
             params=params,
-            json=json_body,
+            json_body=json_body,
             timeout=self.timeout,
         )
         try:
@@ -185,25 +272,14 @@ class KISClient:
                     params=params,
                     json_body=json_body,
                     _retry_with_fresh_token=False,
-                    _rate_limit_retries=_rate_limit_retries,
                 )
             raise KISAPIError(message) from exc
 
         payload = response.json()
         if payload.get("error_code"):
-            if self._is_rate_limit_error(payload) and _rate_limit_retries < len(_KIS_RATE_LIMIT_RETRY_DELAYS):
-                delay = _KIS_RATE_LIMIT_RETRY_DELAYS[_rate_limit_retries]
-                time.sleep(delay)
-                return self._request_full(
-                    method,
-                    path,
-                    headers=headers,
-                    params=params,
-                    json_body=json_body,
-                    _retry_with_fresh_token=_retry_with_fresh_token,
-                    _rate_limit_retries=_rate_limit_retries + 1,
-                )
-            raise KISAPIError(payload.get("error_description") or payload.get("message") or str(payload.get("error_code")))
+            error_code = str(payload.get("error_code") or "").strip()
+            message = str(payload.get("error_description") or payload.get("message") or error_code).strip()
+            raise KISAPIError(f"{error_code}: {message}" if error_code and error_code not in message else message)
         rt_cd = str(payload.get("rt_cd") or "")
         if rt_cd and rt_cd != "0":
             if (
@@ -218,21 +294,10 @@ class KISClient:
                     params=params,
                     json_body=json_body,
                     _retry_with_fresh_token=False,
-                    _rate_limit_retries=_rate_limit_retries,
                 )
-            if self._is_rate_limit_error(payload) and _rate_limit_retries < len(_KIS_RATE_LIMIT_RETRY_DELAYS):
-                delay = _KIS_RATE_LIMIT_RETRY_DELAYS[_rate_limit_retries]
-                time.sleep(delay)
-                return self._request_full(
-                    method,
-                    path,
-                    headers=headers,
-                    params=params,
-                    json_body=json_body,
-                    _retry_with_fresh_token=_retry_with_fresh_token,
-                    _rate_limit_retries=_rate_limit_retries + 1,
-                )
-            raise KISAPIError(payload.get("msg1") or f"KIS API 오류: {rt_cd}")
+            message_code = str(payload.get("msg_cd") or "").strip()
+            message = str(payload.get("msg1") or f"KIS API 오류: {rt_cd}").strip()
+            raise KISAPIError(f"{message_code}: {message}" if message_code and message_code not in message else message)
         return payload, response
 
     # ── 토큰 관리 ────────────────────────────────────────────────────────────
@@ -326,7 +391,7 @@ class KISClient:
         else:
             message = str(payload or "")
         normalized = message.lower()
-        return "egw00133" in normalized or "egw00201" in normalized or "접근토큰 발급 잠시 후" in message or "초당 거래건수를 초과" in message
+        return "egw00133" in normalized or "egw00201" in normalized or "egw00215" in normalized or "접근토큰 발급 잠시 후" in message or "초당 거래건수를 초과" in message
 
     # ── 헤더 빌더 ────────────────────────────────────────────────────────────
 

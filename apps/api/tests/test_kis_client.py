@@ -2,19 +2,30 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+
+from requests import Timeout
 
 
 API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
-from broker.kis_client import KISClient, KISCredentials, _read_json_file, _write_json_file
+from broker.kis_client import KISAPIError, KISClient, KISCredentials, _read_json_file, _write_json_file
 
 
 class KISClientTests(unittest.TestCase):
+    def _successful_response(self) -> Mock:
+        response = Mock(headers={})
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"rt_cd": "0"}
+        return response
+
     def test_access_token_issue_limit_is_rate_limit_error(self) -> None:
         payload = {
             "error_code": "EGW00133",
@@ -22,6 +33,184 @@ class KISClientTests(unittest.TestCase):
         }
 
         self.assertTrue(KISClient._is_rate_limit_error(payload))
+
+    def test_ledger_rate_limit_codes_fail_without_retry(self) -> None:
+        client = KISClient(KISCredentials("key", "secret", "https://example.com"))
+        payloads = [
+            {"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "초당 거래건수를 초과하였습니다."},
+            {"rt_cd": "1", "msg_cd": "EGW00215", "msg1": "원장에서 허용 가능한 초당 거래건수를 초과하였습니다."},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            budget_path = Path(tmpdir) / "kis_request_budget.lock"
+            for payload in payloads:
+                response = self._successful_response()
+                response.json.return_value = payload
+                with (
+                    self.subTest(code=payload["msg_cd"]),
+                    patch.object(KISClient, "_REQUEST_BUDGET_PATH", budget_path),
+                    patch("broker.kis_client.requests.request", return_value=response) as request_mock,
+                ):
+                    budget_path.unlink(missing_ok=True)
+                    with self.assertRaisesRegex(KISAPIError, payload["msg_cd"]):
+                        client._request("GET", "/uapi/domestic-stock/v1/trading/inquire-balance")
+                    request_mock.assert_called_once()
+                    self.assertTrue(KISClient._is_rate_limit_error(payload))
+
+    def test_requests_are_serialized_across_client_instances(self) -> None:
+        active = 0
+        max_active = 0
+        active_lock = threading.Lock()
+
+        def request_side_effect(**_: object) -> Mock:
+            nonlocal active, max_active
+            with active_lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.03)
+            with active_lock:
+                active -= 1
+            return self._successful_response()
+
+        clients = [
+            KISClient(KISCredentials("key", "secret", "https://example.com")),
+            KISClient(KISCredentials("key", "secret", "https://example.com")),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            budget_path = Path(tmpdir) / "kis_request_budget.lock"
+            with (
+                patch.object(KISClient, "_REQUEST_BUDGET_PATH", budget_path),
+                patch("broker.kis_client.requests.request", side_effect=request_side_effect),
+            ):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(
+                        lambda client: client._request(
+                            "GET",
+                            "/uapi/domestic-stock/v1/quotations/inquire-price",
+                        ),
+                        clients,
+                    ))
+
+        self.assertEqual(results, [{"rt_cd": "0"}, {"rt_cd": "0"}])
+        self.assertEqual(max_active, 1)
+
+    def test_trading_requests_enforce_buffered_shared_interval(self) -> None:
+        client = KISClient(KISCredentials("key", "secret", "https://example.com"))
+        response = self._successful_response()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            budget_path = Path(tmpdir) / "kis_request_budget.lock"
+            with (
+                patch.object(KISClient, "_REQUEST_BUDGET_PATH", budget_path),
+                patch("broker.kis_client.requests.request", return_value=response),
+                patch("broker.kis_client.time.sleep") as sleep_mock,
+            ):
+                client._request("GET", "/uapi/domestic-stock/v1/trading/inquire-balance")
+                client._request("GET", "/uapi/domestic-stock/v1/trading/inquire-balance")
+
+        self.assertTrue(any(call.args and call.args[0] > 1.1 for call in sleep_mock.call_args_list))
+
+    def test_trading_interval_starts_after_previous_response_completes(self) -> None:
+        client = KISClient(KISCredentials("key", "secret", "https://example.com"))
+        clock = 100.0
+        request_started_at: list[float] = []
+
+        def fake_time() -> float:
+            return clock
+
+        def fake_sleep(seconds: float) -> None:
+            nonlocal clock
+            clock += seconds
+
+        def request_side_effect(**_: object) -> Mock:
+            nonlocal clock
+            request_started_at.append(clock)
+            clock += 0.4
+            return self._successful_response()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            budget_path = Path(tmpdir) / "kis_request_budget.lock"
+            with (
+                patch.object(KISClient, "_REQUEST_BUDGET_PATH", budget_path),
+                patch("broker.kis_client.KIS_TRADING_REQUEST_INTERVAL_SECONDS", 1.2),
+                patch("broker.kis_client.time.time", side_effect=fake_time),
+                patch("broker.kis_client.time.sleep", side_effect=fake_sleep),
+                patch("broker.kis_client.requests.request", side_effect=request_side_effect),
+            ):
+                client._request("GET", "/uapi/domestic-stock/v1/trading/inquire-balance")
+                first_completed_at = clock
+                client._request("GET", "/uapi/domestic-stock/v1/trading/inquire-balance")
+
+            state = _read_json_file(budget_path)
+
+        self.assertEqual(len(request_started_at), 2)
+        self.assertGreaterEqual(request_started_at[1] - first_completed_at, 1.2 - 1e-9)
+        self.assertEqual(state["last_trading_request_at"], clock)
+
+    def test_trading_interval_is_preserved_after_request_timeout(self) -> None:
+        client = KISClient(KISCredentials("key", "secret", "https://example.com"))
+        clock = 200.0
+        request_started_at: list[float] = []
+
+        def fake_time() -> float:
+            return clock
+
+        def fake_sleep(seconds: float) -> None:
+            nonlocal clock
+            clock += seconds
+
+        def request_side_effect(**_: object) -> Mock:
+            nonlocal clock
+            request_started_at.append(clock)
+            clock += 0.4
+            if len(request_started_at) == 1:
+                raise Timeout("timed out")
+            return self._successful_response()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            budget_path = Path(tmpdir) / "kis_request_budget.lock"
+            with (
+                patch.object(KISClient, "_REQUEST_BUDGET_PATH", budget_path),
+                patch("broker.kis_client.KIS_TRADING_REQUEST_INTERVAL_SECONDS", 1.2),
+                patch("broker.kis_client.time.time", side_effect=fake_time),
+                patch("broker.kis_client.time.sleep", side_effect=fake_sleep),
+                patch("broker.kis_client.requests.request", side_effect=request_side_effect),
+            ):
+                with self.assertRaises(Timeout):
+                    client._request("GET", "/uapi/domestic-stock/v1/trading/inquire-balance")
+                failed_request_completed_at = clock
+                client._request("GET", "/uapi/domestic-stock/v1/trading/inquire-balance")
+
+        self.assertEqual(len(request_started_at), 2)
+        self.assertGreaterEqual(request_started_at[1] - failed_request_completed_at, 1.2 - 1e-9)
+
+    def test_future_request_budget_timestamp_fails_closed(self) -> None:
+        client = KISClient(KISCredentials("key", "secret", "https://example.com"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            budget_path = Path(tmpdir) / "kis_request_budget.lock"
+            _write_json_file(budget_path, {
+                "last_request_at": 101.0,
+                "last_trading_request_at": 101.0,
+            })
+            with (
+                patch.object(KISClient, "_REQUEST_BUDGET_PATH", budget_path),
+                patch("broker.kis_client.time.time", return_value=100.0),
+                patch("broker.kis_client.requests.request") as request_mock,
+            ):
+                with self.assertRaisesRegex(KISAPIError, "cannot be in the future"):
+                    client._request("GET", "/uapi/domestic-stock/v1/trading/inquire-balance")
+                request_mock.assert_not_called()
+
+    def test_request_budget_lock_failure_does_not_bypass_limit(self) -> None:
+        client = KISClient(KISCredentials("key", "secret", "https://example.com"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            invalid_budget_path = Path(tmpdir)
+            with (
+                patch.object(KISClient, "_REQUEST_BUDGET_PATH", invalid_budget_path),
+                patch("broker.kis_client.requests.request") as request_mock,
+            ):
+                with self.assertRaisesRegex(KISAPIError, "KIS 호출 예산 잠금 실패"):
+                    client._request("GET", "/uapi/domestic-stock/v1/quotations/inquire-price")
+                request_mock.assert_not_called()
 
     def test_write_json_file_creates_parent_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

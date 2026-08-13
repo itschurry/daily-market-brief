@@ -462,6 +462,14 @@ export function WealthPulseHomePage({
   const riskReasons = Array.isArray(riskGuard.reasons) ? riskGuard.reasons.map((reason) => reasonCodeToKorean(String(reason))) : [];
   const engineRunning = Boolean(engineState.running);
   const engineStatusLabel = engineRunning ? '실행' : engineState.engine_state === 'paused' ? '일시정지' : engineState.engine_state === 'error' ? '오류' : '정지';
+  const incidentAlert = engineState.incident_alert;
+  const liveEngineIncident = snapshot.engine.execution?.execution_mode === 'live'
+    && incidentAlert?.active === true
+    && incidentAlert.code === 'live_engine_error';
+  const incidentTitle = String(incidentAlert?.title || '실거래 엔진 오류');
+  const incidentMessage = String(incidentAlert?.message || '자동매매 엔진 보호 기능 중단');
+  const incidentDetail = String(incidentAlert?.detail || '');
+  const incidentOccurredAt = String(incidentAlert?.occurred_at || '');
   const failedOrders = toNumber(engineState.today_order_counts?.failed);
   const buyOrders = toNumber(engineState.today_order_counts?.buy);
   const sellOrders = toNumber(engineState.today_order_counts?.sell);
@@ -569,6 +577,16 @@ export function WealthPulseHomePage({
     <div className="app-shell">
       <div className="page-frame">
         <div className="content-shell wealth-home-shell">
+          {liveEngineIncident && (
+            <div className="app-alert-banner is-critical wealth-engine-incident" role="alert" aria-live="assertive">
+              <div className="wealth-engine-incident-copy">
+                <strong>{incidentTitle}</strong>
+                <span>{incidentMessage}</span>
+                {incidentOccurredAt && <em>발생 {formatDateTimeWithAge(incidentOccurredAt)}</em>}
+              </div>
+              {incidentDetail && <code className="wealth-engine-incident-detail">{incidentDetail}</code>}
+            </div>
+          )}
           <section className="wealth-command-hero">
             <div className="wealth-terminal-topbar">
               <div className="wealth-terminal-brand">

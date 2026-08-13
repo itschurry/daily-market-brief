@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 
 API_ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +11,7 @@ if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
 from services import candidate_monitor_service as service
+from routes import candidate_monitor as candidate_monitor_route
 from services.trading_pipeline.ranker import rank_candidates
 from services.trading_pipeline.research_queue import build_research_queue
 from services.trading_pipeline.scanner import scan_universe
@@ -17,6 +19,26 @@ from services.trading_pipeline.universe import build_dynamic_universe
 
 
 class CandidateMonitorServiceTests(unittest.TestCase):
+    @patch("routes.candidate_monitor.get_execution_service")
+    @patch("routes.candidate_monitor.read_cached_live_runtime_account")
+    @patch("routes.candidate_monitor._current_execution_mode", return_value="live")
+    def test_live_candidate_monitor_uses_only_cached_account(
+        self,
+        _execution_mode: Mock,
+        read_cached_account: Mock,
+        get_execution_service: Mock,
+    ) -> None:
+        cached = {
+            "ok": True,
+            "mode": "real",
+            "equity_krw": 5_000_000,
+            "positions": [{"market": "KOSPI", "code": "005930", "quantity": 1}],
+        }
+        read_cached_account.return_value = cached
+
+        self.assertEqual(candidate_monitor_route._load_runtime_account(), cached)
+        get_execution_service.assert_not_called()
+
     def _source_rows(self) -> list[dict]:
         return [
             {"Code": "000660", "Name": "SK하이닉스", "Close": 100000, "Volume": 3000000, "Amount": 300000000000, "ChangesRatio": 3.2, "Marcap": 120000000000000},

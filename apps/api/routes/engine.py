@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from services.runtime_execution_service import get_execution_service
+from routes.trading import handle_runtime_engine_status as handle_cached_runtime_engine_status
 from services.runtime_store import list_strategy_scans
 from services.strategy_registry import summarize_registry
 from services.strategy_engine import _context_snapshot
@@ -90,6 +90,7 @@ def _compact_execution_payload(execution_payload: dict | None) -> dict:
         "execution_mode",
         "current_config",
         "config",
+        "incident_alert",
     }
     compact_state = {key: state[key] for key in keep_keys if key in state}
     compact_state["execution_mode"] = compact_state.get("execution_mode") or execution_payload.get("execution_mode")
@@ -101,17 +102,50 @@ def _compact_execution_payload(execution_payload: dict | None) -> dict:
         "updated_at": account.get("updated_at"),
         "positions": account.get("positions") if isinstance(account.get("positions"), list) else [],
     }
-    return {
+    compact_execution = {
         "ok": execution_payload.get("ok", True),
         "execution_mode": execution_payload.get("execution_mode") or state.get("execution_mode"),
         "state": compact_state,
         "account": compact_account,
     }
+    for key in ("account_available", "account_error"):
+        if key in execution_payload:
+            compact_execution[key] = execution_payload[key]
+    return compact_execution
+
+
+def _with_incident_alert(execution_payload: dict | None) -> dict:
+    if not isinstance(execution_payload, dict):
+        return {"ok": False, "state": {}}
+
+    payload = dict(execution_payload)
+    state = dict(payload.get("state") if isinstance(payload.get("state"), dict) else {})
+    execution_mode = str(payload.get("execution_mode") or state.get("execution_mode") or "").strip().lower()
+    engine_state = str(state.get("engine_state") or "").strip().lower()
+    if execution_mode == "live" and engine_state == "error":
+        state["incident_alert"] = {
+            "active": True,
+            "code": "live_engine_error",
+            "severity": "critical",
+            "title": "실거래 엔진 오류",
+            "message": "신규 주문 및 보유 종목 자동 청산 감시 중단",
+            "detail": str(state.get("last_error") or payload.get("account_error") or "unknown_engine_error"),
+            "occurred_at": str(state.get("last_error_at") or state.get("last_run_at") or ""),
+        }
+    else:
+        state.pop("incident_alert", None)
+    payload["state"] = state
+    return payload
+
+
+def _cached_execution_payload() -> dict:
+    _, execution_payload = handle_cached_runtime_engine_status()
+    return _with_incident_alert(execution_payload)
 
 
 def handle_engine_status() -> tuple[int, dict]:
     try:
-        _, execution_payload = get_execution_service().runtime_engine_status()
+        execution_payload = _cached_execution_payload()
 
         # Use cached scan results only — do NOT trigger fresh scans here.
         # build_signal_book with live scanning can take 100s+ and this
@@ -142,7 +176,7 @@ def handle_engine_status() -> tuple[int, dict]:
 
 def handle_engine_summary() -> tuple[int, dict]:
     try:
-        _, execution_payload = get_execution_service().runtime_engine_status()
+        execution_payload = _cached_execution_payload()
         scans = list_strategy_scans()
         strategy_counts, entry_allowed_count, blocked_count, risk_guard_state = _allocator_snapshot(scans)
         regime, risk_level = _context_snapshot()

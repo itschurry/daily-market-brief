@@ -5,7 +5,7 @@ from typing import Any, Mapping
 from domains.report.market_context_service import get_market_context
 from helpers import _now_iso
 from services.live_layers import build_layer_d_snapshot, build_layer_e_snapshot, build_layer_events
-from services.risk_guard_service import build_risk_guard_state
+from services.risk_guard_service import build_risk_guard_state, validate_account_snapshot
 from services.sizing_service import recommend_position_size
 from services.trade_workflow import enrich_signal_payload
 
@@ -22,7 +22,11 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _normalize_threshold(value: Any, default: float) -> float:
+def _normalize_percent(value: Any, default: float) -> float:
+    return max(0.0, _to_float(value, default))
+
+
+def _normalize_ratio_as_percent(value: Any, default: float) -> float:
     normalized = _to_float(value, default)
     if 0 < normalized <= 1:
         normalized *= 100.0
@@ -41,18 +45,27 @@ def context_snapshot() -> tuple[str, str]:
 
 def _risk_config(cfg: Mapping[str, Any]) -> dict[str, Any]:
     allocation_mode = str(cfg.get("allocation_mode") or "concentrated").strip().lower()
+    performance_starting_equity_krw = _to_float(cfg.get("performance_starting_equity_krw"), 0.0)
     normalized = {
-        "daily_loss_limit_pct": _normalize_threshold(cfg.get("daily_loss_limit_pct"), 2.0),
-        "max_symbol_weight_pct": _normalize_threshold(cfg.get("max_symbol_weight_pct"), 20.0),
-        "max_sector_weight_pct": _normalize_threshold(cfg.get("max_sector_weight_pct"), 35.0),
-        "max_market_exposure_pct": _normalize_threshold(cfg.get("max_market_exposure_pct"), 70.0),
+        "daily_loss_limit_pct": _normalize_percent(cfg.get("daily_loss_limit_pct"), 2.0),
+        "max_total_drawdown_pct": _normalize_percent(cfg.get("max_total_drawdown_pct"), 10.0),
+        "max_symbol_weight_pct": _normalize_percent(cfg.get("max_symbol_weight_pct"), 20.0),
+        "max_sector_weight_pct": _normalize_percent(cfg.get("max_sector_weight_pct"), 35.0),
+        "max_market_exposure_pct": _normalize_percent(cfg.get("max_market_exposure_pct"), 70.0),
         "block_buy_in_risk_off": bool(cfg.get("block_buy_in_risk_off", True)),
         "block_buy_when_risk_high": bool(cfg.get("block_buy_when_risk_high", True)),
         "max_consecutive_loss": max(1, int(cfg.get("max_consecutive_loss") or 3)),
         "cooldown_minutes": max(5, int(cfg.get("cooldown_minutes") or 120)),
     }
+    if performance_starting_equity_krw > 0:
+        normalized["performance_starting_equity_krw"] = performance_starting_equity_krw
     if allocation_mode == "concentrated":
-        bluechip_cap = _normalize_threshold(cfg.get("bluechip_max_symbol_weight_pct") or cfg.get("bluechip_max_symbol_position_ratio"), 40.0)
+        explicit_bluechip_pct = cfg.get("bluechip_max_symbol_weight_pct")
+        bluechip_cap = (
+            _normalize_percent(explicit_bluechip_pct, 40.0)
+            if explicit_bluechip_pct not in (None, "")
+            else _normalize_ratio_as_percent(cfg.get("bluechip_max_symbol_position_ratio"), 40.0)
+        )
         normalized["max_symbol_weight_pct"] = max(normalized["max_symbol_weight_pct"], bluechip_cap)
     return normalized
 
@@ -333,7 +346,8 @@ def build_signal_book(
     account: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     cfg = cfg or {}
-    account = account or {}
+    validate_account_snapshot(account)
+    assert account is not None
     normalized_markets = [str(item or "").strip().upper() for item in (markets or []) if str(item or "").strip()]
     if not normalized_markets:
         normalized_markets = list(DEFAULT_SIGNAL_MARKETS)

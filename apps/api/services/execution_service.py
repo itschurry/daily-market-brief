@@ -59,9 +59,14 @@ from services.runtime_account_cache import (
     ACCOUNT_STATE_DIR as _ACCOUNT_STATE_DIR,
     LIVE_POSITION_ENTRY_PATH as _LIVE_POSITION_ENTRY_PATH,
     persist_live_runtime_account as _persist_live_runtime_account,
+    read_cached_live_runtime_account as _read_cached_live_runtime_account,
 )
 from services.runtime_validation_gate import apply_validation_gate as _apply_validation_gate
-from services.risk_guard_service import build_risk_guard_state as _build_account_risk_guard_state
+from services.risk_guard_service import (
+    InvalidAccountSnapshotError,
+    build_risk_guard_state as _build_account_risk_guard_state,
+    validate_account_snapshot as _validate_account_snapshot,
+)
 from services.sizing_service import recommend_position_size
 from services.strategy_engine import build_signal_book, select_entry_candidates
 from services.strategy_registry import list_strategies
@@ -76,7 +81,7 @@ _RUNTIME_TAKE_PROFIT_PCT = 12.0
 _RUNTIME_TRAILING_PROFIT_ACTIVATION_PCT = 3.0
 _RUNTIME_TRAILING_PROFIT_DROP_PCT = 3.0
 _RUNTIME_BREAK_EVEN_ACTIVATION_PCT = 2.0
-_RUNTIME_BREAK_EVEN_FLOOR_PCT = 0.2
+_RUNTIME_BREAK_EVEN_FLOOR_PCT = 0.8
 _ENTRY_MAX_CHASE_PCT = 1.5
 _ENTRY_MIN_STOP_LOSS_PCT = 3.0
 _ENTRY_MAX_STOP_LOSS_PCT = 12.0
@@ -132,6 +137,10 @@ _auto_trader_state: dict[str, Any] = {
 }
 _MARKET_TO_CALENDAR = {"KOSPI": "KR"}
 _MARKET_BRIEF_LABELS = {"KR": "한국장"}
+
+
+class RuntimeAccountUnavailableError(RuntimeError):
+    """Raised when the runtime account cannot be trusted for trading."""
 
 
 def _mask_chat_id(chat_id: str) -> str:
@@ -956,7 +965,11 @@ def _normalize_runtime_account(
     notify_live_fills: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(account, dict):
-        return {}
+        raise RuntimeAccountUnavailableError("runtime_account_invalid_payload")
+
+    if account.get("ok") is False or account.get("error"):
+        error = str(account.get("error") or "account_request_failed").strip()
+        raise RuntimeAccountUnavailableError(f"runtime_account_unavailable: {error}")
 
     mode = str(account.get("mode") or "").strip().lower()
     if mode != "real":
@@ -1061,6 +1074,10 @@ def _normalize_runtime_account(
     })
     normalized.pop("days_elapsed", None)
     normalized.pop("days_left", None)
+    try:
+        _validate_account_snapshot(normalized)
+    except InvalidAccountSnapshotError as exc:
+        raise RuntimeAccountUnavailableError(str(exc)) from exc
     return _hydrate_live_runtime_account(
         normalized,
         persist_reconciled_fills=persist_live_reconciled_fills,
@@ -1120,10 +1137,20 @@ def _fresh_available_sell_quantity(
     code: str,
 ) -> int:
     try:
-        account = _normalize_runtime_account(engine.get_account(refresh_quotes=False))
+        account = _fresh_runtime_account(engine)
     except Exception:
         return 0
     return _available_sell_quantity(account, market=market, code=code)
+
+
+def _fresh_runtime_account(
+    engine: SimulatedExecutionEngine | LiveBrokerExecutionEngine,
+) -> dict[str, Any]:
+    return _normalize_runtime_account(
+        engine.get_account(refresh_quotes=False),
+        persist_live_reconciled_fills=True,
+        notify_live_fills=True,
+    )
 
 
 def _auto_refresh_research_snapshots(*, markets: list[str], limit: int = 30, mode: str = "missing_or_stale") -> dict[str, Any]:
@@ -1142,9 +1169,14 @@ def _auto_refresh_research_snapshots(*, markets: list[str], limit: int = 30, mod
         "mode": str(mode or "missing_or_stale").strip() or "missing_or_stale",
     }
 
-def _build_status_payload(state: dict[str, Any], account: dict[str, Any]) -> dict[str, Any]:
-    normalized_account = _normalize_runtime_account(account)
-    _persist_live_runtime_account(normalized_account)
+def _build_status_payload(
+    state: dict[str, Any],
+    normalized_account: dict[str, Any],
+    *,
+    persist_account: bool = True,
+) -> dict[str, Any]:
+    if persist_account:
+        _persist_live_runtime_account(normalized_account)
     today_counts = _today_order_counts(normalized_account)
     running = state.get("engine_state") == "running"
     execution_mode = _current_execution_mode()
@@ -1169,7 +1201,18 @@ def _build_status_payload(state: dict[str, Any], account: dict[str, Any]) -> dic
         "execution_mode": execution_mode,
         "state": payload_state,
         "account": normalized_account,
+        "account_available": True,
+        "account_error": "",
     }
+
+
+def _build_account_error_status_payload(state: dict[str, Any], error: Exception) -> dict[str, Any]:
+    payload = _build_engine_control_payload(state)
+    account_error = str(error).strip() or error.__class__.__name__
+    payload["account"] = {}
+    payload["account_available"] = False
+    payload["account_error"] = account_error
+    return payload
 
 
 def _build_engine_control_payload(state: dict[str, Any]) -> dict[str, Any]:
@@ -2658,17 +2701,18 @@ def _auto_invest_picks(
     }
 
 
-def _run_auto_trader_cycle(cfg: dict, *, entry_scan: bool = True) -> dict:
+def _run_auto_trader_cycle(
+    cfg: dict,
+    *,
+    entry_scan: bool = True,
+    initial_account: dict[str, Any] | None = None,
+) -> dict:
     global _last_daily_loss_notified_day, _last_market_open_brief_sent
     engine = _runtime_engine()
     notifier = get_notification_service()
     cycle_id = f"cycle-{datetime.datetime.now(_KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     started_at = _now_iso()
-    account = _normalize_runtime_account(
-        engine.get_account(refresh_quotes=False),
-        persist_live_reconciled_fills=True,
-        notify_live_fills=True,
-    )
+    account = initial_account if initial_account is not None else _fresh_runtime_account(engine)
     account_mode = str(account.get("mode") or "paper").strip().lower()
 
     orders = _runtime_order_attempts(account, account_mode, limit=500)
@@ -2785,11 +2829,12 @@ def _run_auto_trader_cycle(cfg: dict, *, entry_scan: bool = True) -> dict:
             continue
 
         any_market_open = True
-        account = _normalize_runtime_account(
-            engine.get_account(refresh_quotes=True),
-            persist_live_reconciled_fills=True,
-            notify_live_fills=True,
-        )
+        if entry_scan:
+            account = _normalize_runtime_account(
+                engine.get_account(refresh_quotes=True),
+                persist_live_reconciled_fills=True,
+                notify_live_fills=True,
+            )
         market_positions = [
             position for position in account.get("positions", [])
             if str(position.get("market") or "").upper() == market
@@ -2838,7 +2883,8 @@ def _run_auto_trader_cycle(cfg: dict, *, entry_scan: bool = True) -> dict:
                 if not reason:
                     continue
             requested_sell_qty = int(position.get("quantity") or 0)
-            available_sell_qty = _fresh_available_sell_quantity(engine, market=market, code=code)
+            account = _fresh_runtime_account(engine)
+            available_sell_qty = _available_sell_quantity(account, market=market, code=code)
             if available_sell_qty <= 0:
                 skipped.append({"code": code, "name": pos_name, "market": market,
                                "reason": "sell_position_not_available"})
@@ -3571,7 +3617,7 @@ def _run_auto_trader_cycle(cfg: dict, *, entry_scan: bool = True) -> dict:
             persist_live_reconciled_fills=True,
             notify_live_fills=True,
         )
-        if any_market_open else account
+        if any_market_open and entry_scan else account
     )
     _persist_live_runtime_account(final_account)
     unrealized_pnl = sum(
@@ -3658,26 +3704,32 @@ def _run_auto_trader_cycle(cfg: dict, *, entry_scan: bool = True) -> dict:
     return summary
 
 
-def _should_run_exit_monitor(cfg: dict[str, Any]) -> bool:
+def _load_exit_monitor_account(cfg: dict[str, Any]) -> dict[str, Any] | None:
     markets = {
         normalize_strategy_market(market)
         for market in (cfg.get("markets") or ["KOSPI"])
         if _is_active_auto_trade_market(normalize_strategy_market(market))
     }
     if not markets:
-        return False
+        return None
     if not any(
         is_market_open(_MARKET_TO_CALENDAR.get(market, market), include_after_hours=True)
         for market in markets
     ):
-        return False
-    account = _runtime_engine().get_account(refresh_quotes=False)
-    return any(
+        return None
+    account = _fresh_runtime_account(_runtime_engine())
+    if any(
         str(position.get("market") or "").upper() in markets
         and _position_has_managed_exit_plan(position)
         for position in account.get("positions", [])
         if isinstance(position, dict)
-    )
+    ):
+        return account
+    return None
+
+
+def _should_run_exit_monitor(cfg: dict[str, Any]) -> bool:
+    return _load_exit_monitor_account(cfg) is not None
 
 
 def _auto_trader_loop(stop_event: threading.Event) -> None:
@@ -3777,14 +3829,18 @@ def _auto_trader_loop(stop_event: threading.Event) -> None:
             if engine_state != "running":
                 stop_event.set()
                 break
-            if not _should_run_exit_monitor(cfg):
-                continue
-
             acquired_cycle = _auto_trader_cycle_lock.acquire(blocking=False)
             if not acquired_cycle:
                 continue
             try:
-                exit_summary = _run_auto_trader_cycle(cfg, entry_scan=False)
+                exit_account = _load_exit_monitor_account(cfg)
+                if exit_account is None:
+                    continue
+                exit_summary = _run_auto_trader_cycle(
+                    cfg,
+                    entry_scan=False,
+                    initial_account=exit_account,
+                )
                 with _auto_trader_lock:
                     _auto_trader_state["last_exit_check_at"] = _now_iso()
                     _auto_trader_state["last_exit_summary"] = exit_summary
@@ -4034,6 +4090,7 @@ def _resume_auto_trader() -> dict:
 
 def _auto_trader_status() -> dict:
     _hydrate_auto_trader_state()
+    _ensure_auto_trader_thread_running()
     with _auto_trader_lock:
         state = _sanitize_runtime_state(_auto_trader_state)
     if not state.get("current_config"):
@@ -4045,8 +4102,25 @@ def _auto_trader_status() -> dict:
             _auto_trader_state["engine_state"] = "stopped"
             _auto_trader_state["running"] = False
             _persist_auto_trader_state_locked()
-    engine = _runtime_engine()
-    account = engine.get_account(refresh_quotes=False)
+    if _current_execution_mode() == "live":
+        account = _read_cached_live_runtime_account()
+        if not account:
+            return _build_account_error_status_payload(
+                state,
+                RuntimeAccountUnavailableError("live_account_state_unavailable"),
+            )
+        payload = _build_status_payload(state, account, persist_account=False)
+        last_error = str(state.get("last_error") or "").strip()
+        if last_error.startswith(("runtime_account_", "account_equity_", "account_snapshot_")):
+            payload["account_available"] = False
+            payload["account_error"] = last_error
+        return payload
+
+    try:
+        engine = _runtime_engine()
+        account = _normalize_runtime_account(engine.get_account(refresh_quotes=False))
+    except RuntimeAccountUnavailableError as exc:
+        return _build_account_error_status_payload(state, exc)
     return _build_status_payload(state, account)
 
 

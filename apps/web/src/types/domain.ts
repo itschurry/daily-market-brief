@@ -879,6 +879,8 @@ export interface EngineStatusResponse {
   };
   execution?: {
     execution_mode?: string;
+    account_available?: boolean;
+    account_error?: string;
     state?: {
       execution_mode?: string;
       engine_state?: string;
@@ -920,6 +922,15 @@ export interface EngineStatusResponse {
         validation_min_trades?: number;
         validation_min_sharpe?: number;
         validation_block_on_low_reliability?: boolean;
+      };
+      incident_alert?: {
+        active?: boolean;
+        code?: string;
+        severity?: 'info' | 'warning' | 'critical' | string;
+        title?: string;
+        message?: string;
+        detail?: string;
+        occurred_at?: string;
       };
       last_summary?: Record<string, unknown>;
     };

@@ -18,6 +18,7 @@ from services.execution_service import (
     _buy_capacity_block_reason_from_orders,
     _default_auto_trader_config,
     _hydrate_live_runtime_account,
+    _normalize_runtime_account,
     _promote_operator_review_candidate_for_entry,
     _promote_priority_candidate_for_entry,
     _position_exit_reason_by_pnl,
@@ -70,6 +71,26 @@ def _primary_buy_snapshot() -> dict:
 
 
 class ExecutionRotationTests(unittest.TestCase):
+    def test_live_account_api_error_fails_before_normalization(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "runtime_account_unavailable: EGW00215"):
+            _normalize_runtime_account({
+                "ok": False,
+                "mode": "live",
+                "error": "EGW00215",
+            })
+
+    def test_live_account_zero_equity_fails_before_runtime_use(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "account_equity_invalid"):
+            _normalize_runtime_account({
+                "mode": "real",
+                "summary": {
+                    "cash_krw": 0,
+                    "eval_amount_krw": 0,
+                    "total_amount_krw": 0,
+                },
+                "positions": [],
+            })
+
     def test_explicit_conservative_live_limits_are_preserved(self) -> None:
         config = _sync_primary_strategy_fields({
             **_default_auto_trader_config(),
@@ -148,6 +169,38 @@ class ExecutionRotationTests(unittest.TestCase):
         }
         self.assertFalse(_should_run_exit_monitor({"markets": ["KOSPI"]}))
 
+    @patch("services.execution_service.is_market_open", return_value=True)
+    @patch("services.execution_service._normalize_runtime_account")
+    @patch("services.execution_service._runtime_engine")
+    def test_exit_monitor_hydrates_live_position_plan_before_check(
+        self,
+        runtime_engine: Mock,
+        normalize_account: Mock,
+        _is_market_open: Mock,
+    ) -> None:
+        raw_account = {
+            "mode": "real",
+            "positions": [{"market": "KOSPI", "code": "007070"}],
+        }
+        runtime_engine.return_value.get_account.return_value = raw_account
+        normalize_account.return_value = {
+            "mode": "real",
+            "positions": [{
+                "market": "KOSPI",
+                "code": "007070",
+                "entry_plan_price": 28600,
+                "stop_loss_price": 26600,
+                "take_profit_price": 32700,
+            }],
+        }
+
+        self.assertTrue(_should_run_exit_monitor({"markets": ["KOSPI"]}))
+        normalize_account.assert_called_once_with(
+            raw_account,
+            persist_live_reconciled_fills=True,
+            notify_live_fills=True,
+        )
+
     def test_exit_monitor_cycle_skips_technicals_and_entry_scan(self) -> None:
         account = {
             "mode": "paper",
@@ -196,6 +249,7 @@ class ExecutionRotationTests(unittest.TestCase):
         self.assertEqual(summary["executed_buy_count"], 0)
         technicals.assert_not_called()
         signal_book.assert_not_called()
+        self.assertEqual(engine.get_account.call_count, 1)
 
     def test_exit_monitor_restores_live_risk_plan_before_sell_check(self) -> None:
         raw_account = {
@@ -222,18 +276,13 @@ class ExecutionRotationTests(unittest.TestCase):
             "account": {"orders": []},
         }
 
-        normalize_calls = 0
-
         def normalize(account: dict, **_: object) -> dict:
-            nonlocal normalize_calls
-            normalize_calls += 1
             normalized = {**account, "positions": [dict(item) for item in account["positions"]]}
-            if normalize_calls >= 2:
-                normalized["positions"][0].update({
-                    "entry_plan_price": 7150,
-                    "stop_loss_price": 6265,
-                    "take_profit_price": 8100,
-                })
+            normalized["positions"][0].update({
+                "entry_plan_price": 7150,
+                "stop_loss_price": 6265,
+                "take_profit_price": 8100,
+            })
             return normalized
 
         with (
@@ -254,7 +303,7 @@ class ExecutionRotationTests(unittest.TestCase):
                 entry_scan=False,
             )
 
-        self.assertGreaterEqual(normalize_calls, 3)
+        self.assertEqual(engine.get_account.call_count, 2)
         self.assertEqual(summary["executed_sell_count"], 1)
         self.assertEqual(summary["executed_sells"][0]["reason"], "비상손절")
         engine.place_order.assert_called_once_with(
@@ -407,11 +456,18 @@ class ExecutionRotationTests(unittest.TestCase):
         )
         self.assertEqual(
             _position_exit_reason_by_pnl(
-                {"unrealized_pnl_pct": 0.1, "peak_unrealized_pnl_pct": 2.1, **managed},
+                {"unrealized_pnl_pct": 0.8, "peak_unrealized_pnl_pct": 2.1, **managed},
                 {},
                 "KOSPI",
             ),
             "본전보호",
+        )
+        self.assertIsNone(
+            _position_exit_reason_by_pnl(
+                {"unrealized_pnl_pct": 0.81, "peak_unrealized_pnl_pct": 2.1, **managed},
+                {},
+                "KOSPI",
+            )
         )
 
         self.assertEqual(

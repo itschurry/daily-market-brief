@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from services.execution_service import _current_execution_mode, hydrate_runtime_state
+from services.execution_service import _current_execution_mode
 from services.runtime_account_cache import read_cached_live_runtime_account
 from services.runtime_execution_service import get_execution_service
-from services.runtime_store import load_engine_state
 
 
 def _parse_limit(query: dict[str, list[str]], default: int, minimum: int = 1, maximum: int = 500) -> int:
@@ -15,6 +14,35 @@ def _parse_limit(query: dict[str, list[str]], default: int, minimum: int = 1, ma
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _compact_cycle_summary(summary: object) -> dict:
+    if not isinstance(summary, dict):
+        return {}
+    keep_keys = {
+        "ok",
+        "cycle_type",
+        "cycle_id",
+        "started_at",
+        "finished_at",
+        "ran_at",
+        "executed_buy_count",
+        "executed_sell_count",
+        "candidate_counts_by_market",
+        "blocked_reason_counts",
+        "rotation_summary",
+        "skip_reason_counts",
+        "market_stats",
+        "closed_markets",
+        "risk_guard_state",
+        "validation_gate_summary",
+        "pnl_snapshot",
+        "error",
+    }
+    compact = {key: summary[key] for key in keep_keys if key in summary}
+    skipped = summary.get("skipped")
+    compact["skipped_count"] = len(skipped) if isinstance(skipped, list) else 0
+    return compact
 
 
 def _compact_engine_payload(payload: dict) -> dict:
@@ -34,6 +62,8 @@ def _compact_engine_payload(payload: dict) -> dict:
         "last_success_at",
         "last_error",
         "last_error_at",
+        "last_exit_check_at",
+        "last_exit_error",
         "latest_cycle_id",
         "today_order_counts",
         "order_failure_summary",
@@ -58,6 +88,8 @@ def _compact_engine_payload(payload: dict) -> dict:
         "error",
     }
     compact_state = {key: state[key] for key in state_keys if key in state}
+    compact_state["last_summary"] = _compact_cycle_summary(state.get("last_summary"))
+    compact_state["last_exit_summary"] = _compact_cycle_summary(state.get("last_exit_summary"))
     compact_state["execution_mode"] = compact_state.get("execution_mode") or payload.get("execution_mode")
     positions = account.get("positions") if isinstance(account.get("positions"), list) else []
     compact_account = {key: account[key] for key in account_keys if key in account}
@@ -82,12 +114,16 @@ def _compact_engine_payload(payload: dict) -> dict:
         for item in positions
         if isinstance(item, dict)
     ]
-    return {
+    compact_payload = {
         "ok": payload.get("ok", True),
         "execution_mode": payload.get("execution_mode") or compact_state.get("execution_mode"),
         "state": compact_state,
         "account": compact_account,
     }
+    for key in ("account_available", "account_error"):
+        if key in payload:
+            compact_payload[key] = payload[key]
+    return compact_payload
 
 
 def _latest_account_snapshot_payload() -> dict:
@@ -137,14 +173,8 @@ def handle_runtime_engine_resume() -> tuple[int, dict]:
 
 
 def handle_runtime_engine_status() -> tuple[int, dict]:
-    hydrate_runtime_state()
-    payload = {
-        "ok": True,
-        "execution_mode": _current_execution_mode(),
-        "state": load_engine_state(default={}),
-        "account": read_cached_live_runtime_account() if _current_execution_mode() == "live" else {},
-    }
-    return 200, _compact_engine_payload(payload)
+    status, payload = get_execution_service().runtime_engine_status()
+    return status, _compact_engine_payload(payload)
 
 
 def handle_runtime_engine_cycles(query: dict[str, list[str]]) -> tuple[int, dict]:

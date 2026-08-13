@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import math
 from collections import defaultdict
 from typing import Any
 
@@ -29,8 +30,33 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+class InvalidAccountSnapshotError(ValueError):
+    """Raised when risk calculations cannot trust the account snapshot."""
+
+
+def validate_account_snapshot(account: Any) -> float:
+    """Return a usable equity value or fail closed on an invalid snapshot."""
+    if not isinstance(account, dict):
+        raise InvalidAccountSnapshotError("account_snapshot_invalid")
+    if account.get("ok") is False or account.get("error"):
+        raise InvalidAccountSnapshotError("account_snapshot_unavailable")
+    if "equity_krw" not in account or account.get("equity_krw") in (None, ""):
+        raise InvalidAccountSnapshotError("account_equity_missing")
+
+    raw_equity = account.get("equity_krw")
+    if isinstance(raw_equity, bool):
+        raise InvalidAccountSnapshotError("account_equity_invalid")
+    try:
+        equity = float(raw_equity)
+    except (TypeError, ValueError) as exc:
+        raise InvalidAccountSnapshotError("account_equity_invalid") from exc
+    if not math.isfinite(equity) or equity <= 0.0:
+        raise InvalidAccountSnapshotError("account_equity_invalid")
+    return equity
+
+
 def _compute_exposure(account: dict[str, Any]) -> dict[str, Any]:
-    equity = max(_to_float(account.get("equity_krw")), 1.0)
+    equity = validate_account_snapshot(account)
     by_market: dict[str, float] = defaultdict(float)
     by_symbol: dict[str, float] = defaultdict(float)
     by_sector: dict[str, float] = defaultdict(float)

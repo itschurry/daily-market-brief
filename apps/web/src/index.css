@@ -276,6 +276,38 @@ button:disabled {
   font-size: 15px;
 }
 
+.app-alert-banner.is-critical {
+  border-color: var(--down-border);
+  background: color-mix(in srgb, var(--down) 8%, var(--bg-surface) 92%);
+  color: var(--down);
+}
+
+.wealth-engine-incident {
+  align-items: flex-start;
+}
+
+.wealth-engine-incident-copy {
+  display: flex;
+  flex: 1 1 280px;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+}
+
+.wealth-engine-incident-copy em {
+  color: var(--text-3);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.wealth-engine-incident-detail {
+  flex: 1 1 100%;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .app-shell {
   min-height: 100vh;
   padding: 28px 16px 40px;
