@@ -10,27 +10,67 @@ RUNNER="$SCRIPT_DIR/run_market_research.sh"
 INTERVAL_SECONDS="${WEALTHPULSE_RESEARCH_LOOP_INTERVAL_SECONDS:-60}"
 CLOSED_INTERVAL_SECONDS="${WEALTHPULSE_RESEARCH_CLOSED_INTERVAL_SECONDS:-600}"
 MARKET="${WEALTHPULSE_RESEARCH_MARKET:-KOSPI}"
+FAIL_STOP_MARKER="${WEALTHPULSE_RESEARCH_FAIL_STOP_MARKER:-/tmp/wealthpulse-research-loop.fail-stopped}"
+ACTIVE_CHILD_PID=""
 
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+shutdown() {
+  local child_pid="${ACTIVE_CHILD_PID:-}"
+
+  trap - TERM INT
+  if [[ -n "$child_pid" ]]; then
+    kill -TERM -- "-$child_pid" 2>/dev/null || true
+    wait "$child_pid" 2>/dev/null || true
+  fi
+  ACTIVE_CHILD_PID=""
+  printf '[%s] wealthpulse-research-loop stop reason=signal\n' "$(date --iso-8601=seconds)"
+  exit 0
+}
+
+run_tracked() {
+  setsid "$@" &
+  ACTIVE_CHILD_PID=$!
+  wait "$ACTIVE_CHILD_PID"
+  local status=$?
+  ACTIVE_CHILD_PID=""
+  return "$status"
+}
+
+fail_stopped() {
+  local reason="$1"
+  local exit_code="${2:-1}"
+
+  printf '%s\n' "$reason" > "$FAIL_STOP_MARKER"
+  printf '[%s] wealthpulse-research-loop fail_stopped reason=%s exit_code=%s marker=%s\n' \
+    "$(date --iso-8601=seconds)" "$reason" "$exit_code" "$FAIL_STOP_MARKER"
+
+  while true; do
+    run_tracked sleep 86400 || true
+  done
+}
+
+trap shutdown TERM INT
+rm -f "$FAIL_STOP_MARKER"
+
 case "$INTERVAL_SECONDS" in
   ""|*[!0-9]*)
     printf '[%s] wealthpulse-research-loop failed reason=invalid_interval interval=%s\n' "$(date --iso-8601=seconds)" "$INTERVAL_SECONDS"
-    exit 1
+    fail_stopped "invalid_interval" 1
     ;;
 esac
 
 case "$CLOSED_INTERVAL_SECONDS" in
   ""|*[!0-9]*)
     printf '[%s] wealthpulse-research-loop failed reason=invalid_closed_interval interval=%s\n' "$(date --iso-8601=seconds)" "$CLOSED_INTERVAL_SECONDS"
-    exit 1
+    fail_stopped "invalid_closed_interval" 1
     ;;
 esac
 
 if (( INTERVAL_SECONDS < 1 || CLOSED_INTERVAL_SECONDS < 1 )); then
   printf '[%s] wealthpulse-research-loop failed reason=invalid_interval interval=%s closed_interval=%s\n' "$(date --iso-8601=seconds)" "$INTERVAL_SECONDS" "$CLOSED_INTERVAL_SECONDS"
-  exit 1
+  fail_stopped "invalid_interval" 1
 fi
 
 if [[ -n "${WEALTHPULSE_PYTHON_BIN:-}" ]]; then
@@ -43,7 +83,7 @@ fi
 
 if [[ ! -x "$RUNNER" ]]; then
   printf '[%s] wealthpulse-research-loop failed reason=runner_not_executable path=%s\n' "$(date --iso-8601=seconds)" "$RUNNER"
-  exit 1
+  fail_stopped "runner_not_executable" 1
 fi
 
 cd "$REPO_DIR"
@@ -82,7 +122,7 @@ while true; do
 
   if [[ "$status_code" != "0" ]]; then
     printf '[%s] wealthpulse-research-loop failed reason=market_calendar_error exit_code=%s\n' "$(date --iso-8601=seconds)" "$status_code"
-    exit "$status_code"
+    fail_stopped "market_calendar_error" "$status_code"
   fi
 
   market_open="$("$PYTHON_BIN" - "$status_payload" <<'PY'
@@ -95,22 +135,22 @@ PY
 
   if [[ "$market_open" != "1" ]]; then
     printf '[%s] wealthpulse-research-loop idle reason=market_closed status=%s sleep_seconds=%s\n' "$(date --iso-8601=seconds)" "$status_payload" "$CLOSED_INTERVAL_SECONDS"
-    sleep "$CLOSED_INTERVAL_SECONDS"
+    run_tracked sleep "$CLOSED_INTERVAL_SECONDS"
     continue
   fi
 
   printf '[%s] wealthpulse-research-loop iteration_start\n' "$(date --iso-8601=seconds)"
 
   set +e
-  "$RUNNER"
+  run_tracked "$RUNNER"
   status=$?
   set -e
 
   printf '[%s] wealthpulse-research-loop iteration_finish exit_code=%s\n' "$(date --iso-8601=seconds)" "$status"
   if [[ "$status" != "0" ]]; then
     printf '[%s] wealthpulse-research-loop failed reason=runner_failed exit_code=%s\n' "$(date --iso-8601=seconds)" "$status"
-    exit "$status"
+    fail_stopped "runner_failed" "$status"
   fi
 
-  sleep "$INTERVAL_SECONDS"
+  run_tracked sleep "$INTERVAL_SECONDS"
 done
