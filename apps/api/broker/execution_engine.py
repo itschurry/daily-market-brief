@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from broker.kis_client import KISRequestAuditError
 from config.market_calendar import SESSION_WINDOWS, get_market_local_dt, is_market_open
 from market_utils import lookup_company_listing
 
@@ -806,6 +807,8 @@ class LiveBrokerExecutionEngine:
         """실계좌 잔고를 KIS API에서 직접 조회한다."""
         try:
             return self._client.get_balance()
+        except KISRequestAuditError:
+            raise
         except Exception as exc:
             return {
                 "ok": False,
@@ -871,6 +874,7 @@ class LiveBrokerExecutionEngine:
                 normalized_order_type = "limit"
             requested_quantity = quantity
             orderable_amount: dict[str, Any] | None = None
+            sellable_amount: dict[str, Any] | None = None
             if normalized_side == "buy":
                 quantity, price, order_division, normalized_order_type, orderable_amount = self._prepare_domestic_buy_order(
                     code=normalized_code,
@@ -895,6 +899,25 @@ class LiveBrokerExecutionEngine:
                         },
                         "orderable_amount": orderable_amount,
                     }
+            else:
+                sellable_amount = self._client.get_sellable_quantity(normalized_code)
+                max_sellable_quantity = _to_int(sellable_amount.get("sellable_quantity"))
+                quantity = min(int(requested_quantity), max_sellable_quantity)
+                if quantity <= 0:
+                    return {
+                        "ok": False,
+                        "mode": "live",
+                        "error": "domestic_sellable_quantity_zero",
+                        "requested": {
+                            "side": side,
+                            "code": code,
+                            "market": market,
+                            "quantity": requested_quantity,
+                            "order_type": order_type,
+                            "limit_price": limit_price,
+                        },
+                        "sellable_amount": sellable_amount,
+                    }
             result = self._client.place_cash_order(
                 side=normalized_side,
                 code=normalized_code,
@@ -911,9 +934,10 @@ class LiveBrokerExecutionEngine:
                 price=price,
                 result=result,
                 order_division=order_division,
-                requested_quantity=requested_quantity if normalized_side == "buy" else quantity,
+                requested_quantity=requested_quantity,
                 requested_order_type=requested_order_type,
                 orderable_amount=orderable_amount,
+                sellable_amount=sellable_amount,
                 stop_loss_pct=stop_loss_pct,
                 take_profit_pct=take_profit_pct,
                 stop_loss_price=stop_loss_price,
@@ -921,6 +945,8 @@ class LiveBrokerExecutionEngine:
                 entry_plan_price=entry_plan_price,
             )
             return {"ok": True, "mode": "live", "event": event, **result}
+        except KISRequestAuditError:
+            raise
         except Exception as exc:
             return {
                 "ok": False,
@@ -984,6 +1010,7 @@ class LiveBrokerExecutionEngine:
         requested_quantity: int | None = None,
         requested_order_type: str | None = None,
         orderable_amount: dict[str, Any] | None = None,
+        sellable_amount: dict[str, Any] | None = None,
         stop_loss_pct: float | None = None,
         take_profit_pct: float | None = None,
         stop_loss_price: float | None = None,
@@ -1019,6 +1046,11 @@ class LiveBrokerExecutionEngine:
                 "max_orderable_quantity": orderable_amount.get("max_orderable_quantity"),
                 "orderable_cash": orderable_amount.get("orderable_cash"),
                 "order_price": orderable_amount.get("order_price"),
+            }
+        if sellable_amount is not None:
+            event["sellable_amount"] = {
+                "sellable_quantity": sellable_amount.get("sellable_quantity"),
+                "balance_quantity": sellable_amount.get("balance_quantity"),
             }
         if side == "buy":
             event.update({

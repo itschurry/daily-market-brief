@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 
 API_ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +18,7 @@ from services.execution_service import (
     _buy_capacity_block_reason_from_orders,
     _default_auto_trader_config,
     _hydrate_live_runtime_account,
+    _load_exit_monitor_account,
     _normalize_runtime_account,
     _promote_operator_review_candidate_for_entry,
     _promote_priority_candidate_for_entry,
@@ -30,6 +31,7 @@ from services.execution_service import (
     _sync_primary_strategy_fields,
     _symbol_reentry_blocked,
 )
+from broker.execution_engine import LiveBrokerExecutionEngine
 from datetime import datetime, timedelta, timezone
 
 
@@ -162,44 +164,186 @@ class ExecutionRotationTests(unittest.TestCase):
                 "take_profit_price": 112000,
             }],
         }
-        self.assertTrue(_should_run_exit_monitor({"markets": ["KOSPI"]}))
+        with patch("services.execution_service._current_execution_mode", return_value="paper"):
+            self.assertTrue(_should_run_exit_monitor({"markets": ["KOSPI"]}))
 
         engine.get_account.return_value = {
             "positions": [{"market": "KOSPI", "code": "005930"}],
         }
-        self.assertFalse(_should_run_exit_monitor({"markets": ["KOSPI"]}))
+        with patch("services.execution_service._current_execution_mode", return_value="paper"):
+            self.assertFalse(_should_run_exit_monitor({"markets": ["KOSPI"]}))
 
     @patch("services.execution_service.is_market_open", return_value=True)
-    @patch("services.execution_service._normalize_runtime_account")
     @patch("services.execution_service._runtime_engine")
     def test_exit_monitor_hydrates_live_position_plan_before_check(
         self,
         runtime_engine: Mock,
-        normalize_account: Mock,
         _is_market_open: Mock,
     ) -> None:
         raw_account = {
             "mode": "real",
             "positions": [{"market": "KOSPI", "code": "007070"}],
         }
-        runtime_engine.return_value.get_account.return_value = raw_account
-        normalize_account.return_value = {
+        normalized_account = {
             "mode": "real",
+            "market_value_krw": 314600,
+            "unrealized_pnl_krw": 0,
+            "equity_krw": 3414600,
             "positions": [{
                 "market": "KOSPI",
                 "code": "007070",
+                "quantity": 11,
+                "avg_price_local": 28600,
+                "market_value_krw": 314600,
+                "unrealized_pnl_krw": 0,
                 "entry_plan_price": 28600,
                 "stop_loss_price": 26600,
                 "take_profit_price": 32700,
             }],
         }
+        engine = object.__new__(LiveBrokerExecutionEngine)
+        engine.quote_provider = Mock(return_value={
+            "code": "007070",
+            "price": 28000,
+            "source": "KIS",
+            "fetched_at": "2026-08-14T00:03:00+00:00",
+            "is_stale": False,
+        })
+        runtime_engine.return_value = engine
 
-        self.assertTrue(_should_run_exit_monitor({"markets": ["KOSPI"]}))
+        with (
+            patch("services.execution_service._current_execution_mode", return_value="live"),
+            patch("services.execution_service._read_cached_live_runtime_account", return_value=raw_account),
+            patch("services.execution_service._normalize_runtime_account", return_value=normalized_account) as normalize_account,
+        ):
+            loaded_account = _load_exit_monitor_account({"markets": ["KOSPI"]})
+
+        self.assertIsNotNone(loaded_account)
+        assert loaded_account is not None
+        self.assertEqual(loaded_account["positions"][0]["last_price_local"], 28000)
+        self.assertAlmostEqual(loaded_account["positions"][0]["unrealized_pnl_pct"], -2.097902, places=5)
+        self.assertEqual(loaded_account["market_value_krw"], 308000)
+        self.assertEqual(loaded_account["unrealized_pnl_krw"], -6600)
+        self.assertEqual(loaded_account["equity_krw"], 3408000)
         normalize_account.assert_called_once_with(
             raw_account,
-            persist_live_reconciled_fills=True,
-            notify_live_fills=True,
+            persist_live_reconciled_fills=False,
+            notify_live_fills=False,
         )
+        engine.quote_provider.assert_called_once_with("007070", "KOSPI")
+
+    @patch("services.execution_service.is_market_open", return_value=True)
+    @patch("services.execution_service._runtime_engine")
+    def test_live_exit_monitor_fails_when_account_cache_is_missing(
+        self,
+        runtime_engine: Mock,
+        _is_market_open: Mock,
+    ) -> None:
+        engine = object.__new__(LiveBrokerExecutionEngine)
+        engine.quote_provider = Mock()
+        runtime_engine.return_value = engine
+
+        with (
+            patch("services.execution_service._current_execution_mode", return_value="live"),
+            patch("services.execution_service._read_cached_live_runtime_account", return_value={}),
+            self.assertRaisesRegex(RuntimeError, "exit_monitor_live_account_cache_missing"),
+        ):
+            _load_exit_monitor_account({"markets": ["KOSPI"]})
+
+        engine.quote_provider.assert_not_called()
+
+    @patch("services.execution_service.is_market_open", return_value=True)
+    @patch("services.execution_service._runtime_engine")
+    def test_live_exit_monitor_fails_when_quote_is_incomplete(
+        self,
+        runtime_engine: Mock,
+        _is_market_open: Mock,
+    ) -> None:
+        account = {
+            "mode": "real",
+            "positions": [{
+                "market": "KOSPI",
+                "code": "007070",
+                "quantity": 11,
+                "avg_price_local": 28600,
+                "entry_plan_price": 28600,
+                "stop_loss_price": 26600,
+                "take_profit_price": 32700,
+            }],
+        }
+        engine = object.__new__(LiveBrokerExecutionEngine)
+        engine.quote_provider = Mock(return_value={"code": "007070", "price": None})
+        runtime_engine.return_value = engine
+
+        with (
+            patch("services.execution_service._current_execution_mode", return_value="live"),
+            patch("services.execution_service._read_cached_live_runtime_account", return_value=account),
+            patch("services.execution_service._normalize_runtime_account", return_value=account),
+            self.assertRaisesRegex(RuntimeError, "exit_monitor_quote_incomplete"),
+        ):
+            _load_exit_monitor_account({"markets": ["KOSPI"]})
+
+    def test_live_exit_monitor_without_sell_uses_quotes_and_no_balance_request(self) -> None:
+        account = {
+            "mode": "real",
+            "cash_krw": 3_100_000,
+            "market_value_krw": 314600,
+            "unrealized_pnl_krw": 0,
+            "equity_krw": 3414600,
+            "orders": [],
+            "positions": [{
+                "market": "KOSPI",
+                "code": "007070",
+                "quantity": 11,
+                "orderable_quantity": 11,
+                "avg_price_local": 28600,
+                "market_value_krw": 314600,
+                "unrealized_pnl_krw": 0,
+                "entry_plan_price": 28600,
+                "stop_loss_price": 26600,
+                "take_profit_price": 32700,
+            }],
+        }
+        client = Mock()
+        engine = object.__new__(LiveBrokerExecutionEngine)
+        engine._client = client
+        engine.quote_provider = Mock(return_value={
+            "code": "007070",
+            "price": 28000,
+            "source": "KIS",
+            "fetched_at": "2026-08-14T00:03:00+00:00",
+            "is_stale": False,
+        })
+
+        with (
+            patch("services.execution_service._runtime_engine", return_value=engine),
+            patch("services.execution_service._current_execution_mode", return_value="live"),
+            patch("services.execution_service._read_cached_live_runtime_account", return_value=account),
+            patch(
+                "services.execution_service._normalize_runtime_account",
+                side_effect=lambda value, **_: value,
+            ),
+            patch("services.execution_service._runtime_order_attempts", return_value=[]),
+            patch("services.execution_service.is_market_open", return_value=True),
+            patch("services.execution_service._persist_live_runtime_account") as persist_account,
+            patch("services.execution_service.append_signal_snapshots"),
+            patch("services.execution_service.append_engine_cycle"),
+            patch("services.execution_service.append_account_snapshot"),
+            patch("services.execution_service._should_send_market_open_brief", return_value=(False, "")),
+            patch("services.execution_service.get_notification_service", return_value=Mock()),
+        ):
+            loaded_account = _load_exit_monitor_account({"markets": ["KOSPI"]})
+            assert loaded_account is not None
+            summary = _run_auto_trader_cycle(
+                _default_auto_trader_config(),
+                entry_scan=False,
+                initial_account=loaded_account,
+            )
+
+        self.assertEqual(summary["executed_sell_count"], 0)
+        engine.quote_provider.assert_called_once_with("007070", "KOSPI")
+        client.get_balance.assert_not_called()
+        persist_account.assert_not_called()
 
     def test_exit_monitor_cycle_skips_technicals_and_entry_scan(self) -> None:
         account = {
@@ -250,6 +394,44 @@ class ExecutionRotationTests(unittest.TestCase):
         technicals.assert_not_called()
         signal_book.assert_not_called()
         self.assertEqual(engine.get_account.call_count, 1)
+        engine.get_account.assert_called_once_with(refresh_quotes=False)
+
+    def test_full_cycle_without_orders_fetches_account_once(self) -> None:
+        account = {
+            "mode": "paper",
+            "cash_krw": 5_000_000,
+            "equity_krw": 5_000_000,
+            "orders": [],
+            "positions": [],
+        }
+        engine = Mock()
+        engine.get_account.return_value = account
+
+        with (
+            patch("services.execution_service._runtime_engine", return_value=engine),
+            patch(
+                "services.execution_service._normalize_runtime_account",
+                side_effect=lambda value, **_: value,
+            ),
+            patch("services.execution_service._runtime_order_attempts", return_value=[]),
+            patch("services.execution_service.is_market_open", return_value=True),
+            patch(
+                "services.execution_service.build_signal_book",
+                return_value={"signals": [], "risk_guard_state": {}},
+            ),
+            patch("services.execution_service._persist_live_runtime_account"),
+            patch("services.execution_service.append_signal_snapshots"),
+            patch("services.execution_service.append_engine_cycle"),
+            patch("services.execution_service.append_account_snapshot"),
+            patch("services.execution_service._should_send_market_open_brief", return_value=(False, "")),
+            patch("services.execution_service.get_notification_service", return_value=Mock()),
+        ):
+            summary = _run_auto_trader_cycle(_default_auto_trader_config())
+
+        self.assertEqual(summary["cycle_type"], "full")
+        self.assertEqual(summary["executed_buy_count"], 0)
+        self.assertEqual(summary["executed_sell_count"], 0)
+        engine.get_account.assert_called_once_with(refresh_quotes=True)
 
     def test_exit_monitor_restores_live_risk_plan_before_sell_check(self) -> None:
         raw_account = {
@@ -304,6 +486,10 @@ class ExecutionRotationTests(unittest.TestCase):
             )
 
         self.assertEqual(engine.get_account.call_count, 2)
+        self.assertEqual(
+            engine.get_account.call_args_list,
+            [call(refresh_quotes=False), call(refresh_quotes=True)],
+        )
         self.assertEqual(summary["executed_sell_count"], 1)
         self.assertEqual(summary["executed_sells"][0]["reason"], "비상손절")
         engine.place_order.assert_called_once_with(
@@ -313,6 +499,175 @@ class ExecutionRotationTests(unittest.TestCase):
             quantity=33,
             order_type="market",
         )
+
+    def test_exit_monitor_reconciles_multiple_sell_attempts_with_one_final_fetch(self) -> None:
+        account = {
+            "mode": "paper",
+            "cash_krw": 3_000_000,
+            "equity_krw": 4_000_000,
+            "orders": [],
+            "positions": [
+                {
+                    "market": "KOSPI",
+                    "code": "000001",
+                    "quantity": 3,
+                    "entry_plan_price": 10_000,
+                    "stop_loss_price": 9_500,
+                    "take_profit_price": 11_000,
+                    "avg_price_local": 10_000,
+                    "last_price_local": 9_400,
+                    "unrealized_pnl_pct": -6.0,
+                },
+                {
+                    "market": "KOSPI",
+                    "code": "000002",
+                    "quantity": 4,
+                    "entry_plan_price": 20_000,
+                    "stop_loss_price": 19_000,
+                    "take_profit_price": 22_000,
+                    "avg_price_local": 20_000,
+                    "last_price_local": 18_800,
+                    "unrealized_pnl_pct": -6.0,
+                },
+            ],
+        }
+        engine = Mock()
+        engine.get_account.return_value = account
+        engine.place_order.side_effect = [
+            {"ok": True, "event": {"quantity": 3}, "account": {"orders": []}},
+            {"ok": True, "event": {"quantity": 4}, "account": {"orders": []}},
+        ]
+
+        with (
+            patch("services.execution_service._runtime_engine", return_value=engine),
+            patch(
+                "services.execution_service._normalize_runtime_account",
+                side_effect=lambda value, **_: value,
+            ),
+            patch("services.execution_service._runtime_order_attempts", return_value=[]),
+            patch("services.execution_service.is_market_open", return_value=True),
+            patch("services.execution_service._persist_live_runtime_account"),
+            patch("services.execution_service._record_execution_order"),
+            patch("services.execution_service.append_signal_snapshots"),
+            patch("services.execution_service.append_engine_cycle"),
+            patch("services.execution_service.append_account_snapshot"),
+            patch("services.execution_service._should_send_market_open_brief", return_value=(False, "")),
+            patch("services.execution_service.get_notification_service", return_value=Mock()),
+        ):
+            summary = _run_auto_trader_cycle(
+                _default_auto_trader_config(),
+                entry_scan=False,
+            )
+
+        self.assertEqual(summary["executed_sell_count"], 2)
+        self.assertEqual(engine.place_order.call_count, 2)
+        self.assertEqual(
+            engine.get_account.call_args_list,
+            [call(refresh_quotes=False), call(refresh_quotes=True)],
+        )
+
+    def test_live_exit_monitor_reconciles_once_after_successful_sell(self) -> None:
+        account = {
+            "mode": "real",
+            "cash_krw": 3_000_000,
+            "equity_krw": 3_282_000,
+            "orders": [],
+            "positions": [{
+                "market": "KOSPI",
+                "code": "000001",
+                "quantity": 3,
+                "orderable_quantity": 3,
+                "entry_plan_price": 100_000,
+                "stop_loss_price": 95_000,
+                "take_profit_price": 112_000,
+                "avg_price_local": 100_000,
+                "last_price_local": 94_000,
+                "market_value_krw": 282_000,
+                "unrealized_pnl_krw": -18_000,
+                "unrealized_pnl_pct": -6.0,
+            }],
+        }
+        reconciled_account = {**account, "positions": []}
+        engine = Mock()
+        engine.place_order.return_value = {
+            "ok": True,
+            "event": {"quantity": 3},
+            "account": {"orders": []},
+        }
+        engine.get_account.return_value = reconciled_account
+
+        with (
+            patch("services.execution_service._runtime_engine", return_value=engine),
+            patch(
+                "services.execution_service._normalize_runtime_account",
+                side_effect=lambda value, **_: value,
+            ),
+            patch("services.execution_service._runtime_order_attempts", return_value=[]),
+            patch("services.execution_service.is_market_open", return_value=True),
+            patch("services.execution_service._persist_live_runtime_account"),
+            patch("services.execution_service._record_execution_order"),
+            patch("services.execution_service.append_signal_snapshots"),
+            patch("services.execution_service.append_engine_cycle"),
+            patch("services.execution_service.append_account_snapshot"),
+            patch("services.execution_service._should_send_market_open_brief", return_value=(False, "")),
+            patch("services.execution_service.get_notification_service", return_value=Mock()),
+        ):
+            summary = _run_auto_trader_cycle(
+                _default_auto_trader_config(),
+                entry_scan=False,
+                initial_account=account,
+            )
+
+        self.assertEqual(summary["executed_sell_count"], 1)
+        engine.get_account.assert_called_once_with(refresh_quotes=True)
+
+    def test_live_exit_monitor_does_not_reconcile_when_sell_is_rejected(self) -> None:
+        account = {
+            "mode": "real",
+            "cash_krw": 3_000_000,
+            "equity_krw": 3_282_000,
+            "orders": [],
+            "positions": [{
+                "market": "KOSPI",
+                "code": "000001",
+                "quantity": 3,
+                "orderable_quantity": 3,
+                "entry_plan_price": 100_000,
+                "stop_loss_price": 95_000,
+                "take_profit_price": 112_000,
+                "avg_price_local": 100_000,
+                "last_price_local": 94_000,
+                "market_value_krw": 282_000,
+                "unrealized_pnl_krw": -18_000,
+                "unrealized_pnl_pct": -6.0,
+            }],
+        }
+        engine = Mock()
+        engine.place_order.return_value = {
+            "ok": False,
+            "error": "domestic_sellable_quantity_zero",
+        }
+
+        with (
+            patch("services.execution_service._runtime_engine", return_value=engine),
+            patch("services.execution_service._runtime_order_attempts", return_value=[]),
+            patch("services.execution_service.is_market_open", return_value=True),
+            patch("services.execution_service._persist_live_runtime_account"),
+            patch("services.execution_service._record_execution_order"),
+            patch("services.execution_service.append_signal_snapshots"),
+            patch("services.execution_service.append_engine_cycle"),
+            patch("services.execution_service.append_account_snapshot"),
+            patch("services.execution_service._should_send_market_open_brief", return_value=(False, "")),
+            patch("services.execution_service.get_notification_service", return_value=Mock()),
+        ):
+            summary = _run_auto_trader_cycle(
+                _default_auto_trader_config(),
+                entry_scan=False,
+                initial_account=account,
+            )
+
+        self.assertEqual(summary["executed_sell_count"], 0)
+        engine.get_account.assert_not_called()
 
     def test_live_account_restores_plan_from_matching_legacy_order_event(self) -> None:
         account = {

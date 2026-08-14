@@ -13,8 +13,11 @@ import datetime as dt
 import fcntl
 import json
 import math
+import os
+import socket
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -23,6 +26,8 @@ import requests
 from requests import HTTPError
 
 from config.settings import (
+    AUDIT_DIR,
+    CACHE_DIR,
     KIS_ACCOUNT_ACNT_PRDT_CD,
     KIS_ACCOUNT_CANO,
     KIS_APP_KEY,
@@ -30,7 +35,6 @@ from config.settings import (
     KIS_BASE_URL,
     KIS_GENERAL_REQUESTS_PER_SECOND,
     KIS_TRADING_REQUEST_INTERVAL_SECONDS,
-    CACHE_DIR,
 )
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -40,6 +44,7 @@ from config.settings import (
 # KIS 제한은 앱키 단위다. 모든 클라이언트와 프로세스가 같은 파일 잠금을 사용하고,
 # 원장/주문(`/trading/`) 호출은 일반 조회보다 더 보수적으로 응답 완료 뒤 간격을 둔다.
 _KIS_REQUEST_BUDGET_PATH = CACHE_DIR / "kis_request_budget.lock"
+_KIS_REQUEST_AUDIT_PATH = AUDIT_DIR / "kis_requests.jsonl"
 
 # 국내주식 매도 시 증권거래세 (2025년 기준, 코스피/코스닥 공통)
 # execution_engine.py의 sell_fee_rate와 별도로 적용해야 함
@@ -55,6 +60,10 @@ class KISConfigError(RuntimeError):
 
 class KISAPIError(RuntimeError):
     """한국투자증권 API 호출 실패."""
+
+
+class KISRequestAuditError(KISAPIError):
+    """KIS 요청 감사 기록 실패로 브로커 처리 결과 확인이 필요할 때 발생한다."""
 
 
 @dataclass(frozen=True)
@@ -85,6 +94,7 @@ class KISClient:
 
     _TOKEN_CACHE_PATH = CACHE_DIR / "secrets" / "kis_token_cache.json"
     _REQUEST_BUDGET_PATH = _KIS_REQUEST_BUDGET_PATH
+    _REQUEST_AUDIT_PATH = _KIS_REQUEST_AUDIT_PATH
     _PROCESS_REQUEST_LOCK = threading.Lock()
 
     def __init__(
@@ -129,6 +139,88 @@ class KISClient:
             raise KISConfigError("KIS_TRADING_REQUEST_INTERVAL_SECONDS는 0보다 커야 합니다.")
         return 1.0 / general_rps, trading_interval if "/trading/" in path else 0.0
 
+    @staticmethod
+    def _audit_timestamp(timestamp: float) -> str:
+        return dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc).isoformat()
+
+    @staticmethod
+    def _request_tr_id(headers: dict[str, str] | None) -> str:
+        for key, value in (headers or {}).items():
+            if str(key).lower() == "tr_id":
+                return str(value or "").strip()
+        return ""
+
+    @classmethod
+    def _append_request_audit(cls, payload: dict[str, Any]) -> None:
+        """요청 메타데이터만 append-only JSONL로 기록한다.
+
+        헤더, 쿼리, 본문, URL은 계좌·토큰·앱키를 포함할 수 있으므로 저장하지 않는다.
+        """
+        audit_path = cls._REQUEST_AUDIT_PATH
+        handle = None
+        locked = False
+        try:
+            audit_path.parent.mkdir(parents=True, exist_ok=True)
+            handle = audit_path.open("a", encoding="utf-8")
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            locked = True
+            handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+            handle.write("\n")
+            handle.flush()
+        except (OSError, TypeError, ValueError, OverflowError) as exc:
+            raise KISRequestAuditError(
+                f"KIS 요청 감사 로그 저장 실패; 브로커 처리 결과 확인 필요: {exc}"
+            ) from exc
+        finally:
+            if handle is not None:
+                if locked:
+                    try:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    except OSError as exc:
+                        raise KISRequestAuditError(
+                            f"KIS 요청 감사 로그 잠금 해제 실패; 브로커 처리 결과 확인 필요: {exc}"
+                        ) from exc
+                try:
+                    handle.close()
+                except OSError as exc:
+                    raise KISRequestAuditError(
+                        f"KIS 요청 감사 로그 닫기 실패; 브로커 처리 결과 확인 필요: {exc}"
+                    ) from exc
+
+    @staticmethod
+    def _response_audit_fields(response: requests.Response) -> dict[str, Any]:
+        raw_status_code = getattr(response, "status_code", None)
+        status_code = raw_status_code if isinstance(raw_status_code, int) else None
+        try:
+            payload = response.json()
+        except (TypeError, ValueError):
+            payload = None
+
+        if not isinstance(payload, dict):
+            return {
+                "http_status_code": status_code,
+                "kis_rt_cd": "",
+                "kis_msg_cd": "",
+                "kis_msg1": "",
+                "success": False,
+            }
+
+        rt_cd = str(payload.get("rt_cd") or "").strip()
+        msg_cd = str(payload.get("msg_cd") or payload.get("error_code") or "").strip()
+        msg1 = str(payload.get("msg1") or "").strip()
+        has_kis_error = bool(payload.get("error_code")) or bool(rt_cd and rt_cd != "0")
+        return {
+            "http_status_code": status_code,
+            "kis_rt_cd": rt_cd,
+            "kis_msg_cd": msg_cd,
+            "kis_msg1": msg1,
+            "success": bool(
+                status_code is not None
+                and 200 <= status_code < 300
+                and not has_kis_error
+            ),
+        }
+
     @classmethod
     def _send_serialized_request(
         cls,
@@ -144,79 +236,133 @@ class KISClient:
         """앱키 단위 요청 예산을 프로세스 간 공유하며 실제 HTTP 구간까지 직렬화한다."""
         general_interval, trading_interval = cls._request_budget_intervals(path)
         budget_path = cls._REQUEST_BUDGET_PATH
+        started_at = time.time()
+        started_monotonic = time.monotonic()
+        lock_wait_started = time.monotonic()
+        response: requests.Response | None = None
+        request_failed = False
+        audit_record: dict[str, Any] = {
+            "request_id": uuid.uuid4().hex,
+            "started_at": cls._audit_timestamp(started_at),
+            "completed_at": "",
+            "http_started_at": "",
+            "http_completed_at": "",
+            "duration_seconds": 0.0,
+            "lock_wait_seconds": 0.0,
+            "throttle_wait_seconds": 0.0,
+            "method": method.upper(),
+            "path": path.partition("?")[0],
+            "tr_id": cls._request_tr_id(headers),
+            "request_class": "trading" if trading_interval > 0 else "general",
+            "pid": os.getpid(),
+            "hostname": socket.gethostname(),
+            "thread_name": threading.current_thread().name,
+            "http_status_code": None,
+            "kis_rt_cd": "",
+            "kis_msg_cd": "",
+            "kis_msg1": "",
+            "success": False,
+            "exception_type": "",
+        }
 
-        with cls._PROCESS_REQUEST_LOCK:
-            handle = None
-            locked = False
-            try:
+        try:
+            with cls._PROCESS_REQUEST_LOCK:
+                handle = None
+                locked = False
                 try:
-                    budget_path.parent.mkdir(parents=True, exist_ok=True)
-                    handle = budget_path.open("a+", encoding="utf-8")
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-                    locked = True
-                    handle.seek(0)
-                    raw_state = handle.read().strip()
-                    state = json.loads(raw_state) if raw_state else {}
-                    if not isinstance(state, dict):
-                        raise ValueError("request budget state must be an object")
-
-                    now = time.time()
-                    last_request_at = float(state.get("last_request_at") or 0.0)
-                    if not math.isfinite(last_request_at) or last_request_at < 0:
-                        raise ValueError("last_request_at must be a finite non-negative number")
-                    if last_request_at > now:
-                        raise ValueError("last_request_at cannot be in the future")
-                    wait_seconds = max(0.0, general_interval - (now - last_request_at))
-                    if trading_interval > 0:
-                        last_trading_request_at = float(state.get("last_trading_request_at") or 0.0)
-                        if not math.isfinite(last_trading_request_at) or last_trading_request_at < 0:
-                            raise ValueError("last_trading_request_at must be a finite non-negative number")
-                        if last_trading_request_at > now:
-                            raise ValueError("last_trading_request_at cannot be in the future")
-                        wait_seconds = max(
-                            wait_seconds,
-                            trading_interval - (now - last_trading_request_at),
+                    try:
+                        budget_path.parent.mkdir(parents=True, exist_ok=True)
+                        handle = budget_path.open("a+", encoding="utf-8")
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                        locked = True
+                        audit_record["lock_wait_seconds"] = max(
+                            0.0,
+                            time.monotonic() - lock_wait_started,
                         )
-                    if wait_seconds > 0:
-                        time.sleep(wait_seconds)
-
-                except (OSError, TypeError, ValueError, OverflowError) as exc:
-                    raise KISAPIError(f"KIS 호출 예산 잠금 실패: {exc}") from exc
-
-                try:
-                    return requests.request(
-                        method=method,
-                        url=url,
-                        headers=headers,
-                        params=params,
-                        json=json_body,
-                        timeout=timeout,
-                    )
-                finally:
-                    try:
-                        completed_at = time.time()
-                        state["last_request_at"] = completed_at
-                        if trading_interval > 0:
-                            state["last_trading_request_at"] = completed_at
                         handle.seek(0)
-                        handle.truncate()
-                        json.dump(state, handle, ensure_ascii=False, separators=(",", ":"))
-                        handle.flush()
+                        raw_state = handle.read().strip()
+                        state = json.loads(raw_state) if raw_state else {}
+                        if not isinstance(state, dict):
+                            raise ValueError("request budget state must be an object")
+
+                        now = time.time()
+                        last_request_at = float(state.get("last_request_at") or 0.0)
+                        if not math.isfinite(last_request_at) or last_request_at < 0:
+                            raise ValueError("last_request_at must be a finite non-negative number")
+                        if last_request_at > now:
+                            raise ValueError("last_request_at cannot be in the future")
+                        wait_seconds = max(0.0, general_interval - (now - last_request_at))
+                        if trading_interval > 0:
+                            last_trading_request_at = float(state.get("last_trading_request_at") or 0.0)
+                            if not math.isfinite(last_trading_request_at) or last_trading_request_at < 0:
+                                raise ValueError("last_trading_request_at must be a finite non-negative number")
+                            if last_trading_request_at > now:
+                                raise ValueError("last_trading_request_at cannot be in the future")
+                            wait_seconds = max(
+                                wait_seconds,
+                                trading_interval - (now - last_trading_request_at),
+                            )
+                        audit_record["throttle_wait_seconds"] = wait_seconds
+                        if wait_seconds > 0:
+                            time.sleep(wait_seconds)
+
                     except (OSError, TypeError, ValueError, OverflowError) as exc:
-                        raise KISAPIError(
-                            f"KIS 요청 완료 후 호출 예산 상태 저장 실패; 브로커 처리 결과 확인 필요: {exc}"
-                        ) from exc
-            finally:
-                if handle is not None:
-                    if locked:
-                        try:
-                            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-                        except OSError as exc:
-                            raise KISAPIError(f"KIS 호출 예산 잠금 해제 실패: {exc}") from exc
+                        raise KISAPIError(f"KIS 호출 예산 잠금 실패: {exc}") from exc
+
                     try:
-                        handle.close()
-                    except OSError as exc:
-                        raise KISAPIError(f"KIS 호출 예산 잠금 파일 닫기 실패: {exc}") from exc
+                        http_started_at = time.time()
+                        audit_record["http_started_at"] = cls._audit_timestamp(http_started_at)
+                        response = requests.request(
+                            method=method,
+                            url=url,
+                            headers=headers,
+                            params=params,
+                            json=json_body,
+                            timeout=timeout,
+                        )
+                        return response
+                    finally:
+                        http_completed_at = time.time()
+                        audit_record["http_completed_at"] = cls._audit_timestamp(http_completed_at)
+                        try:
+                            state["last_request_at"] = http_completed_at
+                            if trading_interval > 0:
+                                state["last_trading_request_at"] = http_completed_at
+                            handle.seek(0)
+                            handle.truncate()
+                            json.dump(state, handle, ensure_ascii=False, separators=(",", ":"))
+                            handle.flush()
+                        except (OSError, TypeError, ValueError, OverflowError) as exc:
+                            raise KISAPIError(
+                                f"KIS 요청 완료 후 호출 예산 상태 저장 실패; 브로커 처리 결과 확인 필요: {exc}"
+                            ) from exc
+                finally:
+                    if handle is not None:
+                        if locked:
+                            try:
+                                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                            except OSError as exc:
+                                raise KISAPIError(f"KIS 호출 예산 잠금 해제 실패: {exc}") from exc
+                        try:
+                            handle.close()
+                        except OSError as exc:
+                            raise KISAPIError(f"KIS 호출 예산 잠금 파일 닫기 실패: {exc}") from exc
+        except Exception as exc:
+            request_failed = True
+            audit_record["exception_type"] = type(exc).__name__
+            raise
+        finally:
+            completed_at = time.time()
+            audit_record["completed_at"] = cls._audit_timestamp(completed_at)
+            audit_record["duration_seconds"] = max(
+                0.0,
+                time.monotonic() - started_monotonic,
+            )
+            if response is not None:
+                audit_record.update(cls._response_audit_fields(response))
+            if request_failed:
+                audit_record["success"] = False
+            cls._append_request_audit(audit_record)
 
     # ── HTTP 요청 ────────────────────────────────────────────────────────────
 
@@ -946,6 +1092,27 @@ class KISClient:
                 or output.get("psbl_cash")
                 or output.get("max_buy_amt")
             ),
+            "raw": output,
+        }
+
+    def get_sellable_quantity(self, code: str) -> dict[str, Any]:
+        """Return the broker-confirmed quantity currently available to sell."""
+        cano, product_code = self._account_parts()
+        payload = self._request(
+            "GET",
+            "/uapi/domestic-stock/v1/trading/inquire-psbl-sell",
+            headers=self._auth_headers("TTTC8408R"),
+            params={
+                "CANO": cano,
+                "ACNT_PRDT_CD": product_code,
+                "PDNO": code,
+            },
+        )
+        output = payload.get("output") or {}
+        return {
+            "code": code,
+            "sellable_quantity": _to_int(output.get("ord_psbl_qty")),
+            "balance_quantity": _to_int(output.get("cblc_qty")),
             "raw": output,
         }
 

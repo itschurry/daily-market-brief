@@ -1130,24 +1130,13 @@ def _available_sell_quantity(account: dict[str, Any], *, market: str, code: str)
     return 0
 
 
-def _fresh_available_sell_quantity(
-    engine: SimulatedExecutionEngine | LiveBrokerExecutionEngine,
-    *,
-    market: str,
-    code: str,
-) -> int:
-    try:
-        account = _fresh_runtime_account(engine)
-    except Exception:
-        return 0
-    return _available_sell_quantity(account, market=market, code=code)
-
-
 def _fresh_runtime_account(
     engine: SimulatedExecutionEngine | LiveBrokerExecutionEngine,
+    *,
+    refresh_quotes: bool = False,
 ) -> dict[str, Any]:
     return _normalize_runtime_account(
-        engine.get_account(refresh_quotes=False),
+        engine.get_account(refresh_quotes=refresh_quotes),
         persist_live_reconciled_fills=True,
         notify_live_fills=True,
     )
@@ -2701,19 +2690,31 @@ def _auto_invest_picks(
     }
 
 
+def _new_auto_trader_cycle_id() -> str:
+    return f"cycle-{datetime.datetime.now(_KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+
 def _run_auto_trader_cycle(
     cfg: dict,
     *,
     entry_scan: bool = True,
     initial_account: dict[str, Any] | None = None,
+    cycle_id: str | None = None,
+    started_at: str | None = None,
 ) -> dict:
     global _last_daily_loss_notified_day, _last_market_open_brief_sent
     engine = _runtime_engine()
     notifier = get_notification_service()
-    cycle_id = f"cycle-{datetime.datetime.now(_KST).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    started_at = _now_iso()
-    account = initial_account if initial_account is not None else _fresh_runtime_account(engine)
+    cycle_id = str(cycle_id or _new_auto_trader_cycle_id())
+    started_at = str(started_at or _now_iso())
+    account = (
+        initial_account
+        if initial_account is not None
+        else _fresh_runtime_account(engine, refresh_quotes=entry_scan)
+    )
     account_mode = str(account.get("mode") or "paper").strip().lower()
+    account_reconciliation_required = False
+    reserved_sell_quantities: dict[str, int] = {}
 
     orders = _runtime_order_attempts(account, account_mode, limit=500)
     today = _today_kst_str()
@@ -2802,7 +2803,6 @@ def _run_auto_trader_cycle(
     blocked_counts_by_market: dict[str, int] = {
         market: 0 for market in markets}
     risk_guard_state: dict[str, Any] = {}
-    any_market_open = False
     research_refresh = {
         "ok": True,
         "stage": "skipped",
@@ -2828,13 +2828,6 @@ def _run_auto_trader_cycle(
             })
             continue
 
-        any_market_open = True
-        if entry_scan:
-            account = _normalize_runtime_account(
-                engine.get_account(refresh_quotes=True),
-                persist_live_reconciled_fills=True,
-                notify_live_fills=True,
-            )
         market_positions = [
             position for position in account.get("positions", [])
             if str(position.get("market") or "").upper() == market
@@ -2883,8 +2876,12 @@ def _run_auto_trader_cycle(
                 if not reason:
                     continue
             requested_sell_qty = int(position.get("quantity") or 0)
-            account = _fresh_runtime_account(engine)
-            available_sell_qty = _available_sell_quantity(account, market=market, code=code)
+            sell_key = f"{market}:{code}"
+            available_sell_qty = max(
+                0,
+                _available_sell_quantity(account, market=market, code=code)
+                - int(reserved_sell_quantities.get(sell_key, 0)),
+            )
             if available_sell_qty <= 0:
                 skipped.append({"code": code, "name": pos_name, "market": market,
                                "reason": "sell_position_not_available"})
@@ -2898,6 +2895,9 @@ def _run_auto_trader_cycle(
                 brief_candidates["sell"].append(
                     _compact_sell_candidate(position, market=market, reason=reason)
                 )
+            reserved_sell_quantities[sell_key] = (
+                int(reserved_sell_quantities.get(sell_key, 0)) + sell_quantity
+            )
             result = engine.place_order(
                 side="sell",
                 code=code,
@@ -2906,6 +2906,7 @@ def _run_auto_trader_cycle(
                 order_type="market",
             )
             if result.get("ok"):
+                account_reconciliation_required = True
                 if isinstance(trailing_profit_peaks, dict):
                     trailing_profit_peaks.pop(peak_key, None)
                 sell_count += 1
@@ -2972,11 +2973,6 @@ def _run_auto_trader_cycle(
         if not entry_scan:
             continue
 
-        account = _normalize_runtime_account(
-            engine.get_account(refresh_quotes=True),
-            persist_live_reconciled_fills=True,
-            notify_live_fills=True,
-        )
         held_codes = {
             str(position.get("code") or "").upper()
             for position in account.get("positions", [])
@@ -3157,7 +3153,12 @@ def _run_auto_trader_cycle(
                 sell_code = str(sell_item.get("code") or "").upper()
                 buy_code = str(buy_candidate.get("code") or "").upper()
                 requested_sell_qty = int(sell_item.get("quantity") or 0)
-                available_sell_qty = _fresh_available_sell_quantity(engine, market=market, code=sell_code)
+                sell_key = f"{market}:{sell_code}"
+                available_sell_qty = max(
+                    0,
+                    _available_sell_quantity(account, market=market, code=sell_code)
+                    - int(reserved_sell_quantities.get(sell_key, 0)),
+                )
                 if available_sell_qty <= 0:
                     rotation_summary["blocked"].append({
                         "market": market,
@@ -3179,6 +3180,9 @@ def _run_auto_trader_cycle(
                     })
                     skipped.append({"code": sell_code, "market": market, "reason": "rotation_sell_quantity_not_available"})
                     continue
+                reserved_sell_quantities[sell_key] = (
+                    int(reserved_sell_quantities.get(sell_key, 0)) + sell_quantity
+                )
                 sell_result = engine.place_order(
                     side="sell",
                     code=sell_code,
@@ -3187,6 +3191,7 @@ def _run_auto_trader_cycle(
                     order_type="market",
                 )
                 if sell_result.get("ok"):
+                    account_reconciliation_required = True
                     sell_event = sell_result.get("event") or {}
                     executed_sells.append({
                         "code": sell_code,
@@ -3251,6 +3256,7 @@ def _run_auto_trader_cycle(
                             "score_gap": rotation_plan.get("score_gap"),
                         })
                         continue
+                    account_reconciliation_required = True
                     buy_result = engine.place_order(
                         side="buy",
                         code=buy_code,
@@ -3490,6 +3496,7 @@ def _run_auto_trader_cycle(
             take_profit_price = _to_float(risk_plan.get("take_profit_price"), 0.0)
             entry_plan_price = _to_float(risk_plan.get("entry_plan_price"), 0.0)
 
+            account_reconciliation_required = True
             result = engine.place_order(
                 side="buy",
                 code=code,
@@ -3612,14 +3619,11 @@ def _run_auto_trader_cycle(
         }
 
     final_account = (
-        _normalize_runtime_account(
-            engine.get_account(refresh_quotes=True),
-            persist_live_reconciled_fills=True,
-            notify_live_fills=True,
-        )
-        if any_market_open and entry_scan else account
+        _fresh_runtime_account(engine, refresh_quotes=True)
+        if account_reconciliation_required else account
     )
-    _persist_live_runtime_account(final_account)
+    if entry_scan or account_reconciliation_required:
+        _persist_live_runtime_account(final_account)
     unrealized_pnl = sum(
         _to_float(position.get("unrealized_pnl_krw"), 0.0)
         for position in final_account.get("positions", [])
@@ -3717,7 +3721,23 @@ def _load_exit_monitor_account(cfg: dict[str, Any]) -> dict[str, Any] | None:
         for market in markets
     ):
         return None
-    account = _fresh_runtime_account(_runtime_engine())
+    engine = _runtime_engine()
+    if _current_execution_mode() == "live":
+        cached_account = _read_cached_live_runtime_account()
+        if not cached_account:
+            raise RuntimeAccountUnavailableError("exit_monitor_live_account_cache_missing")
+        account = _normalize_runtime_account(
+            cached_account,
+            persist_live_reconciled_fills=False,
+            notify_live_fills=False,
+        )
+        account = _refresh_live_exit_monitor_quotes(
+            account,
+            engine=engine,
+            markets=markets,
+        )
+    else:
+        account = _fresh_runtime_account(engine)
     if any(
         str(position.get("market") or "").upper() in markets
         and _position_has_managed_exit_plan(position)
@@ -3726,6 +3746,114 @@ def _load_exit_monitor_account(cfg: dict[str, Any]) -> dict[str, Any] | None:
     ):
         return account
     return None
+
+
+def _refresh_live_exit_monitor_quotes(
+    account: dict[str, Any],
+    *,
+    engine: SimulatedExecutionEngine | LiveBrokerExecutionEngine,
+    markets: set[str],
+) -> dict[str, Any]:
+    if str(account.get("mode") or "").strip().lower() != "real":
+        raise RuntimeAccountUnavailableError("exit_monitor_live_account_cache_invalid_mode")
+    if not isinstance(engine, LiveBrokerExecutionEngine):
+        raise RuntimeAccountUnavailableError("exit_monitor_live_engine_required")
+
+    positions = [
+        dict(position)
+        for position in (account.get("positions") if isinstance(account.get("positions"), list) else [])
+        if isinstance(position, dict)
+    ]
+    market_value_delta = 0.0
+    unrealized_pnl_delta = 0.0
+    refreshed_count = 0
+    latest_quote_at = ""
+
+    for position in positions:
+        market = str(position.get("market") or "").strip().upper()
+        quantity = max(0, int(_to_float(position.get("quantity"), 0.0) or 0))
+        if market not in markets or quantity <= 0 or not _position_has_managed_exit_plan(position):
+            continue
+
+        code = str(position.get("code") or "").strip().upper()
+        if not code:
+            raise RuntimeAccountUnavailableError("exit_monitor_quote_code_missing")
+        try:
+            quote = engine.quote_provider(code, market)
+        except Exception as exc:
+            raise RuntimeAccountUnavailableError(
+                f"exit_monitor_quote_unavailable: {market}:{code}: {exc}"
+            ) from exc
+        if not isinstance(quote, dict):
+            raise RuntimeAccountUnavailableError(
+                f"exit_monitor_quote_invalid_payload: {market}:{code}"
+            )
+        quote_code = str(quote.get("code") or "").strip().upper()
+        price = _positive_float(quote.get("price"))
+        fetched_at = str(quote.get("fetched_at") or "").strip()
+        if quote_code != code or price is None or not fetched_at:
+            raise RuntimeAccountUnavailableError(
+                f"exit_monitor_quote_incomplete: {market}:{code}"
+            )
+        if quote.get("is_stale") is not False:
+            raise RuntimeAccountUnavailableError(
+                f"exit_monitor_quote_stale_or_unverified: {market}:{code}"
+            )
+
+        avg_price = _positive_float(position.get("avg_price_local"))
+        if avg_price is None:
+            raise RuntimeAccountUnavailableError(
+                f"exit_monitor_avg_price_missing: {market}:{code}"
+            )
+        previous_market_value = _positive_float(position.get("market_value_krw"))
+        if previous_market_value is None or position.get("unrealized_pnl_krw") in (None, ""):
+            raise RuntimeAccountUnavailableError(
+                f"exit_monitor_cached_valuation_missing: {market}:{code}"
+            )
+        previous_unrealized_pnl = _to_float(position.get("unrealized_pnl_krw"), 0.0)
+        market_value = price * quantity
+        unrealized_pnl = (price - avg_price) * quantity
+        unrealized_pnl_pct = ((price - avg_price) / avg_price) * 100.0
+
+        position.update({
+            "last_price_local": price,
+            "last_price_krw": price,
+            "market_value_krw": market_value,
+            "unrealized_pnl_local": unrealized_pnl,
+            "unrealized_pnl_krw": unrealized_pnl,
+            "unrealized_pnl_pct": unrealized_pnl_pct,
+            "quote_source": str(quote.get("source") or "").strip(),
+            "quote_fetched_at": fetched_at,
+            "quote_is_stale": False,
+            "updated_at": fetched_at,
+        })
+        market_value_delta += market_value - previous_market_value
+        unrealized_pnl_delta += unrealized_pnl - previous_unrealized_pnl
+        refreshed_count += 1
+        latest_quote_at = max(latest_quote_at, fetched_at)
+
+    if refreshed_count == 0:
+        return {**account, "positions": positions}
+
+    refreshed_account = dict(account)
+    market_value_krw = _to_float(account.get("market_value_krw"), 0.0) + market_value_delta
+    unrealized_pnl_krw = _to_float(account.get("unrealized_pnl_krw"), 0.0) + unrealized_pnl_delta
+    equity_krw = _to_float(account.get("equity_krw"), 0.0) + market_value_delta
+    summary = dict(account.get("summary") or {}) if isinstance(account.get("summary"), dict) else {}
+    summary.update({
+        "eval_amount_krw": market_value_krw,
+        "eval_profit_loss_krw": unrealized_pnl_krw,
+        "total_amount_krw": equity_krw,
+    })
+    refreshed_account.update({
+        "positions": positions,
+        "market_value_krw": market_value_krw,
+        "unrealized_pnl_krw": unrealized_pnl_krw,
+        "equity_krw": equity_krw,
+        "summary": summary,
+        "updated_at": latest_quote_at or _now_iso(),
+    })
+    return refreshed_account
 
 
 def _should_run_exit_monitor(cfg: dict[str, Any]) -> bool:
@@ -3750,8 +3878,14 @@ def _auto_trader_loop(stop_event: threading.Event) -> None:
         if not acquired_cycle:
             stop_event.wait(1.0)
             continue
+        cycle_id = _new_auto_trader_cycle_id()
+        cycle_started_at = _now_iso()
         try:
-            summary = _run_auto_trader_cycle(cfg)
+            summary = _run_auto_trader_cycle(
+                cfg,
+                cycle_id=cycle_id,
+                started_at=cycle_started_at,
+            )
             with _auto_trader_lock:
                 _auto_trader_state["last_run_at"] = _now_iso()
                 _auto_trader_state["last_success_at"] = _auto_trader_state["last_run_at"]
@@ -3766,23 +3900,25 @@ def _auto_trader_loop(stop_event: threading.Event) -> None:
         except Exception as exc:
             logger.warning("auto trader cycle 실패: {}", exc)
             notifier = get_notification_service()
+            failed_at = _now_iso()
             with _auto_trader_lock:
-                _auto_trader_state["last_run_at"] = _now_iso()
-                _auto_trader_state["last_error_at"] = _auto_trader_state["last_run_at"]
+                _auto_trader_state["last_run_at"] = failed_at
+                _auto_trader_state["last_error_at"] = failed_at
                 _auto_trader_state["last_error"] = str(exc)
                 _auto_trader_state["engine_state"] = "error"
                 _auto_trader_state["running"] = False
+                _auto_trader_state["latest_cycle_id"] = cycle_id
                 _persist_auto_trader_state_locked()
                 notifier.notify_engine_error(
                     error=str(exc),
-                    cycle_id=str(_auto_trader_state.get(
-                        "latest_cycle_id") or ""),
+                    cycle_id=cycle_id,
                 )
             append_engine_cycle({
                 "ok": False,
-                "cycle_id": str(_auto_trader_state.get("latest_cycle_id") or ""),
-                "started_at": _now_iso(),
-                "finished_at": _now_iso(),
+                "cycle_type": "full",
+                "cycle_id": cycle_id,
+                "started_at": cycle_started_at,
+                "finished_at": failed_at,
                 "error": str(exc),
             })
             stop_event.set()
@@ -3832,6 +3968,8 @@ def _auto_trader_loop(stop_event: threading.Event) -> None:
             acquired_cycle = _auto_trader_cycle_lock.acquire(blocking=False)
             if not acquired_cycle:
                 continue
+            cycle_id = _new_auto_trader_cycle_id()
+            cycle_started_at = _now_iso()
             try:
                 exit_account = _load_exit_monitor_account(cfg)
                 if exit_account is None:
@@ -3840,6 +3978,8 @@ def _auto_trader_loop(stop_event: threading.Event) -> None:
                     cfg,
                     entry_scan=False,
                     initial_account=exit_account,
+                    cycle_id=cycle_id,
+                    started_at=cycle_started_at,
                 )
                 with _auto_trader_lock:
                     _auto_trader_state["last_exit_check_at"] = _now_iso()
@@ -3857,17 +3997,18 @@ def _auto_trader_loop(stop_event: threading.Event) -> None:
                     _auto_trader_state["last_error"] = str(exc)
                     _auto_trader_state["engine_state"] = "error"
                     _auto_trader_state["running"] = False
+                    _auto_trader_state["latest_cycle_id"] = cycle_id
                     _persist_auto_trader_state_locked()
                     notifier.notify_engine_error(
                         error=str(exc),
-                        cycle_id=str(_auto_trader_state.get("latest_cycle_id") or ""),
+                        cycle_id=cycle_id,
                     )
                 append_engine_cycle({
                     "ok": False,
                     "cycle_type": "exit_monitor",
-                    "cycle_id": str(_auto_trader_state.get("latest_cycle_id") or ""),
-                    "started_at": _now_iso(),
-                    "finished_at": _now_iso(),
+                    "cycle_id": cycle_id,
+                    "started_at": cycle_started_at,
+                    "finished_at": failed_at,
                     "error": str(exc),
                 })
                 stop_event.set()

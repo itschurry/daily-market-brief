@@ -125,7 +125,7 @@ TELEGRAM_CHAT_ID=
 - `WEALTHPULSE_RESEARCH_FAIL_STOP_MARKER=/tmp/wealthpulse-research-loop.fail-stopped`: 리서치 시스템 실패를 기록하는 표식 경로야. 컨테이너 healthcheck도 같은 값을 읽어.
 - `WEALTHPULSE_RESEARCH_DRY_RUN=0`: `1`이면 후보만 모으고 OpenAI 호출은 안 해.
 - `DART_API_KEY`: 있으면 OpenDART 공시 evidence를 붙여.
-- `KIS_*`: 현재가 조회, 실계좌 모드, 브로커 상태 확인에 필요해. `KIS_GENERAL_REQUESTS_PER_SECOND=8`은 앱키 단위 일반 호출 상한이고, `KIS_TRADING_REQUEST_INTERVAL_SECONDS=1.2`는 잔고·체결·주문 원장 응답이 끝난 뒤 다음 원장 호출까지 두는 최소 간격이야. API 프로세스들은 `storage/logs/cache/kis_request_budget.lock`을 공유해.
+- `KIS_*`: 현재가 조회, 실계좌 모드, 브로커 상태 확인에 필요해. `KIS_GENERAL_REQUESTS_PER_SECOND=8`은 앱키 단위 일반 호출 상한이고, `KIS_TRADING_REQUEST_INTERVAL_SECONDS=1.2`는 잔고·체결·주문 원장 응답이 끝난 뒤 다음 원장 호출까지 두는 최소 간격이야. API 프로세스들은 `storage/logs/cache/kis_request_budget.lock`을 공유해. 각 호출의 경로·TR ID·대기시간·HTTP/KIS 결과코드는 `storage/logs/audit/kis_requests.jsonl`에 append-only로 남겨. 앱키, 시크릿, 토큰, 계좌번호, 헤더, 쿼리, 본문, 원본 응답은 기록하지 않아.
 - 리서치 소스팩은 후보 모니터의 Naver 실시간 가격/거래대금에 FinanceDataReader 기반 `close_vs_sma20`, `close_vs_sma60`, `volume_ratio`, `rsi14`를 병합해. 이 추세 지표가 있어야 `review_for_entry`로 올라갈 수 있어.
 
 현재 운용 시장:
@@ -209,6 +209,7 @@ storage/
         account_snapshots.jsonl
         runtime_events.jsonl
     cache/
+      kis_request_budget.lock
       trading_pipeline/
         universe/kospi__latest.json
         scan/kospi__latest.json
@@ -222,6 +223,7 @@ storage/
         provider_state.json
       opendart/
     audit/
+      kis_requests.jsonl
     config/
       watchlist.json
       agent_risk_config.json
@@ -481,13 +483,13 @@ _auto_trader_loop()
 KIS가 매수 주문가능수량 `0`을 반복 반환하면 같은 날 신규 매수를 중단한다. 이 실패는 `domestic_orderable_quantity_zero`로 기록되고, 실패 주문도 일일 주문 제한과 종목별 주문 제한 카운트에 포함된다.
 기본 신규 매수는 하루 3회, 종목별 하루 1회로 제한한다. 매도한 종목은 `min_reentry_days=3` 동안 재진입하지 않는다. 이 제한은 신규 매수에만 적용하고 손절·익절 매도는 막지 않는다.
 시작 자산은 `LIVE_PERFORMANCE_STARTING_EQUITY_KRW`를 사용한다. 현재 평가금이 시작 자산 대비 `max_total_drawdown_pct=10` 이상 내려가면 `total_drawdown_limit_reached`로 신규 매수를 차단한다. 손절·익절 매도는 계속 허용한다.
-계좌 조회가 실패하거나 총자산이 누락·0·비정상 값이면 엔진 사이클을 즉시 오류 종료해. 이런 응답을 1원 계좌나 `100%` 낙폭으로 바꿔서 계속 판단하지 않아. `/api/runtime/engine/status`, `/api/engine/status`, `/api/engine/summary`는 KIS를 추가 호출하지 않고 저장된 엔진·계좌 상태를 읽어. 계좌 오류가 있으면 `account_available=false`와 `account_error`를 유지하고, 실거래 엔진이 `error`면 홈 최상단에 신규 주문과 자동 청산 감시가 중단됐다는 경보를 띄워.
+계좌 조회가 실패하거나 총자산이 누락·0·비정상 값이면 엔진 사이클을 즉시 오류 종료해. 이런 응답을 1원 계좌나 `100%` 낙폭으로 바꿔서 계속 판단하지 않아. 전체 무주문 사이클은 시작 잔고를 1번만 읽어. 실거래 60초 청산 감시는 마지막 원장 계좌 캐시에 managed 종목별 일반 현재가만 덮어 판단하므로, 청산 신호가 없으면 잔고 원장 호출이 0회야. 청산 신호가 있으면 공식 매도가능수량 조회로 주문 수량을 제한하고, 주문 접수 성공 뒤에만 잔고를 1번 대조해. 시세만 덮은 계좌는 원장 캐시로 저장하지 않아. 실패 알림과 `engine_cycles`에는 직전 성공 ID가 아니라 실제 실패를 일으킨 cycle ID를 기록해. `/api/runtime/engine/status`, `/api/engine/status`, `/api/engine/summary`는 KIS를 추가 호출하지 않고 저장된 엔진·계좌 상태를 읽어. 계좌 오류가 있으면 `account_available=false`와 `account_error`를 유지하고, 실거래 엔진이 `error`면 홈 최상단에 신규 주문과 자동 청산 감시가 중단됐다는 경보를 띄워.
 실거래 주문은 KIS 접수 성공만으로 체결 완료로 보지 않는다. `filled_at`이 없는 실거래 주문은 `submitted` 상태로 남기고, 실제 보유/현금 판단은 이후 계좌 refresh 결과를 기준으로 본다.
 교체 매도는 교체 매수 수량이 현재 계좌 기준으로 이미 1주 이상 나올 때만 실행하고, 매도해서 생길 현금을 가정하지 않는다. rotation은 하루 1회, 점수 차이 8 이상, 보유 2일 이상일 때만 허용한다. 손절/익절은 이 제한보다 먼저 처리된다.
 
 `paper` 모드는 내부 가상계좌를 쓴다. 가상계좌 상태는 `storage/logs/runtime/accounts/simulated_account_state.json`에 저장돼.
 
-`live` 모드는 KIS를 통해 실계좌 경로를 쓴다. `EXECUTION_MODE=live`를 켜기 전에 `/api/broker/kis/status`, 계좌 상태, 주문 제한을 직접 봐야 해. KOSPI 실계좌 매수는 주문 직전에 KIS 주문가능수량을 조회하고, 시장가 요청이면 현재가 지정가로 바꿔 주문 금액 초과를 줄인다. 요청 수량이 주문가능수량보다 크면 주문가능수량으로 낮춰 한 번만 낸다. KIS 호출은 앱키 단위 파일 잠금으로 직렬화하고 `/trading/` 원장 요청은 응답 완료 시각부터 기본 1.2초 간격을 강제해. `EGW00133`, `EGW00201`, `EGW00215` 제한 응답은 자동 재시도하지 않고 즉시 실패시켜 엔진이 오류 상태로 멈추게 해.
+`live` 모드는 KIS를 통해 실계좌 경로를 쓴다. `EXECUTION_MODE=live`를 켜기 전에 `/api/broker/kis/status`, 계좌 상태, 주문 제한을 직접 봐야 해. KOSPI 실계좌 매수는 주문 직전에 KIS 주문가능수량을 조회하고, 시장가 요청이면 현재가 지정가로 바꿔 주문 금액 초과를 줄인다. 매도는 주문 직전에 `매도가능수량조회`(`TTTC8408R`)를 호출해 요청 수량과 현재 주문가능수량 중 작은 값만 한 번 주문해. KIS 호출은 앱키 단위 파일 잠금으로 직렬화하고 `/trading/` 원장 요청은 응답 완료 시각부터 기본 1.2초 간격을 강제해. `EGW00215`는 주식잔고조회 원장 전체의 초당 처리량 초과라 앱 호출 간격만 늘려서는 막을 수 없어. `EGW00133`, `EGW00201`, `EGW00215` 제한 응답은 자동 재시도하지 않고 즉시 실패시켜 엔진이 오류 상태로 멈추게 해. 요청 감사 기록 자체가 실패해도 브로커 처리 결과가 불명확한 상태로 보고 실거래 엔진을 중단해.
 `paper`에서 `live`로 자동 전환하는 경로는 없다. 실거래는 사용자가 `.env`의 `EXECUTION_MODE=live`와 `LIVE_TRADING_APPROVED=true`를 모두 직접 설정한 뒤 API 컨테이너를 재생성해야 한다. 하나라도 빠지면 `/api/runtime/engine/start`는 `403 live_trading_manual_approval_required`를 반환한다.
 
 첫 실거래일은 승인 전에 OpenAI 최소 호출, 전체 리서치 실행, `fresh_symbol_count`, KIS 실계좌 잔고를 확인한다. 하나라도 실패하면 `LIVE_TRADING_APPROVED=false`를 유지한다. 첫날 운영값은 신규 매수 1건, 최대 2종목, 종목당 20% 이하, 시장 노출 40% 이하, 거래당 위험 0.5%, 일 손실 1%, 누적 낙폭 3%, 추가매수와 rotation 비활성화다. 전체 리서치가 성공한 뒤에만 승인값을 `true`로 바꾸고 저장된 설정을 `/api/runtime/engine/start`에 명시적으로 전달한다.
