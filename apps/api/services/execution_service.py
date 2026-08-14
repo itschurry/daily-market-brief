@@ -72,6 +72,7 @@ from services.strategy_engine import build_signal_book, select_entry_candidates
 from services.strategy_registry import list_strategies
 
 from broker.execution_engine import LiveBrokerExecutionEngine, SimulatedExecutionEngine
+from broker.kis_client import KISLedgerCapacityError
 
 _DEFAULT_THEME_FOCUS = ["automotive", "robotics", "physical_ai"]
 _ALLOWED_THEME_FOCUS = set(_DEFAULT_THEME_FOCUS)
@@ -103,6 +104,7 @@ _ENTRY_MIN_VOLUME_RATIO = 0.8
 _BUY_WATCH_MAX_DAILY_CHANGE_PCT = 10.0
 _ACTIVE_TRADING_INTERVAL_SECONDS = 60
 _DEFAULT_EXIT_MONITOR_INTERVAL_SECONDS = 60
+_MAX_CONSECUTIVE_ACCOUNT_SYNC_DEFERRALS = 3
 _STALE_RUNTIME_STATE_KEYS = {"optimized_params"}
 _STALE_RUNTIME_CONFIG_KEYS = {"validation_require_optimized_reliability"}
 _BUY_CAPACITY_FAILURE_REASONS = {"domestic_orderable_quantity_zero"}
@@ -126,6 +128,12 @@ _auto_trader_state: dict[str, Any] = {
     "last_success_at": "",
     "last_error": "",
     "last_error_at": "",
+    "account_sync_deferred": False,
+    "last_account_sync_error": "",
+    "last_account_sync_error_at": "",
+    "last_account_sync_cycle_id": "",
+    "last_account_sync_cycle_type": "",
+    "consecutive_account_sync_deferrals": 0,
     "last_summary": {},
     "last_exit_check_at": "",
     "last_exit_summary": {},
@@ -141,6 +149,10 @@ _MARKET_BRIEF_LABELS = {"KR": "한국장"}
 
 class RuntimeAccountUnavailableError(RuntimeError):
     """Raised when the runtime account cannot be trusted for trading."""
+
+
+class RuntimeAccountSyncDeferredError(RuntimeError):
+    """Raised only when the cycle-opening live balance request hits EGW00215."""
 
 
 def _mask_chat_id(chat_id: str) -> str:
@@ -1191,7 +1203,9 @@ def _build_status_payload(
         "state": payload_state,
         "account": normalized_account,
         "account_available": True,
+        "account_fresh": True,
         "account_error": "",
+        "account_warning": "",
     }
 
 
@@ -1200,7 +1214,9 @@ def _build_account_error_status_payload(state: dict[str, Any], error: Exception)
     account_error = str(error).strip() or error.__class__.__name__
     payload["account"] = {}
     payload["account_available"] = False
+    payload["account_fresh"] = False
     payload["account_error"] = account_error
+    payload["account_warning"] = ""
     return payload
 
 
@@ -2707,11 +2723,46 @@ def _run_auto_trader_cycle(
     notifier = get_notification_service()
     cycle_id = str(cycle_id or _new_auto_trader_cycle_id())
     started_at = str(started_at or _now_iso())
-    account = (
-        initial_account
-        if initial_account is not None
-        else _fresh_runtime_account(engine, refresh_quotes=entry_scan)
-    )
+    markets = [
+        normalize_strategy_market(market)
+        for market in cfg.get("markets", ["KOSPI"])
+        if _is_active_auto_trade_market(normalize_strategy_market(market))
+    ]
+    if not markets:
+        return {
+            "ok": False,
+            "cycle_id": cycle_id,
+            "started_at": started_at,
+            "finished_at": _now_iso(),
+            "error": "active_market_required",
+            "markets": cfg.get("markets", []),
+            "active_markets": sorted(_ACTIVE_AUTO_TRADE_MARKETS),
+        }
+    market_open_by_market = {
+        market: is_market_open(
+            _MARKET_TO_CALENDAR.get(market, market),
+            include_after_hours=True,
+        )
+        for market in markets
+    }
+    account_sync_performed = False
+    if initial_account is not None:
+        account = initial_account
+    elif _current_execution_mode() == "live" and not any(market_open_by_market.values()):
+        cached_account = _read_cached_live_runtime_account()
+        if not cached_account:
+            raise RuntimeAccountUnavailableError("closed_market_live_account_cache_missing")
+        account = _normalize_runtime_account(
+            cached_account,
+            persist_live_reconciled_fills=False,
+            notify_live_fills=False,
+        )
+    else:
+        try:
+            account = _fresh_runtime_account(engine, refresh_quotes=entry_scan)
+        except KISLedgerCapacityError as exc:
+            raise RuntimeAccountSyncDeferredError(str(exc)) from exc
+        account_sync_performed = True
     account_mode = str(account.get("mode") or "paper").strip().lower()
     account_reconciliation_required = False
     reserved_sell_quantities: dict[str, int] = {}
@@ -2783,20 +2834,6 @@ def _run_auto_trader_cycle(
         "blocked": [],
     }
     closed_markets: list[str] = []
-    markets = [
-        m for m in cfg.get("markets", ["KOSPI"])
-        if _is_active_auto_trade_market(str(m or ""))
-    ]
-    if not markets:
-        return {
-            "ok": False,
-            "cycle_id": cycle_id,
-            "started_at": started_at,
-            "finished_at": _now_iso(),
-            "error": "active_market_required",
-            "markets": cfg.get("markets", []),
-            "active_markets": sorted(_ACTIVE_AUTO_TRADE_MARKETS),
-        }
     candidate_counts_by_market: dict[str, int] = {
         market: 0 for market in markets}
     signal_snapshots: list[dict[str, Any]] = []
@@ -2818,8 +2855,7 @@ def _run_auto_trader_cycle(
         )
 
     for market in markets:
-        calendar_market = _MARKET_TO_CALENDAR.get(market, market)
-        if not is_market_open(calendar_market, include_after_hours=True):
+        if not market_open_by_market.get(market, False):
             closed_markets.append(market)
             candidate_counts_by_market[market] = 0
             skipped.append({
@@ -3633,6 +3669,7 @@ def _run_auto_trader_cycle(
     summary = {
         "ok": True,
         "cycle_type": "full" if entry_scan else "exit_monitor",
+        "account_sync_performed": account_sync_performed,
         "cycle_id": cycle_id,
         "started_at": started_at,
         "finished_at": finished_at,
@@ -3860,6 +3897,84 @@ def _should_run_exit_monitor(cfg: dict[str, Any]) -> bool:
     return _load_exit_monitor_account(cfg) is not None
 
 
+def _record_account_sync_deferral(
+    *,
+    error: RuntimeAccountSyncDeferredError,
+    cycle_id: str,
+    cycle_type: str,
+    started_at: str,
+    deferred_at: str,
+) -> bool:
+    reason = str(error).strip() or "EGW00215"
+    with _auto_trader_lock:
+        was_running = (
+            str(_auto_trader_state.get("engine_state") or "").strip().lower() == "running"
+            and bool(_auto_trader_state.get("running"))
+        )
+        was_deferred = bool(_auto_trader_state.get("account_sync_deferred"))
+        consecutive_deferrals = int(
+            _auto_trader_state.get("consecutive_account_sync_deferrals") or 0
+        )
+        if was_running:
+            consecutive_deferrals += 1
+        limit_reached = (
+            was_running
+            and consecutive_deferrals >= _MAX_CONSECUTIVE_ACCOUNT_SYNC_DEFERRALS
+        )
+        engine_continues = was_running and not limit_reached
+        fatal_error = (
+            f"runtime_account_sync_deferred_limit: {reason}"
+            if limit_reached
+            else ""
+        )
+        should_notify_deferred = engine_continues and not was_deferred
+        _auto_trader_state["account_sync_deferred"] = was_running
+        _auto_trader_state["last_account_sync_error"] = reason
+        _auto_trader_state["last_account_sync_error_at"] = deferred_at
+        _auto_trader_state["last_account_sync_cycle_id"] = cycle_id
+        _auto_trader_state["last_account_sync_cycle_type"] = cycle_type
+        _auto_trader_state["consecutive_account_sync_deferrals"] = consecutive_deferrals
+        _auto_trader_state["latest_cycle_id"] = cycle_id
+        if cycle_type == "full":
+            _auto_trader_state["last_run_at"] = deferred_at
+        else:
+            _auto_trader_state["last_exit_check_at"] = deferred_at
+            _auto_trader_state["last_exit_error"] = reason
+        if limit_reached:
+            _auto_trader_state["last_error"] = fatal_error
+            _auto_trader_state["last_error_at"] = deferred_at
+            _auto_trader_state["engine_state"] = "error"
+            _auto_trader_state["running"] = False
+        _persist_auto_trader_state_locked()
+
+    append_engine_cycle({
+        "ok": False,
+        "status": "error" if limit_reached else "deferred",
+        "cycle_type": cycle_type,
+        "cycle_id": cycle_id,
+        "started_at": started_at,
+        "finished_at": deferred_at,
+        "reason_code": "kis_ledger_capacity",
+        "orders_blocked": True,
+        "engine_continues": engine_continues,
+        "error": fatal_error or reason,
+    })
+    notifier = get_notification_service()
+    if limit_reached:
+        notifier.notify_engine_error(
+            error=fatal_error,
+            cycle_id=cycle_id,
+        )
+    elif should_notify_deferred:
+        notifier.notify_account_sync_deferred(
+            error=reason,
+            cycle_id=cycle_id,
+            cycle_type=cycle_type,
+            occurred_at=deferred_at,
+        )
+    return engine_continues
+
+
 def _auto_trader_loop(stop_event: threading.Event) -> None:
     while not stop_event.is_set():
         _hydrate_auto_trader_state()
@@ -3892,11 +4007,26 @@ def _auto_trader_loop(stop_event: threading.Event) -> None:
                 _auto_trader_state["last_summary"] = summary
                 _auto_trader_state["last_error"] = ""
                 _auto_trader_state["last_error_at"] = ""
+                if bool(summary.get("account_sync_performed")):
+                    _auto_trader_state["account_sync_deferred"] = False
+                    _auto_trader_state["consecutive_account_sync_deferrals"] = 0
                 _auto_trader_state["latest_cycle_id"] = summary.get(
                     "cycle_id") or ""
                 _auto_trader_state["next_run_at"] = _next_run_at(
                     int(cfg.get("interval_seconds") or _ACTIVE_TRADING_INTERVAL_SECONDS))
                 _persist_auto_trader_state_locked()
+        except RuntimeAccountSyncDeferredError as exc:
+            deferred_at = _now_iso()
+            logger.warning("auto trader full cycle 계좌 동기화 보류: {}", exc)
+            if not _record_account_sync_deferral(
+                error=exc,
+                cycle_id=cycle_id,
+                cycle_type="full",
+                started_at=cycle_started_at,
+                deferred_at=deferred_at,
+            ):
+                stop_event.set()
+                break
         except Exception as exc:
             logger.warning("auto trader cycle 실패: {}", exc)
             notifier = get_notification_service()
@@ -3905,6 +4035,7 @@ def _auto_trader_loop(stop_event: threading.Event) -> None:
                 _auto_trader_state["last_run_at"] = failed_at
                 _auto_trader_state["last_error_at"] = failed_at
                 _auto_trader_state["last_error"] = str(exc)
+                _auto_trader_state["account_sync_deferred"] = False
                 _auto_trader_state["engine_state"] = "error"
                 _auto_trader_state["running"] = False
                 _auto_trader_state["latest_cycle_id"] = cycle_id
@@ -3995,6 +4126,7 @@ def _auto_trader_loop(stop_event: threading.Event) -> None:
                     _auto_trader_state["last_exit_error"] = str(exc)
                     _auto_trader_state["last_error_at"] = failed_at
                     _auto_trader_state["last_error"] = str(exc)
+                    _auto_trader_state["account_sync_deferred"] = False
                     _auto_trader_state["engine_state"] = "error"
                     _auto_trader_state["running"] = False
                     _auto_trader_state["latest_cycle_id"] = cycle_id
@@ -4163,6 +4295,8 @@ def _start_auto_trader(config: dict) -> dict:
         }
         _auto_trader_state["last_error"] = ""
         _auto_trader_state["last_error_at"] = ""
+        _auto_trader_state["account_sync_deferred"] = False
+        _auto_trader_state["consecutive_account_sync_deferrals"] = 0
         _persist_auto_trader_state_locked()
         _auto_trader_thread.start()
         get_notification_service().notify_engine_started(merged)
@@ -4251,9 +4385,15 @@ def _auto_trader_status() -> dict:
                 RuntimeAccountUnavailableError("live_account_state_unavailable"),
             )
         payload = _build_status_payload(state, account, persist_account=False)
+        if bool(state.get("account_sync_deferred")):
+            payload["account_fresh"] = False
+            payload["account_warning"] = str(
+                state.get("last_account_sync_error") or "kis_ledger_capacity"
+            )
         last_error = str(state.get("last_error") or "").strip()
         if last_error.startswith(("runtime_account_", "account_equity_", "account_snapshot_")):
             payload["account_available"] = False
+            payload["account_fresh"] = False
             payload["account_error"] = last_error
         return payload
 

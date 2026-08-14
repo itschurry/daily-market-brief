@@ -12,10 +12,60 @@ if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
 from broker.execution_engine import EngineConfig, LiveBrokerExecutionEngine
-from broker.kis_client import KISRequestAuditError
+from broker.kis_client import KISLedgerCapacityError, KISRequestAuditError
 
 
 class LiveBrokerExecutionEngineTests(unittest.TestCase):
+    def test_get_account_propagates_ledger_capacity_error(self) -> None:
+        client = Mock()
+        error = KISLedgerCapacityError("EGW00215: 원장 처리량 초과")
+        client.get_balance.side_effect = error
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = LiveBrokerExecutionEngine(
+                kis_client=client,
+                quote_provider=Mock(),
+                fx_provider=Mock(),
+                config=EngineConfig(state_path=Path(tmpdir) / "live.json"),
+            )
+
+            with self.assertRaises(KISLedgerCapacityError) as raised:
+                engine.get_account()
+
+        self.assertIs(raised.exception, error)
+        client.get_balance.assert_called_once_with()
+
+    def test_place_order_propagates_ledger_capacity_error(self) -> None:
+        client = Mock()
+        client.get_sellable_quantity.return_value = {
+            "sellable_quantity": 1,
+            "balance_quantity": 1,
+        }
+        error = KISLedgerCapacityError("EGW00215: 원장 처리량 초과")
+        client.place_cash_order.side_effect = error
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = LiveBrokerExecutionEngine(
+                kis_client=client,
+                quote_provider=Mock(),
+                fx_provider=Mock(),
+                config=EngineConfig(state_path=Path(tmpdir) / "live.json"),
+            )
+            with (
+                patch(
+                    "broker.execution_engine._domestic_after_hours_order_division",
+                    return_value="",
+                ),
+                self.assertRaises(KISLedgerCapacityError) as raised,
+            ):
+                engine.place_order(
+                    side="sell",
+                    code="006340",
+                    market="KOSPI",
+                    quantity=1,
+                )
+
+        self.assertIs(raised.exception, error)
+        client.place_cash_order.assert_called_once()
+
     def test_place_order_propagates_request_audit_error(self) -> None:
         client = Mock()
         client.get_sellable_quantity.return_value = {

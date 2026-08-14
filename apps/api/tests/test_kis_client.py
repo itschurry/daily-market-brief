@@ -10,14 +10,22 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from requests import Timeout
+from requests import HTTPError, Timeout
 
 
 API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
-from broker.kis_client import KISAPIError, KISClient, KISCredentials, KISRequestAuditError, _read_json_file, _write_json_file
+from broker.kis_client import (
+    KISAPIError,
+    KISClient,
+    KISCredentials,
+    KISLedgerCapacityError,
+    KISRequestAuditError,
+    _read_json_file,
+    _write_json_file,
+)
 
 
 class KISClientTests(unittest.TestCase):
@@ -219,6 +227,69 @@ class KISClientTests(unittest.TestCase):
                         client._request("GET", "/uapi/domestic-stock/v1/trading/inquire-balance")
                     request_mock.assert_called_once()
                     self.assertTrue(KISClient._is_rate_limit_error(payload))
+
+    def test_http_500_ledger_capacity_error_is_specialized_without_retry(self) -> None:
+        client = KISClient(KISCredentials("key", "secret", "https://example.com"))
+        payload = {
+            "rt_cd": "1",
+            "msg_cd": "EGW00215",
+            "msg1": "원장에서 허용 가능한 초당 거래건수를 초과하였습니다.",
+        }
+        response = Mock(headers={})
+        response.status_code = 500
+        response.text = json.dumps(payload, ensure_ascii=False)
+        response.raise_for_status.side_effect = HTTPError(response=response)
+        response.json.return_value = payload
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            budget_path = Path(tmpdir) / "kis_request_budget.lock"
+            with (
+                patch.object(KISClient, "_REQUEST_BUDGET_PATH", budget_path),
+                patch(
+                    "broker.kis_client.requests.request",
+                    return_value=response,
+                ) as request_mock,
+            ):
+                with self.assertRaises(KISLedgerCapacityError) as raised:
+                    client._request(
+                        "GET",
+                        "/uapi/domestic-stock/v1/trading/inquire-balance",
+                    )
+
+        self.assertIn("EGW00215", str(raised.exception))
+        request_mock.assert_called_once()
+
+    def test_http_500_egw00201_remains_general_api_error(self) -> None:
+        client = KISClient(KISCredentials("key", "secret", "https://example.com"))
+        payload = {
+            "rt_cd": "1",
+            "msg_cd": "EGW00201",
+            "msg1": "초당 거래건수를 초과하였습니다.",
+        }
+        response = Mock(headers={})
+        response.status_code = 500
+        response.text = json.dumps(payload, ensure_ascii=False)
+        response.raise_for_status.side_effect = HTTPError(response=response)
+        response.json.return_value = payload
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            budget_path = Path(tmpdir) / "kis_request_budget.lock"
+            with (
+                patch.object(KISClient, "_REQUEST_BUDGET_PATH", budget_path),
+                patch(
+                    "broker.kis_client.requests.request",
+                    return_value=response,
+                ) as request_mock,
+            ):
+                with self.assertRaises(KISAPIError) as raised:
+                    client._request(
+                        "GET",
+                        "/uapi/domestic-stock/v1/trading/inquire-balance",
+                    )
+
+        self.assertIs(type(raised.exception), KISAPIError)
+        self.assertIn("EGW00201", str(raised.exception))
+        request_mock.assert_called_once()
 
     def test_requests_are_serialized_across_client_instances(self) -> None:
         active = 0

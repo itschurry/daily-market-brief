@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from broker.kis_client import KISRequestAuditError
+from broker.kis_client import KISLedgerCapacityError, KISRequestAuditError
 from config.market_calendar import SESSION_WINDOWS, get_market_local_dt, is_market_open
 from market_utils import lookup_company_listing
 
@@ -807,7 +807,7 @@ class LiveBrokerExecutionEngine:
         """실계좌 잔고를 KIS API에서 직접 조회한다."""
         try:
             return self._client.get_balance()
-        except KISRequestAuditError:
+        except (KISLedgerCapacityError, KISRequestAuditError):
             raise
         except Exception as exc:
             return {
@@ -945,7 +945,7 @@ class LiveBrokerExecutionEngine:
                 entry_plan_price=entry_plan_price,
             )
             return {"ok": True, "mode": "live", "event": event, **result}
-        except KISRequestAuditError:
+        except (KISLedgerCapacityError, KISRequestAuditError):
             raise
         except Exception as exc:
             return {

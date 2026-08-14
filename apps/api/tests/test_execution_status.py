@@ -13,9 +13,301 @@ if str(API_ROOT) not in sys.path:
 
 import services.execution_service as execution_service
 import routes.trading as trading_routes
+from broker.kis_client import KISLedgerCapacityError
 
 
 class ExecutionStatusTests(unittest.TestCase):
+    def test_ledger_capacity_defers_cycle_without_stopping_engine(self) -> None:
+        class StopOnWaitEvent:
+            def __init__(self) -> None:
+                self.stopped = False
+
+            def is_set(self) -> bool:
+                return self.stopped
+
+            def set(self) -> None:
+                self.stopped = True
+
+            def wait(self, _timeout: float) -> bool:
+                self.stopped = True
+                return True
+
+        error = execution_service.RuntimeAccountSyncDeferredError(
+            "EGW00215: 원장에서 허용 가능한 초당 거래건수를 초과하였습니다."
+        )
+        notifier = Mock()
+        append_cycle = Mock()
+        state = {
+            "engine_state": "running",
+            "running": True,
+            "account_sync_deferred": False,
+            "consecutive_account_sync_deferrals": 0,
+            "last_error": "",
+            "last_error_at": "",
+            "current_config": {
+                "markets": ["KOSPI"],
+                "interval_seconds": 300,
+            },
+        }
+
+        with (
+            patch.object(execution_service, "_auto_trader_state", state),
+            patch.object(execution_service, "_auto_trader_cycle_lock", threading.Lock()),
+            patch.object(execution_service, "_hydrate_auto_trader_state"),
+            patch.object(execution_service, "_persist_auto_trader_state_locked"),
+            patch.object(
+                execution_service,
+                "_new_auto_trader_cycle_id",
+                return_value="cycle-ledger-deferred",
+            ),
+            patch.object(
+                execution_service,
+                "_now_iso",
+                side_effect=[
+                    "2026-08-14T03:46:24+00:00",
+                    "2026-08-14T03:46:25+00:00",
+                ],
+            ),
+            patch.object(execution_service, "_run_auto_trader_cycle", side_effect=error),
+            patch.object(execution_service, "get_notification_service", return_value=notifier),
+            patch.object(execution_service, "append_engine_cycle", append_cycle),
+        ):
+            stop_event = StopOnWaitEvent()
+            execution_service._auto_trader_loop(stop_event)  # type: ignore[arg-type]
+
+        self.assertEqual(state["engine_state"], "running")
+        self.assertTrue(state["running"])
+        self.assertTrue(state["account_sync_deferred"])
+        self.assertEqual(state["consecutive_account_sync_deferrals"], 1)
+        self.assertEqual(state["latest_cycle_id"], "cycle-ledger-deferred")
+        self.assertEqual(state["last_error"], "")
+        notifier.notify_engine_error.assert_not_called()
+        notifier.notify_account_sync_deferred.assert_called_once_with(
+            error=str(error),
+            cycle_id="cycle-ledger-deferred",
+            cycle_type="full",
+            occurred_at="2026-08-14T03:46:25+00:00",
+        )
+        append_cycle.assert_called_once_with({
+            "ok": False,
+            "status": "deferred",
+            "cycle_type": "full",
+            "cycle_id": "cycle-ledger-deferred",
+            "started_at": "2026-08-14T03:46:24+00:00",
+            "finished_at": "2026-08-14T03:46:25+00:00",
+            "reason_code": "kis_ledger_capacity",
+            "orders_blocked": True,
+            "engine_continues": True,
+            "error": str(error),
+        })
+
+    def test_repeated_ledger_deferrals_notify_once(self) -> None:
+        notifier = Mock()
+        state = {
+            "engine_state": "running",
+            "running": True,
+            "account_sync_deferred": False,
+            "consecutive_account_sync_deferrals": 0,
+        }
+        error = execution_service.RuntimeAccountSyncDeferredError("EGW00215: ledger busy")
+        with (
+            patch.object(execution_service, "_auto_trader_state", state),
+            patch.object(execution_service, "_persist_auto_trader_state_locked"),
+            patch.object(execution_service, "append_engine_cycle"),
+            patch.object(execution_service, "get_notification_service", return_value=notifier),
+        ):
+            for index in (1, 2):
+                execution_service._record_account_sync_deferral(
+                    error=error,
+                    cycle_id=f"cycle-{index}",
+                    cycle_type="full",
+                    started_at=f"start-{index}",
+                    deferred_at=f"end-{index}",
+                )
+
+        self.assertTrue(state["account_sync_deferred"])
+        self.assertEqual(state["consecutive_account_sync_deferrals"], 2)
+        self.assertEqual(state["latest_cycle_id"], "cycle-2")
+        notifier.notify_account_sync_deferred.assert_called_once()
+
+    def test_ledger_deferral_does_not_revive_manually_stopped_engine(self) -> None:
+        notifier = Mock()
+        append_cycle = Mock()
+        state = {
+            "engine_state": "stopped",
+            "running": False,
+            "account_sync_deferred": False,
+            "consecutive_account_sync_deferrals": 0,
+        }
+        with (
+            patch.object(execution_service, "_auto_trader_state", state),
+            patch.object(execution_service, "_persist_auto_trader_state_locked"),
+            patch.object(execution_service, "append_engine_cycle", append_cycle),
+            patch.object(execution_service, "get_notification_service", return_value=notifier),
+        ):
+            execution_service._record_account_sync_deferral(
+                error=execution_service.RuntimeAccountSyncDeferredError("EGW00215: ledger busy"),
+                cycle_id="cycle-after-stop",
+                cycle_type="full",
+                started_at="start",
+                deferred_at="end",
+            )
+
+        self.assertEqual(state["engine_state"], "stopped")
+        self.assertFalse(state["running"])
+        self.assertFalse(state["account_sync_deferred"])
+        notifier.notify_account_sync_deferred.assert_not_called()
+        self.assertFalse(append_cycle.call_args.args[0]["engine_continues"])
+
+    def test_third_consecutive_account_sync_deferral_stops_engine(self) -> None:
+        notifier = Mock()
+        append_cycle = Mock()
+        state = {
+            "engine_state": "running",
+            "running": True,
+            "account_sync_deferred": False,
+            "consecutive_account_sync_deferrals": 0,
+            "last_error": "",
+            "last_error_at": "",
+        }
+        error = execution_service.RuntimeAccountSyncDeferredError("EGW00215: ledger busy")
+        with (
+            patch.object(execution_service, "_auto_trader_state", state),
+            patch.object(execution_service, "_persist_auto_trader_state_locked"),
+            patch.object(execution_service, "append_engine_cycle", append_cycle),
+            patch.object(execution_service, "get_notification_service", return_value=notifier),
+        ):
+            results = [
+                execution_service._record_account_sync_deferral(
+                    error=error,
+                    cycle_id=f"cycle-{index}",
+                    cycle_type="full",
+                    started_at=f"start-{index}",
+                    deferred_at=f"end-{index}",
+                )
+                for index in (1, 2, 3)
+            ]
+
+        self.assertEqual(results, [True, True, False])
+        self.assertEqual(state["engine_state"], "error")
+        self.assertFalse(state["running"])
+        self.assertEqual(state["consecutive_account_sync_deferrals"], 3)
+        self.assertEqual(
+            state["last_error"],
+            "runtime_account_sync_deferred_limit: EGW00215: ledger busy",
+        )
+        notifier.notify_account_sync_deferred.assert_called_once()
+        notifier.notify_engine_error.assert_called_once_with(
+            error="runtime_account_sync_deferred_limit: EGW00215: ledger busy",
+            cycle_id="cycle-3",
+        )
+        self.assertEqual(append_cycle.call_args.args[0]["status"], "error")
+        self.assertFalse(append_cycle.call_args.args[0]["engine_continues"])
+
+    def test_successful_fresh_account_sync_clears_deferral_state(self) -> None:
+        class StopOnWaitEvent:
+            def __init__(self) -> None:
+                self.stopped = False
+
+            def is_set(self) -> bool:
+                return self.stopped
+
+            def set(self) -> None:
+                self.stopped = True
+
+            def wait(self, _timeout: float) -> bool:
+                self.stopped = True
+                return True
+
+        state = {
+            "engine_state": "running",
+            "running": True,
+            "account_sync_deferred": True,
+            "consecutive_account_sync_deferrals": 2,
+            "last_error": "",
+            "last_error_at": "",
+            "current_config": {"markets": ["KOSPI"], "interval_seconds": 300},
+        }
+        with (
+            patch.object(execution_service, "_auto_trader_state", state),
+            patch.object(execution_service, "_auto_trader_cycle_lock", threading.Lock()),
+            patch.object(execution_service, "_hydrate_auto_trader_state"),
+            patch.object(execution_service, "_persist_auto_trader_state_locked"),
+            patch.object(execution_service, "_new_auto_trader_cycle_id", return_value="cycle-recovered"),
+            patch.object(
+                execution_service,
+                "_now_iso",
+                side_effect=["2026-08-14T04:10:00+00:00", "2026-08-14T04:10:01+00:00"],
+            ),
+            patch.object(
+                execution_service,
+                "_run_auto_trader_cycle",
+                return_value={
+                    "ok": True,
+                    "cycle_id": "cycle-recovered",
+                    "account_sync_performed": True,
+                },
+            ),
+        ):
+            execution_service._auto_trader_loop(StopOnWaitEvent())  # type: ignore[arg-type]
+
+        self.assertFalse(state["account_sync_deferred"])
+        self.assertEqual(state["consecutive_account_sync_deferrals"], 0)
+        self.assertEqual(state["last_success_at"], "2026-08-14T04:10:01+00:00")
+
+    def test_non_initial_ledger_capacity_error_still_stops_engine(self) -> None:
+        error = KISLedgerCapacityError("EGW00215: ledger busy")
+        notifier = Mock()
+        state = {
+            "engine_state": "running",
+            "running": True,
+            "account_sync_deferred": False,
+            "current_config": {"markets": ["KOSPI"], "interval_seconds": 300},
+        }
+        with (
+            patch.object(execution_service, "_auto_trader_state", state),
+            patch.object(execution_service, "_auto_trader_cycle_lock", threading.Lock()),
+            patch.object(execution_service, "_hydrate_auto_trader_state"),
+            patch.object(execution_service, "_persist_auto_trader_state_locked"),
+            patch.object(execution_service, "_new_auto_trader_cycle_id", return_value="cycle-order-stage"),
+            patch.object(
+                execution_service,
+                "_now_iso",
+                side_effect=["2026-08-14T04:00:00+00:00", "2026-08-14T04:00:01+00:00"],
+            ),
+            patch.object(execution_service, "_run_auto_trader_cycle", side_effect=error),
+            patch.object(execution_service, "get_notification_service", return_value=notifier),
+            patch.object(execution_service, "append_engine_cycle"),
+        ):
+            stop_event = threading.Event()
+            execution_service._auto_trader_loop(stop_event)
+
+        self.assertTrue(stop_event.is_set())
+        self.assertEqual(state["engine_state"], "error")
+        self.assertFalse(state["running"])
+        notifier.notify_account_sync_deferred.assert_not_called()
+        notifier.notify_engine_error.assert_called_once_with(
+            error="EGW00215: ledger busy",
+            cycle_id="cycle-order-stage",
+        )
+
+    def test_initial_live_balance_ledger_capacity_is_wrapped_for_deferral(self) -> None:
+        engine = Mock()
+        engine.get_account.side_effect = KISLedgerCapacityError("EGW00215: ledger busy")
+        with (
+            patch.object(execution_service, "_runtime_engine", return_value=engine),
+            patch.object(execution_service, "_current_execution_mode", return_value="live"),
+            patch.object(execution_service, "is_market_open", return_value=True),
+            patch.object(execution_service, "get_notification_service", return_value=Mock()),
+        ):
+            with self.assertRaisesRegex(
+                execution_service.RuntimeAccountSyncDeferredError,
+                "EGW00215",
+            ):
+                execution_service._run_auto_trader_cycle({"markets": ["KOSPI"]})
+
+        engine.get_account.assert_called_once_with(refresh_quotes=True)
+
     def test_initial_account_failure_records_the_attempted_cycle_id(self) -> None:
         engine = Mock()
         engine.get_account.return_value = {
@@ -39,6 +331,8 @@ class ExecutionStatusTests(unittest.TestCase):
             patch.object(execution_service, "_hydrate_auto_trader_state"),
             patch.object(execution_service, "_persist_auto_trader_state_locked"),
             patch.object(execution_service, "_runtime_engine", return_value=engine),
+            patch.object(execution_service, "_current_execution_mode", return_value="live"),
+            patch.object(execution_service, "is_market_open", return_value=True),
             patch.object(execution_service, "_new_auto_trader_cycle_id", return_value="cycle-failed-account"),
             patch.object(execution_service, "_now_iso", side_effect=[
                 "2026-08-14T00:02:27+00:00",
@@ -182,6 +476,39 @@ class ExecutionStatusTests(unittest.TestCase):
         self.assertEqual(payload["state"]["config"], payload["state"]["current_config"])
         engine.get_account.assert_not_called()
 
+    def test_status_marks_cached_account_stale_during_sync_deferral(self) -> None:
+        engine = Mock()
+        cached_account = {
+            "mode": "real",
+            "equity_krw": 3_710_127,
+            "cash_krw": 3_255_127,
+            "positions": [],
+        }
+        persisted_state = {
+            "engine_state": "running",
+            "running": True,
+            "account_sync_deferred": True,
+            "last_account_sync_error": "EGW00215: ledger busy",
+            "last_account_sync_error_at": "2026-08-14T03:46:25+00:00",
+            "consecutive_account_sync_deferrals": 2,
+            "current_config": {"markets": ["KOSPI"]},
+        }
+        with (
+            patch.object(execution_service, "_hydrate_auto_trader_state"),
+            patch.object(execution_service, "_auto_trader_state", persisted_state),
+            patch.object(execution_service, "_current_execution_mode", return_value="live"),
+            patch.object(execution_service, "_read_cached_live_runtime_account", return_value=cached_account),
+            patch.object(execution_service, "_runtime_engine", return_value=engine),
+        ):
+            status, payload = execution_service.handle_runtime_engine_status()
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["account_available"])
+        self.assertFalse(payload["account_fresh"])
+        self.assertEqual(payload["account_warning"], "EGW00215: ledger busy")
+        self.assertTrue(payload["state"]["account_sync_deferred"])
+        engine.get_account.assert_not_called()
+
     def test_service_live_status_marks_missing_cache_without_broker_call(self) -> None:
         engine = Mock()
         with (
@@ -265,6 +592,8 @@ class ExecutionStatusTests(unittest.TestCase):
 
         with (
             patch.object(execution_service, "_runtime_engine", return_value=engine),
+            patch.object(execution_service, "_current_execution_mode", return_value="live"),
+            patch.object(execution_service, "is_market_open", return_value=True),
             patch.object(execution_service, "get_notification_service", return_value=Mock()),
         ):
             with self.assertRaisesRegex(RuntimeError, "runtime_account_unavailable: EGW00215"):

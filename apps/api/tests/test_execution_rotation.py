@@ -431,7 +431,45 @@ class ExecutionRotationTests(unittest.TestCase):
         self.assertEqual(summary["cycle_type"], "full")
         self.assertEqual(summary["executed_buy_count"], 0)
         self.assertEqual(summary["executed_sell_count"], 0)
+        self.assertTrue(summary["account_sync_performed"])
         engine.get_account.assert_called_once_with(refresh_quotes=True)
+
+    def test_closed_live_full_cycle_uses_cached_account_without_balance_call(self) -> None:
+        account = {
+            "mode": "real",
+            "cash_krw": 3_255_127,
+            "market_value_krw": 455_000,
+            "equity_krw": 3_710_127,
+            "orders": [],
+            "positions": [],
+        }
+        engine = Mock()
+
+        with (
+            patch("services.execution_service._runtime_engine", return_value=engine),
+            patch("services.execution_service._current_execution_mode", return_value="live"),
+            patch("services.execution_service._read_cached_live_runtime_account", return_value=account),
+            patch(
+                "services.execution_service._normalize_runtime_account",
+                side_effect=lambda value, **_: value,
+            ),
+            patch("services.execution_service._runtime_order_attempts", return_value=[]),
+            patch("services.execution_service.is_market_open", return_value=False),
+            patch("services.execution_service.build_signal_book") as signal_book,
+            patch("services.execution_service._persist_live_runtime_account"),
+            patch("services.execution_service.append_signal_snapshots"),
+            patch("services.execution_service.append_engine_cycle"),
+            patch("services.execution_service.append_account_snapshot"),
+            patch("services.execution_service._should_send_market_open_brief", return_value=(False, "")),
+            patch("services.execution_service.get_notification_service", return_value=Mock()),
+        ):
+            summary = _run_auto_trader_cycle(_default_auto_trader_config())
+
+        self.assertTrue(summary["ok"])
+        self.assertFalse(summary["account_sync_performed"])
+        self.assertEqual(summary["closed_markets"], ["KOSPI"])
+        engine.get_account.assert_not_called()
+        signal_book.assert_not_called()
 
     def test_exit_monitor_restores_live_risk_plan_before_sell_check(self) -> None:
         raw_account = {

@@ -224,6 +224,23 @@ class TelegramNotifier:
         )
         self.send_message(message)
 
+    def notify_account_sync_deferred(
+        self,
+        *,
+        error: str,
+        cycle_id: str,
+        cycle_type: str,
+        occurred_at: str,
+    ) -> None:
+        message = (
+            "[WealthPulse] 계좌 동기화 일시 보류\n"
+            f"시각: {occurred_at or _now_iso()}\n"
+            f"사유: {error}\n"
+            "영향: 해당 사이클 신규 주문 보류, 엔진과 자동 청산 감시 유지\n"
+            f"cycle: {cycle_id or '-'} ({cycle_type or '-'})"
+        )
+        self.send_message(message)
+
     def notify_order_failure(self, payload: dict[str, Any]) -> None:
         message = (
             "[WealthPulse] 주문 실패\n"
@@ -337,6 +354,16 @@ class NullNotificationService:
         return None
 
     def notify_engine_error(self, *, error: str, cycle_id: str) -> None:
+        return None
+
+    def notify_account_sync_deferred(
+        self,
+        *,
+        error: str,
+        cycle_id: str,
+        cycle_type: str,
+        occurred_at: str,
+    ) -> None:
         return None
 
     def notify_order_failure(self, payload: dict[str, Any]) -> None:

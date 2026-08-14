@@ -464,8 +464,8 @@ export function WealthPulseHomePage({
   const engineStatusLabel = engineRunning ? '실행' : engineState.engine_state === 'paused' ? '일시정지' : engineState.engine_state === 'error' ? '오류' : '정지';
   const incidentAlert = engineState.incident_alert;
   const liveEngineIncident = snapshot.engine.execution?.execution_mode === 'live'
-    && incidentAlert?.active === true
-    && incidentAlert.code === 'live_engine_error';
+    && incidentAlert?.active === true;
+  const criticalEngineIncident = incidentAlert?.severity === 'critical';
   const incidentTitle = String(incidentAlert?.title || '실거래 엔진 오류');
   const incidentMessage = String(incidentAlert?.message || '자동매매 엔진 보호 기능 중단');
   const incidentDetail = String(incidentAlert?.detail || '');
@@ -578,7 +578,7 @@ export function WealthPulseHomePage({
       <div className="page-frame">
         <div className="content-shell wealth-home-shell">
           {liveEngineIncident && (
-            <div className="app-alert-banner is-critical wealth-engine-incident" role="alert" aria-live="assertive">
+            <div className={`app-alert-banner ${criticalEngineIncident ? 'is-critical' : ''} wealth-engine-incident`.trim()} role="alert" aria-live={criticalEngineIncident ? 'assertive' : 'polite'}>
               <div className="wealth-engine-incident-copy">
                 <strong>{incidentTitle}</strong>
                 <span>{incidentMessage}</span>

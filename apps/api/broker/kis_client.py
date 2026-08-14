@@ -62,6 +62,10 @@ class KISAPIError(RuntimeError):
     """한국투자증권 API 호출 실패."""
 
 
+class KISLedgerCapacityError(KISAPIError):
+    """KIS 공용 원장 처리량이 일시적으로 소진됐을 때 발생한다."""
+
+
 class KISRequestAuditError(KISAPIError):
     """KIS 요청 감사 기록 실패로 브로커 처리 결과 확인이 필요할 때 발생한다."""
 
@@ -406,10 +410,27 @@ class KISClient:
             response.raise_for_status()
         except HTTPError as exc:
             message = response.text.strip() or str(exc)
+            try:
+                error_payload = response.json()
+            except (TypeError, ValueError):
+                error_payload = None
+            message_code = ""
+            if isinstance(error_payload, dict):
+                message_code = str(
+                    error_payload.get("msg_cd")
+                    or error_payload.get("error_code")
+                    or ""
+                ).strip()
+                message = str(
+                    error_payload.get("msg1")
+                    or error_payload.get("error_description")
+                    or error_payload.get("message")
+                    or message
+                ).strip()
             if (
                 _retry_with_fresh_token
                 and self._can_retry_with_fresh_token(path, headers)
-                and self._is_expired_token_error(message)
+                and self._is_expired_token_error(error_payload or message)
             ):
                 retry_headers = self._build_retry_headers(headers)
                 return self._request_full(
@@ -419,13 +440,13 @@ class KISClient:
                     json_body=json_body,
                     _retry_with_fresh_token=False,
                 )
-            raise KISAPIError(message) from exc
+            raise self._build_api_error(message_code, message) from exc
 
         payload = response.json()
         if payload.get("error_code"):
             error_code = str(payload.get("error_code") or "").strip()
             message = str(payload.get("error_description") or payload.get("message") or error_code).strip()
-            raise KISAPIError(f"{error_code}: {message}" if error_code and error_code not in message else message)
+            raise self._build_api_error(error_code, message)
         rt_cd = str(payload.get("rt_cd") or "")
         if rt_cd and rt_cd != "0":
             if (
@@ -443,8 +464,17 @@ class KISClient:
                 )
             message_code = str(payload.get("msg_cd") or "").strip()
             message = str(payload.get("msg1") or f"KIS API 오류: {rt_cd}").strip()
-            raise KISAPIError(f"{message_code}: {message}" if message_code and message_code not in message else message)
+            raise self._build_api_error(message_code, message)
         return payload, response
+
+    @staticmethod
+    def _build_api_error(message_code: str, message: str) -> KISAPIError:
+        code = str(message_code or "").strip()
+        detail = str(message or code or "KIS API 오류").strip()
+        rendered = f"{code}: {detail}" if code and code not in detail else detail
+        if code == "EGW00215" or "EGW00215" in rendered:
+            return KISLedgerCapacityError(rendered)
+        return KISAPIError(rendered)
 
     # ── 토큰 관리 ────────────────────────────────────────────────────────────
 

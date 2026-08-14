@@ -38,6 +38,8 @@ def _compact_last_summary(summary: dict | None) -> dict:
 
     keep_keys = {
         "ok",
+        "cycle_type",
+        "account_sync_performed",
         "cycle_id",
         "started_at",
         "finished_at",
@@ -81,6 +83,12 @@ def _compact_execution_payload(execution_payload: dict | None) -> dict:
         "last_success_at",
         "last_error",
         "last_error_at",
+        "account_sync_deferred",
+        "last_account_sync_error",
+        "last_account_sync_error_at",
+        "last_account_sync_cycle_id",
+        "last_account_sync_cycle_type",
+        "consecutive_account_sync_deferrals",
         "latest_cycle_id",
         "today_order_counts",
         "order_failure_summary",
@@ -108,7 +116,7 @@ def _compact_execution_payload(execution_payload: dict | None) -> dict:
         "state": compact_state,
         "account": compact_account,
     }
-    for key in ("account_available", "account_error"):
+    for key in ("account_available", "account_fresh", "account_error", "account_warning"):
         if key in execution_payload:
             compact_execution[key] = execution_payload[key]
     return compact_execution
@@ -131,6 +139,24 @@ def _with_incident_alert(execution_payload: dict | None) -> dict:
             "message": "신규 주문 및 보유 종목 자동 청산 감시 중단",
             "detail": str(state.get("last_error") or payload.get("account_error") or "unknown_engine_error"),
             "occurred_at": str(state.get("last_error_at") or state.get("last_run_at") or ""),
+        }
+    elif (
+        execution_mode == "live"
+        and engine_state == "running"
+        and bool(state.get("account_sync_deferred"))
+    ):
+        state["incident_alert"] = {
+            "active": True,
+            "code": "live_account_sync_deferred",
+            "severity": "warning",
+            "title": "KIS 계좌 동기화 일시 보류",
+            "message": "신규 주문은 보류됐고 자동 청산 감시는 계속 실행 중",
+            "detail": str(
+                state.get("last_account_sync_error")
+                or payload.get("account_warning")
+                or "kis_ledger_capacity"
+            ),
+            "occurred_at": str(state.get("last_account_sync_error_at") or ""),
         }
     else:
         state.pop("incident_alert", None)

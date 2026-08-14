@@ -89,6 +89,68 @@ class DailyPerformanceJournalTests(unittest.TestCase):
         self.assertEqual(result["market"]["kospi_return_pct"], -6.37)
         self.assertEqual(result["diagnostics"]["skip_reason_counts"], {"entry_price_chased": 1})
 
+    def test_uses_first_and_last_account_cycles_when_boundary_cycles_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cycles_dir = Path(tmpdir) / "engine_cycles"
+            journals_dir = Path(tmpdir) / "daily_performance"
+            cycles_dir.mkdir()
+            journals_dir.mkdir()
+            cycles = [
+                {
+                    "started_at": "2026-08-14T00:00:00+00:00",
+                    "ok": False,
+                    "error": "runtime_account_unavailable: EGW00215",
+                },
+                {
+                    "started_at": "2026-08-14T00:05:00+00:00",
+                    "account": {
+                        "mode": "paper",
+                        "equity_krw": 5_000_000,
+                        "cash_krw": 5_000_000,
+                        "market_value_krw": 0,
+                        "positions": [],
+                        "orders": [],
+                    },
+                },
+                {
+                    "started_at": "2026-08-14T06:20:00+00:00",
+                    "account": {
+                        "mode": "paper",
+                        "equity_krw": 5_001_000,
+                        "cash_krw": 5_001_000,
+                        "market_value_krw": 0,
+                        "positions": [],
+                        "orders": [],
+                    },
+                },
+                {
+                    "started_at": "2026-08-14T06:25:00+00:00",
+                    "ok": False,
+                    "error": "runtime_account_unavailable: EGW00215",
+                },
+            ]
+            (cycles_dir / "2026-08-14.jsonl").write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in cycles),
+                encoding="utf-8",
+            )
+
+            with (
+                patch("services.daily_performance_journal.ENGINE_CYCLES_DIR", cycles_dir),
+                patch("services.daily_performance_journal.JOURNAL_DIR", journals_dir),
+                patch("services.daily_performance_journal.load_engine_state", return_value={}),
+            ):
+                result = build_daily_performance_journal(
+                    "2026-08-14",
+                    market_payload={
+                        "kospi_history": [{"date": "2026-08-14", "close": 1, "pct": 0.5}],
+                    },
+                )
+
+        self.assertEqual(result["account"]["starting_equity_krw"], 5_000_000)
+        self.assertEqual(result["account"]["ending_equity_krw"], 5_001_000)
+        self.assertEqual(result["account"]["net_pnl_krw"], 1_000)
+        self.assertEqual(result["diagnostics"]["engine_cycle_count"], 4)
+
     def test_separates_carry_in_exit_open_close_and_follow_up(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -607,10 +607,15 @@ def build_daily_performance_journal(
 ) -> dict[str, Any]:
     date_key = _validate_date_key(date_key)
     cycles = _read_cycles(date_key)
-    first_account = cycles[0].get("account") if isinstance(cycles[0].get("account"), dict) else {}
-    last_account = cycles[-1].get("account") if isinstance(cycles[-1].get("account"), dict) else {}
-    if not first_account or not last_account:
+    account_cycles = [
+        cycle
+        for cycle in cycles
+        if isinstance(cycle.get("account"), dict) and cycle.get("account")
+    ]
+    if not account_cycles:
         raise ValueError(f"계좌 스냅샷이 없는 엔진 사이클: {date_key}")
+    first_account = account_cycles[0]["account"]
+    last_account = account_cycles[-1]["account"]
 
     mode = str(last_account.get("mode") or "unknown").strip().lower()
     live_mode = mode in {"live", "real"}

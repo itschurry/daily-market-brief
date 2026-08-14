@@ -22,6 +22,7 @@ def _compact_cycle_summary(summary: object) -> dict:
     keep_keys = {
         "ok",
         "cycle_type",
+        "account_sync_performed",
         "cycle_id",
         "started_at",
         "finished_at",
@@ -64,6 +65,12 @@ def _compact_engine_payload(payload: dict) -> dict:
         "last_error_at",
         "last_exit_check_at",
         "last_exit_error",
+        "account_sync_deferred",
+        "last_account_sync_error",
+        "last_account_sync_error_at",
+        "last_account_sync_cycle_id",
+        "last_account_sync_cycle_type",
+        "consecutive_account_sync_deferrals",
         "latest_cycle_id",
         "today_order_counts",
         "order_failure_summary",
@@ -120,7 +127,7 @@ def _compact_engine_payload(payload: dict) -> dict:
         "state": compact_state,
         "account": compact_account,
     }
-    for key in ("account_available", "account_error"):
+    for key in ("account_available", "account_fresh", "account_error", "account_warning"):
         if key in payload:
             compact_payload[key] = payload[key]
     return compact_payload

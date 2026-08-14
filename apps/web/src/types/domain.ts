@@ -880,7 +880,9 @@ export interface EngineStatusResponse {
   execution?: {
     execution_mode?: string;
     account_available?: boolean;
+    account_fresh?: boolean;
     account_error?: string;
+    account_warning?: string;
     state?: {
       execution_mode?: string;
       engine_state?: string;
@@ -893,6 +895,12 @@ export interface EngineStatusResponse {
       last_success_at?: string;
       last_error?: string;
       last_error_at?: string;
+      account_sync_deferred?: boolean;
+      last_account_sync_error?: string;
+      last_account_sync_error_at?: string;
+      last_account_sync_cycle_id?: string;
+      last_account_sync_cycle_type?: string;
+      consecutive_account_sync_deferrals?: number;
       latest_cycle_id?: string;
       today_order_counts?: {
         buy?: number;
