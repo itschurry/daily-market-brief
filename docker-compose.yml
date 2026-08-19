@@ -5,7 +5,7 @@ services:
       dockerfile: apps/api/Dockerfile
         # user: "1000:1000"
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     volumes:
       - ./storage/reports:/reports
       - ./storage/logs:/logs
@@ -32,7 +32,7 @@ services:
       dockerfile: Dockerfile
         # user: "1000:1000"
     ports:
-      - "8081:80"
+      - "127.0.0.1:8081:80"
     depends_on:
       api:
         condition: service_healthy
@@ -57,6 +57,12 @@ services:
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
       WEALTHPULSE_REPO_DIR: /app
       WEALTHPULSE_API_BASE_URL: http://api:8001
+      KIS_APP_KEY: ""
+      KIS_APP_SECRET: ""
+      KIS_ACCOUNT_CANO: ""
+      KIS_ACCOUNT_ACNT_PRDT_CD: ""
+      KIS_BASE_URL: ""
+      LIVE_TRADING_APPROVED: "false"
     env_file:
       - ./apps/api/.env
     restart: unless-stopped

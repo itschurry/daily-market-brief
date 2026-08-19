@@ -446,7 +446,7 @@ export function useRuntimeTrading(options?: { autoRefreshEnabled?: boolean }) {
   }, [invalidateEngineRequests, invalidateRuntimeLogRequests]);
 
   useEffect(() => {
-    refresh(true);
+    refresh(false);
     refreshEngineStatus();
     refreshRuntimeLogs();
   }, [refresh, refreshEngineStatus, refreshRuntimeLogs]);

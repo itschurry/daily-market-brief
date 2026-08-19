@@ -105,6 +105,11 @@ _BUY_WATCH_MAX_DAILY_CHANGE_PCT = 10.0
 _ACTIVE_TRADING_INTERVAL_SECONDS = 60
 _DEFAULT_EXIT_MONITOR_INTERVAL_SECONDS = 60
 _MAX_CONSECUTIVE_ACCOUNT_SYNC_DEFERRALS = 3
+_ACCOUNT_RELIABILITY_ERROR_PREFIXES = (
+    "runtime_account_",
+    "account_equity_",
+    "account_snapshot_",
+)
 _STALE_RUNTIME_STATE_KEYS = {"optimized_params"}
 _STALE_RUNTIME_CONFIG_KEYS = {"validation_require_optimized_reliability"}
 _BUY_CAPACITY_FAILURE_REASONS = {"domestic_orderable_quantity_zero"}
@@ -133,6 +138,7 @@ _auto_trader_state: dict[str, Any] = {
     "last_account_sync_error_at": "",
     "last_account_sync_cycle_id": "",
     "last_account_sync_cycle_type": "",
+    "last_account_recovered_at": "",
     "consecutive_account_sync_deferrals": 0,
     "last_summary": {},
     "last_exit_check_at": "",
@@ -421,6 +427,41 @@ def _order_event_timestamp(item: dict[str, Any]) -> datetime.datetime | None:
     return parsed.astimezone(datetime.timezone.utc)
 
 
+def _runtime_timestamp(value: Any) -> datetime.datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def _account_reliability_error_recovered(state: dict[str, Any]) -> bool:
+    last_error = str(state.get("last_error") or "").strip()
+    if not last_error.startswith(_ACCOUNT_RELIABILITY_ERROR_PREFIXES):
+        return False
+    failed_at = _runtime_timestamp(state.get("last_error_at"))
+    recovered_at = _runtime_timestamp(state.get("last_account_recovered_at"))
+    return bool(failed_at and recovered_at and recovered_at >= failed_at)
+
+
+def _record_runtime_account_recovery() -> None:
+    if _current_execution_mode() != "live":
+        return
+    recovered_at = _now_iso()
+    _hydrate_auto_trader_state()
+    with _auto_trader_lock:
+        _auto_trader_state["account_sync_deferred"] = False
+        _auto_trader_state["consecutive_account_sync_deferrals"] = 0
+        _auto_trader_state["last_account_sync_error"] = ""
+        _auto_trader_state["last_account_recovered_at"] = recovered_at
+        _persist_auto_trader_state_locked()
+
+
 def _matching_unknown_live_buy(
     events: list[dict[str, Any]],
     *,
@@ -572,6 +613,8 @@ def _hydrate_live_runtime_account(
 
         symbol_key = f"{str(item.get('market') or '').strip().upper()}:{str(item.get('code') or '').strip().upper()}"
         position = position_activity.get(symbol_key, {})
+        if not str(item.get("name") or "").strip() and str(position.get("name") or "").strip():
+            item["name"] = position.get("name")
         requested_quantity = int(_to_float(item.get("quantity"), 0.0) or 0)
         if requested_quantity <= 0:
             requested_quantity = int(_to_float(latest.get("quantity"), 0.0) or 0)
@@ -4391,7 +4434,7 @@ def _auto_trader_status() -> dict:
                 state.get("last_account_sync_error") or "kis_ledger_capacity"
             )
         last_error = str(state.get("last_error") or "").strip()
-        if last_error.startswith(("runtime_account_", "account_equity_", "account_snapshot_")):
+        if last_error.startswith(_ACCOUNT_RELIABILITY_ERROR_PREFIXES) and not _account_reliability_error_recovered(state):
             payload["account_available"] = False
             payload["account_fresh"] = False
             payload["account_error"] = last_error
@@ -4409,8 +4452,13 @@ def handle_runtime_account(refresh_quotes: bool) -> tuple[int, dict]:
     try:
         engine = _runtime_engine()
         account = engine.get_account(refresh_quotes=refresh_quotes)
-        normalized_account = _normalize_runtime_account(account)
+        normalized_account = _normalize_runtime_account(
+            account,
+            persist_live_reconciled_fills=True,
+            notify_live_fills=True,
+        )
         _persist_live_runtime_account(normalized_account)
+        _record_runtime_account_recovery()
         return 200, normalized_account
     except Exception as exc:
         return 500, {"error": str(exc)}

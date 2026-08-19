@@ -495,6 +495,7 @@ class ExecutionStatusTests(unittest.TestCase):
         }
         with (
             patch.object(execution_service, "_hydrate_auto_trader_state"),
+            patch.object(execution_service, "_ensure_auto_trader_thread_running"),
             patch.object(execution_service, "_auto_trader_state", persisted_state),
             patch.object(execution_service, "_current_execution_mode", return_value="live"),
             patch.object(execution_service, "_read_cached_live_runtime_account", return_value=cached_account),
@@ -508,6 +509,91 @@ class ExecutionStatusTests(unittest.TestCase):
         self.assertEqual(payload["account_warning"], "EGW00215: ledger busy")
         self.assertTrue(payload["state"]["account_sync_deferred"])
         engine.get_account.assert_not_called()
+
+    def test_status_marks_account_fresh_after_manual_recovery_without_restarting_engine(self) -> None:
+        engine = Mock()
+        cached_account = {
+            "mode": "real",
+            "equity_krw": 3_703_817,
+            "cash_krw": 2_953_917,
+            "positions": [],
+        }
+        persisted_state = {
+            "engine_state": "error",
+            "running": False,
+            "last_error": "runtime_account_sync_deferred_limit: EGW00215: ledger busy",
+            "last_error_at": "2026-08-18T00:31:04+00:00",
+            "last_account_recovered_at": "2026-08-18T01:42:54+00:00",
+            "account_sync_deferred": False,
+            "consecutive_account_sync_deferrals": 0,
+            "current_config": {"markets": ["KOSPI"]},
+        }
+        with (
+            patch.object(execution_service, "_hydrate_auto_trader_state"),
+            patch.object(execution_service, "_auto_trader_state", persisted_state),
+            patch.object(execution_service, "_current_execution_mode", return_value="live"),
+            patch.object(execution_service, "_read_cached_live_runtime_account", return_value=cached_account),
+            patch.object(execution_service, "_runtime_engine", return_value=engine),
+        ):
+            status, payload = execution_service.handle_runtime_engine_status()
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["account_available"])
+        self.assertTrue(payload["account_fresh"])
+        self.assertEqual(payload["account_error"], "")
+        self.assertEqual(payload["state"]["engine_state"], "error")
+        self.assertEqual(
+            payload["state"]["last_error"],
+            "runtime_account_sync_deferred_limit: EGW00215: ledger busy",
+        )
+        engine.get_account.assert_not_called()
+
+    def test_manual_live_account_refresh_persists_fills_and_records_recovery(self) -> None:
+        engine = Mock()
+        raw_account = {"mode": "real", "positions": []}
+        normalized_account = {
+            "mode": "real",
+            "equity_krw": 3_703_817,
+            "cash_krw": 2_953_917,
+            "positions": [],
+        }
+        engine.get_account.return_value = raw_account
+        state = {
+            "engine_state": "error",
+            "running": False,
+            "account_sync_deferred": True,
+            "consecutive_account_sync_deferrals": 3,
+            "last_account_sync_error": "EGW00215: ledger busy",
+        }
+        normalize_account = Mock(return_value=normalized_account)
+        persist_account = Mock()
+        persist_state = Mock()
+        with (
+            patch.object(execution_service, "_runtime_engine", return_value=engine),
+            patch.object(execution_service, "_current_execution_mode", return_value="live"),
+            patch.object(execution_service, "_normalize_runtime_account", normalize_account),
+            patch.object(execution_service, "_persist_live_runtime_account", persist_account),
+            patch.object(execution_service, "_hydrate_auto_trader_state"),
+            patch.object(execution_service, "_auto_trader_state", state),
+            patch.object(execution_service, "_persist_auto_trader_state_locked", persist_state),
+            patch.object(execution_service, "_now_iso", return_value="2026-08-18T01:42:54+00:00"),
+        ):
+            status, payload = execution_service.handle_runtime_account(refresh_quotes=True)
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload, normalized_account)
+        engine.get_account.assert_called_once_with(refresh_quotes=True)
+        normalize_account.assert_called_once_with(
+            raw_account,
+            persist_live_reconciled_fills=True,
+            notify_live_fills=True,
+        )
+        persist_account.assert_called_once_with(normalized_account)
+        self.assertFalse(state["account_sync_deferred"])
+        self.assertEqual(state["consecutive_account_sync_deferrals"], 0)
+        self.assertEqual(state["last_account_sync_error"], "")
+        self.assertEqual(state["last_account_recovered_at"], "2026-08-18T01:42:54+00:00")
+        persist_state.assert_called_once_with()
 
     def test_service_live_status_marks_missing_cache_without_broker_call(self) -> None:
         engine = Mock()

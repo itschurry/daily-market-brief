@@ -31,10 +31,22 @@ browser
 
 ```bash
 cp apps/api/.env.example apps/api/.env
+chmod 600 apps/api/.env
 docker compose up -d --build api web research-loop
 curl http://127.0.0.1:8001/health
 open http://127.0.0.1:8081
 ```
+
+호스트 포트 `8001`, `8081`은 기본적으로 `127.0.0.1`에만 바인딩해. 원격 서버에서 운영하면 포트를 외부에 직접 열지 말고 SSH 터널로 접속해.
+
+```bash
+ssh -N \
+  -L 8081:127.0.0.1:8081 \
+  -L 8001:127.0.0.1:8001 \
+  user@server
+```
+
+터널을 연 뒤 로컬 브라우저에서 `http://127.0.0.1:8081`로 접속하면 돼.
 
 자동매매 운영 배포에선 `research-loop`를 같이 빌드해야 해. `api web`만 빌드하면 리서치 루프 이미지가 예전 코드로 남을 수 있어.
 
@@ -47,8 +59,8 @@ docker compose logs -f research-loop
 - `api`: Python 3.11, FastAPI, `uvicorn api_server:app --host 0.0.0.0 --port 8001`
 - `web`: React 빌드 산출물을 Nginx가 서빙
 - `research-loop`: `scripts/run_market_research_loop.sh`가 장중에 후보 갱신과 OpenAI 리서치를 반복 실행해. 전체 대상이 품질 검증에서 탈락해도 해당 종목만 제외하고 계속 돌아. 호스트나 Docker가 재시작되면 `restart: unless-stopped`로 자동 복구하고, 실행기·장 캘린더·설정 같은 시스템 실패가 나면 실패 표식을 남긴 채 `unhealthy` 상태로 대기해서 재시작 폭주는 막아.
-- API 포트: `8001`
-- Web 포트: `8081`
+- API 포트: 호스트 `127.0.0.1:8001` 전용
+- Web 포트: 호스트 `127.0.0.1:8081` 전용
 - API 컨테이너 볼륨: `./storage/reports:/reports`, `./storage/logs:/logs`
 - Web 컨테이너는 `/api/` 요청을 `http://api:8001/api/`로 프록시해
 
@@ -58,6 +70,14 @@ docker compose logs -f research-loop
 docker compose up -d --force-recreate api web research-loop
 docker compose ps
 curl http://127.0.0.1:8001/health
+```
+
+API 단위 테스트는 운영 `storage/logs`를 절대 같이 쓰면 안 돼. 격리 경로를 강제로 지정해.
+
+```bash
+docker compose run --rm --no-deps \
+  -e LOGS_DIR=/tmp/wealth-pulse-test-logs \
+  api python -m unittest -v tests.test_api_security tests.test_execution_status
 ```
 
 ## 설정
@@ -79,6 +99,7 @@ WEALTHPULSE_RESEARCH_CONCURRENCY=3
 WEALTHPULSE_RESEARCH_LOOP_INTERVAL_SECONDS=60
 WEALTHPULSE_RESEARCH_CLOSED_INTERVAL_SECONDS=600
 WEALTHPULSE_RESEARCH_DRY_RUN=0
+WEALTHPULSE_ALLOWED_ORIGINS=http://127.0.0.1:8081,http://localhost:8081
 
 FRED_API_KEY=
 ECOS_API_KEY=
@@ -124,8 +145,10 @@ TELEGRAM_CHAT_ID=
 - `WEALTHPULSE_RESEARCH_CLOSED_INTERVAL_SECONDS=600`: 장 마감/휴장 때 다시 확인하기까지 대기할 초야.
 - `WEALTHPULSE_RESEARCH_FAIL_STOP_MARKER=/tmp/wealthpulse-research-loop.fail-stopped`: 리서치 시스템 실패를 기록하는 표식 경로야. 컨테이너 healthcheck도 같은 값을 읽어.
 - `WEALTHPULSE_RESEARCH_DRY_RUN=0`: `1`이면 후보만 모으고 OpenAI 호출은 안 해.
+- `WEALTHPULSE_ALLOWED_ORIGINS`: 브라우저가 API를 호출할 수 있는 Origin 목록이야. 기본 Docker UI와 SSH 터널 주소만 넣어. 브라우저의 교차 사이트 API 요청은 공통 미들웨어에서 `403 cross_site_api_request_blocked`로 차단해.
 - `DART_API_KEY`: 있으면 OpenDART 공시 evidence를 붙여.
 - `KIS_*`: 현재가 조회, 실계좌 모드, 브로커 상태 확인에 필요해. `KIS_GENERAL_REQUESTS_PER_SECOND=8`은 앱키 단위 일반 호출 상한이고, `KIS_TRADING_REQUEST_INTERVAL_SECONDS=1.2`는 잔고·체결·주문 원장 응답이 끝난 뒤 다음 원장 호출까지 두는 최소 간격이야. API 프로세스들은 `storage/logs/cache/kis_request_budget.lock`을 공유해. 각 호출의 경로·TR ID·대기시간·HTTP/KIS 결과코드는 `storage/logs/audit/kis_requests.jsonl`에 append-only로 남겨. 앱키, 시크릿, 토큰, 계좌번호, 헤더, 쿼리, 본문, 원본 응답은 기록하지 않아.
+- `research-loop`는 OpenAI 리서치와 내부 API만 사용해. Compose가 `KIS_APP_KEY`, `KIS_APP_SECRET`, 계좌번호, 실거래 승인을 빈 값으로 덮어써서 리서치 컨테이너에는 KIS 주문 권한을 넘기지 않아.
 - 리서치 소스팩은 후보 모니터의 Naver 실시간 가격/거래대금에 FinanceDataReader 기반 `close_vs_sma20`, `close_vs_sma60`, `volume_ratio`, `rsi14`를 병합해. 이 추세 지표가 있어야 `review_for_entry`로 올라갈 수 있어.
 
 현재 운용 시장:
@@ -141,6 +164,7 @@ TELEGRAM_CHAT_ID=
 FastAPI 라우터를 여러 파일에 직접 등록하는 구조가 아니야. `api_server.py`가 `/api/{full_path:path}`를 받고, `server.py`의 `GET_ROUTES`, `POST_ROUTES` 테이블로 넘겨.
 지원 메서드는 `GET`, `POST`만이야. 예전처럼 `PUT`을 `POST`로 우회하지 않아.
 폐기된 실험 API와 UI는 더 이상 제공하지 않아. 주문 런타임도 저장된 실험 산출물을 읽지 않아.
+API와 Web 호스트 포트는 loopback 전용이고, 브라우저 요청은 `WEALTHPULSE_ALLOWED_ORIGINS` 및 `Sec-Fetch-Site`를 검사해. Origin이 없는 호스트 CLI와 컨테이너 내부 호출은 유지하고, 외부 웹페이지가 로컬 주문 API를 호출하는 경로는 차단해.
 
 ```text
 apps/api/api_server.py
@@ -186,6 +210,8 @@ React 앱은 라우터 라이브러리 없이 `App.tsx`에서 URL path를 해석
 - 빠른 polling: 엔진, 실시간 시장
 - 중간 polling: 신호, 포트폴리오
 - 느린 polling: 리서치, 리포트, 유니버스, 성과
+
+주문 화면 첫 진입과 8초 자동 갱신은 `/api/runtime/account?refresh=0` 캐시만 읽어 KIS 잔고 원장을 호출하지 않아. 사용자가 `새로고침`을 눌렀을 때만 `refresh=1`로 실잔고를 확인하고, 성공하면 계좌 복구 시각과 체결 이벤트를 함께 저장해. 종목명 보완은 `/api/stock-search`의 로컬 종목 카탈로그를 사용하고 같은 종목의 동시 요청을 하나로 합쳐. 이름 표시 때문에 `/api/stock/{code}` KIS 현재가를 호출하지 않아.
 
 API client는 `apps/web/src/api/domain.ts`에 모여 있어. 화면에서 직접 `/api/*` 문자열을 만들기보다 여기 함수를 우선 봐.
 

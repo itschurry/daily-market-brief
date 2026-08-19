@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,13 +25,55 @@ from services.daily_performance_journal import (
 
 app = FastAPI(title="WealthPulse API", version="2.0.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+def _allowed_browser_origins() -> set[str]:
+    raw = os.getenv(
+        "WEALTHPULSE_ALLOWED_ORIGINS",
+        "http://127.0.0.1:8081,http://localhost:8081",
+    )
+    allowed: set[str] = set()
+    for item in raw.split(","):
+        candidate = item.strip().rstrip("/")
+        if not candidate:
+            continue
+        parsed = urlsplit(candidate)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        allowed.add(f"{parsed.scheme}://{parsed.netloc}")
+    return allowed
+
+
+def _browser_request_allowed(origin: str, fetch_site: str) -> bool:
+    normalized_fetch_site = str(fetch_site or "").strip().lower()
+    if normalized_fetch_site == "cross-site":
+        return False
+    normalized_origin = str(origin or "").strip().rstrip("/")
+    if not normalized_origin:
+        return True
+    return normalized_origin in _allowed_browser_origins()
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=sorted(_allowed_browser_origins()),
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Accept", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def enforce_local_browser_boundary(request: Request, call_next):
+    if request.url.path.startswith("/api/") and not _browser_request_allowed(
+        request.headers.get("origin", ""),
+        request.headers.get("sec-fetch-site", ""),
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={"ok": False, "error": "cross_site_api_request_blocked"},
+        )
+    return await call_next(request)
 
 
 def _load_market_for_daily_journal() -> dict:
