@@ -70,6 +70,7 @@ def _compact_engine_payload(payload: dict) -> dict:
         "last_account_sync_error_at",
         "last_account_sync_cycle_id",
         "last_account_sync_cycle_type",
+        "last_account_sync_at",
         "consecutive_account_sync_deferrals",
         "latest_cycle_id",
         "today_order_counts",

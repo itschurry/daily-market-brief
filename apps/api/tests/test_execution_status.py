@@ -254,6 +254,7 @@ class ExecutionStatusTests(unittest.TestCase):
         self.assertFalse(state["account_sync_deferred"])
         self.assertEqual(state["consecutive_account_sync_deferrals"], 0)
         self.assertEqual(state["last_success_at"], "2026-08-14T04:10:01+00:00")
+        self.assertEqual(state["last_account_sync_at"], "2026-08-14T04:10:01+00:00")
 
     def test_non_initial_ledger_capacity_error_still_stops_engine(self) -> None:
         error = KISLedgerCapacityError("EGW00215: ledger busy")
@@ -564,6 +565,7 @@ class ExecutionStatusTests(unittest.TestCase):
             "account_sync_deferred": True,
             "consecutive_account_sync_deferrals": 3,
             "last_account_sync_error": "EGW00215: ledger busy",
+            "last_account_sync_error_at": "2026-08-18T01:41:54+00:00",
         }
         normalize_account = Mock(return_value=normalized_account)
         persist_account = Mock()
@@ -592,6 +594,8 @@ class ExecutionStatusTests(unittest.TestCase):
         self.assertFalse(state["account_sync_deferred"])
         self.assertEqual(state["consecutive_account_sync_deferrals"], 0)
         self.assertEqual(state["last_account_sync_error"], "")
+        self.assertEqual(state["last_account_sync_error_at"], "")
+        self.assertEqual(state["last_account_sync_at"], "2026-08-18T01:42:54+00:00")
         self.assertEqual(state["last_account_recovered_at"], "2026-08-18T01:42:54+00:00")
         persist_state.assert_called_once_with()
 

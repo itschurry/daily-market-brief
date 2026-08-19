@@ -486,6 +486,8 @@ export interface RuntimeSeedPositionInput {
 
 export interface RuntimeEngineConfig {
   interval_seconds: number;
+  exit_monitor_interval_seconds?: number;
+  account_sync_interval_seconds?: number;
   markets: Array<'KOSPI'>;
   max_positions_per_market: number;
   min_score: number;

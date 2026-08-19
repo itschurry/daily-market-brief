@@ -104,6 +104,7 @@ _ENTRY_MIN_VOLUME_RATIO = 0.8
 _BUY_WATCH_MAX_DAILY_CHANGE_PCT = 10.0
 _ACTIVE_TRADING_INTERVAL_SECONDS = 60
 _DEFAULT_EXIT_MONITOR_INTERVAL_SECONDS = 60
+_DEFAULT_ACCOUNT_SYNC_INTERVAL_SECONDS = 300
 _MAX_CONSECUTIVE_ACCOUNT_SYNC_DEFERRALS = 3
 _ACCOUNT_RELIABILITY_ERROR_PREFIXES = (
     "runtime_account_",
@@ -138,6 +139,7 @@ _auto_trader_state: dict[str, Any] = {
     "last_account_sync_error_at": "",
     "last_account_sync_cycle_id": "",
     "last_account_sync_cycle_type": "",
+    "last_account_sync_at": "",
     "last_account_recovered_at": "",
     "consecutive_account_sync_deferrals": 0,
     "last_summary": {},
@@ -440,6 +442,47 @@ def _runtime_timestamp(value: Any) -> datetime.datetime | None:
     return parsed.astimezone(datetime.timezone.utc)
 
 
+def _account_sync_interval_seconds(cfg: dict[str, Any]) -> int:
+    return max(
+        _DEFAULT_ACCOUNT_SYNC_INTERVAL_SECONDS,
+        min(
+            3600,
+            int(
+                _to_float(
+                    cfg.get("account_sync_interval_seconds"),
+                    _DEFAULT_ACCOUNT_SYNC_INTERVAL_SECONDS,
+                )
+            ),
+        ),
+    )
+
+
+def _live_account_sync_due(
+    cached_account: dict[str, Any],
+    cfg: dict[str, Any],
+    *,
+    now: datetime.datetime | None = None,
+) -> bool:
+    if not cached_account:
+        return True
+    current_at = now or datetime.datetime.now(datetime.timezone.utc)
+    if current_at.tzinfo is None:
+        current_at = current_at.replace(tzinfo=datetime.timezone.utc)
+    current_at = current_at.astimezone(datetime.timezone.utc)
+    reference_times = [
+        _runtime_timestamp(cached_account.get("updated_at")),
+        _runtime_timestamp(_auto_trader_state.get("last_account_sync_at")),
+        _runtime_timestamp(_auto_trader_state.get("last_account_sync_error_at")),
+    ]
+    valid_times = [item for item in reference_times if item is not None]
+    if not valid_times:
+        return True
+    latest_at = max(valid_times)
+    if latest_at > current_at:
+        return True
+    return (current_at - latest_at).total_seconds() >= _account_sync_interval_seconds(cfg)
+
+
 def _account_reliability_error_recovered(state: dict[str, Any]) -> bool:
     last_error = str(state.get("last_error") or "").strip()
     if not last_error.startswith(_ACCOUNT_RELIABILITY_ERROR_PREFIXES):
@@ -458,6 +501,8 @@ def _record_runtime_account_recovery() -> None:
         _auto_trader_state["account_sync_deferred"] = False
         _auto_trader_state["consecutive_account_sync_deferrals"] = 0
         _auto_trader_state["last_account_sync_error"] = ""
+        _auto_trader_state["last_account_sync_error_at"] = ""
+        _auto_trader_state["last_account_sync_at"] = recovered_at
         _auto_trader_state["last_account_recovered_at"] = recovered_at
         _persist_auto_trader_state_locked()
 
@@ -1469,6 +1514,7 @@ def _default_auto_trader_config() -> dict:
     base = {
         "interval_seconds": _ACTIVE_TRADING_INTERVAL_SECONDS,
         "exit_monitor_interval_seconds": _DEFAULT_EXIT_MONITOR_INTERVAL_SECONDS,
+        "account_sync_interval_seconds": _DEFAULT_ACCOUNT_SYNC_INTERVAL_SECONDS,
         "markets": ["KOSPI"],
         "max_positions_per_market": int(primary["max_positions"]),
         "min_score": 50.0,
@@ -1733,6 +1779,7 @@ def _sync_primary_strategy_fields(cfg: dict) -> dict:
         min(3600, int(_to_float(cfg.get("interval_seconds"), _ACTIVE_TRADING_INTERVAL_SECONDS))),
     )
     cfg["interval_seconds"] = entry_interval
+    cfg["account_sync_interval_seconds"] = _account_sync_interval_seconds(cfg)
     cfg["exit_monitor_interval_seconds"] = min(
         entry_interval,
         max(
@@ -2789,6 +2836,8 @@ def _run_auto_trader_cycle(
         for market in markets
     }
     account_sync_performed = False
+    account_synced_at = ""
+    entry_scan_allowed = entry_scan
     if initial_account is not None:
         account = initial_account
     elif _current_execution_mode() == "live" and not any(market_open_by_market.values()):
@@ -2800,12 +2849,27 @@ def _run_auto_trader_cycle(
             persist_live_reconciled_fills=False,
             notify_live_fills=False,
         )
+    elif _current_execution_mode() == "live":
+        cached_account = _read_cached_live_runtime_account()
+        if cached_account and not _live_account_sync_due(cached_account, cfg):
+            account = _normalize_runtime_account(
+                cached_account,
+                persist_live_reconciled_fills=False,
+                notify_live_fills=False,
+            )
+            if bool(_auto_trader_state.get("account_sync_deferred")):
+                entry_scan_allowed = False
+        else:
+            try:
+                account = _fresh_runtime_account(engine, refresh_quotes=entry_scan)
+            except KISLedgerCapacityError as exc:
+                raise RuntimeAccountSyncDeferredError(str(exc)) from exc
+            account_sync_performed = True
+            account_synced_at = str(account.get("updated_at") or _now_iso())
     else:
-        try:
-            account = _fresh_runtime_account(engine, refresh_quotes=entry_scan)
-        except KISLedgerCapacityError as exc:
-            raise RuntimeAccountSyncDeferredError(str(exc)) from exc
+        account = _fresh_runtime_account(engine, refresh_quotes=entry_scan)
         account_sync_performed = True
+        account_synced_at = str(account.get("updated_at") or _now_iso())
     account_mode = str(account.get("mode") or "paper").strip().lower()
     account_reconciliation_required = False
     reserved_sell_quantities: dict[str, int] = {}
@@ -2890,7 +2954,7 @@ def _run_auto_trader_cycle(
         "markets": markets,
         "selected_count": 0,
     }
-    if account_mode == "real" and entry_scan:
+    if account_mode == "real" and entry_scan_allowed:
         research_refresh = _auto_refresh_research_snapshots(
             markets=markets,
             limit=int(cfg.get("research_refresh_limit") or 30),
@@ -2942,7 +3006,7 @@ def _run_auto_trader_cycle(
                 trailing_profit_peaks[peak_key] = position.get("peak_unrealized_pnl_pct")
             reason = _position_exit_reason_by_pnl(position, cfg, market)
             if not reason:
-                if not entry_scan:
+                if not entry_scan_allowed:
                     continue
                 technicals, tech_error = _load_technicals(code, market)
                 if tech_error:
@@ -3049,7 +3113,7 @@ def _run_auto_trader_cycle(
                     "originating_cycle_id": cycle_id,
                 })
 
-        if not entry_scan:
+        if not entry_scan_allowed:
             continue
 
         held_codes = {
@@ -3697,10 +3761,12 @@ def _run_auto_trader_cycle(
             ),
         }
 
-    final_account = (
-        _fresh_runtime_account(engine, refresh_quotes=True)
-        if account_reconciliation_required else account
-    )
+    if account_reconciliation_required:
+        final_account = _fresh_runtime_account(engine, refresh_quotes=True)
+        account_sync_performed = True
+        account_synced_at = str(final_account.get("updated_at") or _now_iso())
+    else:
+        final_account = account
     if entry_scan or account_reconciliation_required:
         _persist_live_runtime_account(final_account)
     unrealized_pnl = sum(
@@ -3713,6 +3779,8 @@ def _run_auto_trader_cycle(
         "ok": True,
         "cycle_type": "full" if entry_scan else "exit_monitor",
         "account_sync_performed": account_sync_performed,
+        "account_synced_at": account_synced_at,
+        "entry_scan_allowed": entry_scan_allowed,
         "cycle_id": cycle_id,
         "started_at": started_at,
         "finished_at": finished_at,
@@ -4053,6 +4121,12 @@ def _auto_trader_loop(stop_event: threading.Event) -> None:
                 if bool(summary.get("account_sync_performed")):
                     _auto_trader_state["account_sync_deferred"] = False
                     _auto_trader_state["consecutive_account_sync_deferrals"] = 0
+                    _auto_trader_state["last_account_sync_error"] = ""
+                    _auto_trader_state["last_account_sync_error_at"] = ""
+                    _auto_trader_state["last_account_sync_at"] = str(
+                        summary.get("account_synced_at")
+                        or _auto_trader_state["last_run_at"]
+                    )
                 _auto_trader_state["latest_cycle_id"] = summary.get(
                     "cycle_id") or ""
                 _auto_trader_state["next_run_at"] = _next_run_at(
@@ -4233,6 +4307,7 @@ def _start_auto_trader(config: dict) -> dict:
         merged.update(config or {})
         merged["interval_seconds"] = max(
             30, min(3600, int(merged.get("interval_seconds") or _ACTIVE_TRADING_INTERVAL_SECONDS)))
+        merged["account_sync_interval_seconds"] = _account_sync_interval_seconds(merged)
         merged["max_positions_per_market"] = max(
             1, min(20, int(merged.get("max_positions_per_market") or 5)))
         merged["daily_buy_limit"] = max(

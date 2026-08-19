@@ -900,6 +900,7 @@ export interface EngineStatusResponse {
       last_account_sync_error_at?: string;
       last_account_sync_cycle_id?: string;
       last_account_sync_cycle_type?: string;
+      last_account_sync_at?: string;
       consecutive_account_sync_deferrals?: number;
       latest_cycle_id?: string;
       today_order_counts?: {
