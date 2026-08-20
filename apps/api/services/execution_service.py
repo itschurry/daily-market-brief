@@ -944,8 +944,16 @@ def _order_failure_summary() -> dict[str, Any]:
     }
 
 
-def _today_realized_pnl(account: dict) -> float:
+def _today_realized_pnl(account: dict) -> float | None:
     today = _today_kst_str()
+    account_mode = str(account.get("mode") or "paper").strip().lower()
+    if account_mode in {"real", "live"}:
+        if account.get("daily_realized_pnl_available") is not True:
+            return None
+        if str(account.get("daily_realized_pnl_date") or "") != today:
+            return None
+        return round(_to_float(account.get("daily_realized_pnl_krw"), 0.0), 2)
+
     realized = 0.0
     for order in account.get("orders", []):
         if _order_day(str(order.get("filled_at") or order.get("ts") or order.get("submitted_at") or order.get("timestamp") or "")) != today:
@@ -1524,7 +1532,7 @@ def _default_auto_trader_config() -> dict:
         "theme_min_news": 1,
         "theme_priority_bonus": 2.0,
         "theme_focus": list(_DEFAULT_THEME_FOCUS),
-        "daily_buy_limit": 3,
+        "daily_buy_limit": 1,
         "daily_sell_limit": 100,
         "max_orders_per_symbol_per_day": 1,
         "min_reentry_days": _DEFAULT_MIN_REENTRY_DAYS,
@@ -1545,8 +1553,8 @@ def _default_auto_trader_config() -> dict:
         "take_profit_pct": primary["take_profit_pct"],
         "max_holding_days": primary["max_holding_days"],
         "risk_per_trade_pct": 0.8,
-        "daily_loss_limit_pct": 2.0,
-        "max_total_drawdown_pct": 10.0,
+        "daily_loss_limit_pct": 1.0,
+        "max_total_drawdown_pct": 3.0,
         "max_consecutive_loss": 3,
         "cooldown_minutes": 120,
         "max_symbol_weight_pct": 30.0,
@@ -1754,6 +1762,15 @@ def _sync_primary_strategy_fields(cfg: dict) -> dict:
     cfg["risk_per_trade_pct"] = max(
         0.05,
         min(5.0, _to_float(cfg.get("risk_per_trade_pct"), 0.8)),
+    )
+    cfg["daily_buy_limit"] = 1
+    cfg["daily_loss_limit_pct"] = max(
+        0.1,
+        min(1.0, _to_float(cfg.get("daily_loss_limit_pct"), 1.0)),
+    )
+    cfg["max_total_drawdown_pct"] = max(
+        0.1,
+        min(3.0, _to_float(cfg.get("max_total_drawdown_pct"), 3.0)),
     )
     cfg["max_symbol_weight_pct"] = max(
         1.0,
@@ -3277,7 +3294,29 @@ def _run_auto_trader_cycle(
             for item in market_signals
             if isinstance(item, dict) and str(item.get("code") or "").upper()
         }
-        if _should_attempt_rotation(slots, rotation_candidates):
+        rotation_requested = _should_attempt_rotation(slots, rotation_candidates)
+        if rotation_requested and buy_capacity_block_reason:
+            rotation_summary["attempted_count"] += 1
+            rotation_summary["blocked"].append({
+                "market": market,
+                "reason": buy_capacity_block_reason,
+            })
+            skipped.append({"market": market, "reason": buy_capacity_block_reason})
+        elif rotation_requested and buy_count >= daily_buy_limit:
+            rotation_summary["attempted_count"] += 1
+            rotation_summary["blocked"].append({
+                "market": market,
+                "reason": "rotation_daily_buy_limit_reached",
+            })
+            skipped.append({"market": market, "reason": "rotation_daily_buy_limit_reached"})
+        elif rotation_requested and sell_count >= daily_sell_limit:
+            rotation_summary["attempted_count"] += 1
+            rotation_summary["blocked"].append({
+                "market": market,
+                "reason": "rotation_daily_sell_limit_reached",
+            })
+            skipped.append({"market": market, "reason": "rotation_daily_sell_limit_reached"})
+        elif rotation_requested:
             rotation_summary["attempted_count"] += 1
             rotation_plan = _select_rotation_plan(
                 account=account,
@@ -3295,6 +3334,32 @@ def _run_auto_trader_cycle(
                 buy_candidate = rotation_plan["buy"]
                 sell_code = str(sell_item.get("code") or "").upper()
                 buy_code = str(buy_candidate.get("code") or "").upper()
+                buy_candidate = _resize_candidate_for_execution_risk(buy_candidate, account, cfg)
+                risk_plan = buy_candidate.get("execution_risk_plan") if isinstance(buy_candidate.get("execution_risk_plan"), dict) else {}
+                if not risk_plan.get("ok"):
+                    failure_reason = risk_plan.get("reason") or "rotation_buy_execution_risk_blocked"
+                    skipped.append({"code": buy_code, "name": str(buy_candidate.get("name") or buy_code), "market": market, "reason": failure_reason})
+                    rotation_summary["blocked"].append({
+                        "market": market,
+                        "reason": failure_reason,
+                        "sell_code": sell_code,
+                        "buy_code": buy_code,
+                        "score_gap": rotation_plan.get("score_gap"),
+                    })
+                    continue
+                size_recommendation = buy_candidate.get("size_recommendation") if isinstance(buy_candidate.get("size_recommendation"), dict) else {}
+                quantity = int(size_recommendation.get("quantity") or 0)
+                if quantity <= 0:
+                    failure_reason = size_recommendation.get("reason") or "rotation_buy_size_zero"
+                    skipped.append({"code": buy_code, "name": str(buy_candidate.get("name") or buy_code), "market": market, "reason": failure_reason})
+                    rotation_summary["blocked"].append({
+                        "market": market,
+                        "reason": failure_reason,
+                        "sell_code": sell_code,
+                        "buy_code": buy_code,
+                        "score_gap": rotation_plan.get("score_gap"),
+                    })
+                    continue
                 requested_sell_qty = int(sell_item.get("quantity") or 0)
                 sell_key = f"{market}:{sell_code}"
                 available_sell_qty = max(
@@ -3373,32 +3438,6 @@ def _run_auto_trader_cycle(
                         strategy_position_counts[strategy_id] = max(0, strategy_position_counts.get(strategy_id, 0) - 1)
                     market_position_count = max(0, market_position_count - 1)
                     slots = max(0, max_positions - market_position_count)
-                    buy_candidate = _resize_candidate_for_execution_risk(buy_candidate, account, cfg)
-                    risk_plan = buy_candidate.get("execution_risk_plan") if isinstance(buy_candidate.get("execution_risk_plan"), dict) else {}
-                    if not risk_plan.get("ok"):
-                        failure_reason = risk_plan.get("reason") or "rotation_buy_execution_risk_blocked"
-                        skipped.append({"code": buy_code, "name": str(buy_candidate.get("name") or buy_code), "market": market, "reason": failure_reason})
-                        rotation_summary["blocked"].append({
-                            "market": market,
-                            "reason": failure_reason,
-                            "sell_code": sell_code,
-                            "buy_code": buy_code,
-                            "score_gap": rotation_plan.get("score_gap"),
-                        })
-                        continue
-                    size_recommendation = buy_candidate.get("size_recommendation") if isinstance(buy_candidate.get("size_recommendation"), dict) else {}
-                    quantity = int(size_recommendation.get("quantity") or 0)
-                    if quantity <= 0:
-                        failure_reason = size_recommendation.get("reason") or "rotation_buy_size_zero"
-                        skipped.append({"code": buy_code, "name": str(buy_candidate.get("name") or buy_code), "market": market, "reason": failure_reason})
-                        rotation_summary["blocked"].append({
-                            "market": market,
-                            "reason": failure_reason,
-                            "sell_code": sell_code,
-                            "buy_code": buy_code,
-                            "score_gap": rotation_plan.get("score_gap"),
-                        })
-                        continue
                     account_reconciliation_required = True
                     buy_result = engine.place_order(
                         side="buy",
@@ -4310,8 +4349,7 @@ def _start_auto_trader(config: dict) -> dict:
         merged["account_sync_interval_seconds"] = _account_sync_interval_seconds(merged)
         merged["max_positions_per_market"] = max(
             1, min(20, int(merged.get("max_positions_per_market") or 5)))
-        merged["daily_buy_limit"] = max(
-            1, min(3, int(merged.get("daily_buy_limit") or 3)))
+        merged["daily_buy_limit"] = 1
         merged["daily_sell_limit"] = max(
             1, min(200, int(merged.get("daily_sell_limit") or 20)))
         merged["max_orders_per_symbol_per_day"] = 1
@@ -4334,9 +4372,9 @@ def _start_auto_trader(config: dict) -> dict:
         merged["risk_per_trade_pct"] = max(
             0.05, min(5.0, float(merged.get("risk_per_trade_pct") or 0.35)))
         merged["daily_loss_limit_pct"] = max(
-            0.1, min(20.0, float(merged.get("daily_loss_limit_pct") or 2.0)))
+            0.1, min(1.0, float(merged.get("daily_loss_limit_pct") or 1.0)))
         merged["max_total_drawdown_pct"] = max(
-            0.1, min(50.0, float(merged.get("max_total_drawdown_pct") or 10.0)))
+            0.1, min(3.0, float(merged.get("max_total_drawdown_pct") or 3.0)))
         merged["max_consecutive_loss"] = max(
             1, min(20, int(merged.get("max_consecutive_loss") or 3)))
         merged["cooldown_minutes"] = max(

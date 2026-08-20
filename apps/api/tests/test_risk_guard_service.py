@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 API_ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,80 @@ from services.trading_pipeline.decision import _risk_config, build_signal_book
 
 
 class RiskGuardServiceTests(unittest.TestCase):
+    def test_live_entries_fail_closed_without_exact_realized_pnl(self) -> None:
+        state = build_risk_guard_state(
+            account={
+                "mode": "real",
+                "equity_krw": 3_600_000,
+                "positions": [],
+                "orders": [],
+            },
+            cfg={
+                "performance_starting_equity_krw": 3_700_000,
+                "max_total_drawdown_pct": 3.0,
+            },
+            regime="neutral",
+            risk_level="normal",
+        )
+
+        self.assertFalse(state["entry_allowed"])
+        self.assertFalse(state["realized_pnl_available"])
+        self.assertIn("realized_pnl_unavailable", state["reasons"])
+
+    def test_exact_live_realized_loss_blocks_new_entries(self) -> None:
+        account = {
+            "mode": "real",
+            "equity_krw": 3_600_000,
+            "positions": [],
+            "orders": [],
+            "daily_realized_pnl_available": True,
+            "daily_realized_pnl_date": "2026-08-20",
+            "daily_realized_pnl_krw": -40_000,
+            "daily_realized_trades": [{
+                "date": "2026-08-20",
+                "code": "001450",
+                "realized_pnl_krw": -40_000,
+            }],
+        }
+        with patch("services.risk_guard_service._today_kst", return_value="2026-08-20"):
+            state = build_risk_guard_state(
+                account=account,
+                cfg={
+                    "performance_starting_equity_krw": 3_700_000,
+                    "daily_loss_limit_pct": 1.0,
+                    "max_total_drawdown_pct": 3.0,
+                },
+                regime="neutral",
+                risk_level="normal",
+            )
+
+        self.assertFalse(state["entry_allowed"])
+        self.assertTrue(state["realized_pnl_available"])
+        self.assertEqual(state["daily_realized_loss"], 40_000)
+        self.assertEqual(state["daily_loss_left"], 0)
+        self.assertEqual(state["loss_streak"], 1)
+        self.assertIn("daily_loss_limit_reached", state["reasons"])
+
+    def test_stale_live_realized_pnl_blocks_new_entries(self) -> None:
+        account = {
+            "mode": "real",
+            "equity_krw": 3_700_000,
+            "positions": [],
+            "daily_realized_pnl_available": True,
+            "daily_realized_pnl_date": "2026-08-19",
+            "daily_realized_trades": [],
+        }
+        with patch("services.risk_guard_service._today_kst", return_value="2026-08-20"):
+            state = build_risk_guard_state(
+                account=account,
+                cfg={"performance_starting_equity_krw": 3_700_000},
+                regime="neutral",
+                risk_level="normal",
+            )
+
+        self.assertFalse(state["entry_allowed"])
+        self.assertIn("realized_pnl_unavailable", state["reasons"])
+
     def test_percent_risk_limits_are_not_reinterpreted_as_ratios(self) -> None:
         config = _risk_config({
             "allocation_mode": "diversified",

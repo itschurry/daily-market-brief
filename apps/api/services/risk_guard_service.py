@@ -85,13 +85,61 @@ def _compute_exposure(account: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _daily_realized_loss(account: dict[str, Any]) -> float:
+def _realized_pnl_rows(account: dict[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
+    mode = str(account.get("mode") or "paper").strip().lower()
+    if mode in {"real", "live"}:
+        if account.get("daily_realized_pnl_available") is not True:
+            return False, []
+        if str(account.get("daily_realized_pnl_date") or "") != _today_kst():
+            return False, []
+        try:
+            daily_realized_pnl = float(account.get("daily_realized_pnl_krw"))
+        except (TypeError, ValueError):
+            return False, []
+        if not math.isfinite(daily_realized_pnl):
+            return False, []
+        rows = account.get("daily_realized_trades")
+        if not isinstance(rows, list):
+            return False, []
+        normalized = [dict(row) for row in rows if isinstance(row, dict)]
+        if len(normalized) != len(rows):
+            return False, []
+        for row in normalized:
+            raw_pnl = row.get("realized_pnl_krw")
+            try:
+                pnl = float(raw_pnl)
+            except (TypeError, ValueError):
+                return False, []
+            if not math.isfinite(pnl):
+                return False, []
+        return True, normalized
+
+    rows = account.get("orders") if isinstance(account.get("orders"), list) else []
+    return True, [dict(row) for row in rows if isinstance(row, dict)]
+
+
+def _realized_row_day(row: dict[str, Any]) -> str:
+    explicit_date = str(row.get("date") or "").strip()
+    if explicit_date:
+        return explicit_date
+    timestamp = str(
+        row.get("filled_at")
+        or row.get("ts")
+        or row.get("submitted_at")
+        or row.get("timestamp")
+        or row.get("logged_at")
+        or ""
+    )
+    return _order_day(timestamp)
+
+
+def _daily_realized_loss(rows: list[dict[str, Any]]) -> float:
     today = _today_kst()
     loss = 0.0
-    for order in account.get("orders", []):
-        if _order_day(str(order.get("ts") or "")) != today:
+    for order in rows:
+        if _realized_row_day(order) != today:
             continue
-        if str(order.get("side") or "").lower() != "sell":
+        if order.get("side") and str(order.get("side") or "").lower() != "sell":
             continue
         pnl = _to_float(order.get("realized_pnl_krw"))
         if pnl < 0:
@@ -99,10 +147,23 @@ def _daily_realized_loss(account: dict[str, Any]) -> float:
     return loss
 
 
-def _consecutive_loss_count(account: dict[str, Any]) -> int:
+def _consecutive_loss_count(rows: list[dict[str, Any]]) -> int:
     count = 0
-    for order in account.get("orders", []):
-        if str(order.get("side") or "").lower() != "sell":
+    ordered_rows = sorted(
+        rows,
+        key=lambda row: str(
+            row.get("filled_at")
+            or row.get("ts")
+            or row.get("submitted_at")
+            or row.get("timestamp")
+            or row.get("logged_at")
+            or row.get("date")
+            or ""
+        ),
+        reverse=True,
+    )
+    for order in ordered_rows:
+        if order.get("side") and str(order.get("side") or "").lower() != "sell":
             continue
         pnl = _to_float(order.get("realized_pnl_krw"))
         if pnl < 0:
@@ -122,22 +183,34 @@ def build_risk_guard_state(
     exposure = _compute_exposure(account)
     equity = exposure["equity_krw"]
 
-    daily_loss_limit_pct = _to_float(cfg.get("daily_loss_limit_pct"), 2.0)
+    daily_loss_limit_pct = _to_float(cfg.get("daily_loss_limit_pct"), 1.0)
     daily_loss_limit_krw = equity * max(0.1, daily_loss_limit_pct) / 100.0
-    consumed_loss = _daily_realized_loss(account)
+    realized_pnl_available, realized_rows = _realized_pnl_rows(account)
+    account_mode = str(account.get("mode") or "paper").strip().lower()
+    if realized_pnl_available and account_mode in {"real", "live"}:
+        consumed_loss = max(0.0, -float(account["daily_realized_pnl_krw"]))
+    else:
+        consumed_loss = _daily_realized_loss(realized_rows) if realized_pnl_available else 0.0
     daily_loss_left = max(0.0, daily_loss_limit_krw - consumed_loss)
 
     max_loss_streak = max(1, int(cfg.get("max_consecutive_loss", 3) or 3))
     cooldown_minutes = max(5, int(cfg.get("cooldown_minutes", 120) or 120))
-    loss_streak = _consecutive_loss_count(account)
+    loss_streak = _consecutive_loss_count(realized_rows) if realized_pnl_available else 0
 
     cooldown_active = False
     cooldown_until = ""
     if loss_streak >= max_loss_streak:
         latest_sell_ts = ""
-        for order in account.get("orders", []):
-            if str(order.get("side") or "").lower() == "sell":
-                latest_sell_ts = str(order.get("ts") or "")
+        for order in realized_rows:
+            if not order.get("side") or str(order.get("side") or "").lower() == "sell":
+                latest_sell_ts = str(
+                    order.get("filled_at")
+                    or order.get("ts")
+                    or order.get("submitted_at")
+                    or order.get("timestamp")
+                    or order.get("logged_at")
+                    or ""
+                )
                 break
         if latest_sell_ts:
             try:
@@ -147,6 +220,8 @@ def build_risk_guard_state(
                 cooldown_active = until > datetime.datetime.now(_KST)
             except Exception:
                 cooldown_active = True
+        else:
+            cooldown_active = True
 
     reasons: list[str] = []
     entry_allowed = True
@@ -160,8 +235,11 @@ def build_risk_guard_state(
         if starting_equity > 0
         else 0.0
     )
-    max_total_drawdown_pct = max(0.1, _to_float(cfg.get("max_total_drawdown_pct"), 10.0))
+    max_total_drawdown_pct = max(0.1, _to_float(cfg.get("max_total_drawdown_pct"), 3.0))
 
+    if not realized_pnl_available:
+        entry_allowed = False
+        reasons.append("realized_pnl_unavailable")
     if daily_loss_left <= 0.0:
         entry_allowed = False
         reasons.append("daily_loss_limit_reached")
@@ -185,6 +263,8 @@ def build_risk_guard_state(
         "reasons": reasons,
         "daily_loss_left": round(daily_loss_left, 2),
         "daily_loss_limit": round(daily_loss_limit_krw, 2),
+        "daily_realized_loss": round(consumed_loss, 2),
+        "realized_pnl_available": realized_pnl_available,
         "loss_streak": loss_streak,
         "cooldown_until": cooldown_until,
         "cooldown_active": cooldown_active,

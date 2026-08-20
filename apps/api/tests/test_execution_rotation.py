@@ -1419,6 +1419,137 @@ class ExecutionRotationTests(unittest.TestCase):
 
         self.assertTrue(_should_attempt_rotation(1, [candidate]))
 
+    def test_rotation_does_not_sell_when_buy_risk_preflight_fails(self) -> None:
+        account = {
+            "mode": "paper",
+            "cash_krw": 2_000_000,
+            "equity_krw": 3_000_000,
+            "orders": [],
+            "positions": [{
+                "market": "KOSPI",
+                "code": "001450",
+                "name": "현대해상",
+                "quantity": 6,
+                "orderable_quantity": 6,
+                "entry_ts": (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(),
+                "entry_plan_price": 50_200,
+                "stop_loss_price": 45_000,
+                "take_profit_price": 60_000,
+                "avg_price_local": 50_200,
+                "last_price_local": 48_300,
+                "market_value_krw": 289_800,
+                "unrealized_pnl_krw": -11_400,
+                "unrealized_pnl_pct": -3.78,
+            }],
+        }
+        engine = Mock()
+        rotation_plan = {
+            "ok": True,
+            "sell": {"code": "001450", "market": "KOSPI", "quantity": 6},
+            "buy": {
+                "code": "009420",
+                "name": "한올바이오파마",
+                "market": "KOSPI",
+                "size_recommendation": {"quantity": 11},
+            },
+            "score_gap": 63.1,
+        }
+        blocked_buy = {
+            **rotation_plan["buy"],
+            "execution_risk_plan": {
+                "ok": False,
+                "reason": "stop_loss_too_tight_for_volatility",
+            },
+        }
+
+        with (
+            patch("services.execution_service._runtime_engine", return_value=engine),
+            patch("services.execution_service._current_execution_mode", return_value="paper"),
+            patch("services.execution_service._runtime_order_attempts", return_value=[]),
+            patch("services.execution_service.is_market_open", return_value=True),
+            patch("services.execution_service._compute_technical_snapshot", return_value=None),
+            patch("services.execution_service.build_signal_book", return_value={"signals": [], "risk_guard_state": {}}),
+            patch("services.execution_service._should_attempt_rotation", return_value=True),
+            patch("services.execution_service._select_rotation_plan", return_value=rotation_plan),
+            patch("services.execution_service._resize_candidate_for_execution_risk", return_value=blocked_buy),
+            patch("services.execution_service._persist_live_runtime_account"),
+            patch("services.execution_service.append_signal_snapshots"),
+            patch("services.execution_service.append_engine_cycle"),
+            patch("services.execution_service.append_account_snapshot"),
+            patch("services.execution_service._should_send_market_open_brief", return_value=(False, "")),
+            patch("services.execution_service.get_notification_service", return_value=Mock()),
+        ):
+            summary = _run_auto_trader_cycle(
+                _default_auto_trader_config(),
+                initial_account=account,
+            )
+
+        engine.place_order.assert_not_called()
+        self.assertEqual(summary["executed_sell_count"], 0)
+        self.assertEqual(
+            summary["rotation_summary"]["blocked"][0]["reason"],
+            "stop_loss_too_tight_for_volatility",
+        )
+
+    def test_rotation_does_not_sell_after_daily_buy_limit(self) -> None:
+        account = {
+            "mode": "paper",
+            "cash_krw": 2_000_000,
+            "equity_krw": 3_000_000,
+            "orders": [],
+            "positions": [{
+                "market": "KOSPI",
+                "code": "001450",
+                "quantity": 6,
+                "orderable_quantity": 6,
+                "entry_plan_price": 50_200,
+                "stop_loss_price": 45_000,
+                "take_profit_price": 60_000,
+                "avg_price_local": 50_200,
+                "last_price_local": 48_300,
+                "market_value_krw": 289_800,
+            }],
+        }
+        today_buy = {
+            "success": True,
+            "side": "buy",
+            "market": "KOSPI",
+            "code": "005690",
+            "submitted_at": "2026-08-20T09:10:00+09:00",
+        }
+        engine = Mock()
+        select_rotation_plan = Mock()
+
+        with (
+            patch("services.execution_service._runtime_engine", return_value=engine),
+            patch("services.execution_service._current_execution_mode", return_value="paper"),
+            patch("services.execution_service._today_kst_str", return_value="2026-08-20"),
+            patch("services.execution_service._runtime_order_attempts", return_value=[today_buy]),
+            patch("services.execution_service.is_market_open", return_value=True),
+            patch("services.execution_service._compute_technical_snapshot", return_value=None),
+            patch("services.execution_service.build_signal_book", return_value={"signals": [], "risk_guard_state": {}}),
+            patch("services.execution_service._should_attempt_rotation", return_value=True),
+            patch("services.execution_service._select_rotation_plan", select_rotation_plan),
+            patch("services.execution_service._persist_live_runtime_account"),
+            patch("services.execution_service.append_signal_snapshots"),
+            patch("services.execution_service.append_engine_cycle"),
+            patch("services.execution_service.append_account_snapshot"),
+            patch("services.execution_service._should_send_market_open_brief", return_value=(False, "")),
+            patch("services.execution_service.get_notification_service", return_value=Mock()),
+        ):
+            summary = _run_auto_trader_cycle(
+                _default_auto_trader_config(),
+                initial_account=account,
+            )
+
+        engine.place_order.assert_not_called()
+        select_rotation_plan.assert_not_called()
+        self.assertEqual(summary["executed_sell_count"], 0)
+        self.assertEqual(
+            summary["rotation_summary"]["blocked"][0]["reason"],
+            "rotation_daily_buy_limit_reached",
+        )
+
     def test_unit_price_uses_research_technical_features_when_quote_missing(self) -> None:
         candidate = {
             "code": "000660",

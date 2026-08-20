@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+from datetime import datetime, timezone
 
 
 API_ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,62 @@ from broker.kis_client import KISLedgerCapacityError, KISRequestAuditError
 
 
 class LiveBrokerExecutionEngineTests(unittest.TestCase):
+    def test_get_account_includes_exact_daily_realized_pnl(self) -> None:
+        client = Mock()
+        client.get_balance.return_value = {
+            "mode": "real",
+            "equity_krw": 3_600_000,
+        }
+        client.get_domestic_period_trade_profit.return_value = {
+            "date": "2026-08-20",
+            "trades": [{
+                "date": "2026-08-20",
+                "code": "001450",
+                "realized_pnl_krw": -12_000,
+            }],
+            "summary": {"realized_pnl_krw": -12_000},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = LiveBrokerExecutionEngine(
+                kis_client=client,
+                quote_provider=Mock(),
+                fx_provider=Mock(),
+                config=EngineConfig(state_path=Path(tmpdir) / "live.json"),
+            )
+            with patch(
+                "broker.execution_engine.get_market_local_dt",
+                return_value=datetime(2026, 8, 20, tzinfo=timezone.utc),
+            ):
+                account = engine.get_account()
+
+        self.assertTrue(account["daily_realized_pnl_available"])
+        self.assertEqual(account["daily_realized_pnl_date"], "2026-08-20")
+        self.assertEqual(account["daily_realized_pnl_krw"], -12_000)
+        self.assertEqual(account["realized_pnl_krw"], -12_000)
+        self.assertEqual(account["daily_realized_trades"][0]["code"], "001450")
+        client.get_domestic_period_trade_profit.assert_called_once_with("2026-08-20")
+
+    def test_get_account_fails_closed_when_realized_pnl_lookup_fails(self) -> None:
+        client = Mock()
+        client.get_balance.return_value = {
+            "mode": "real",
+            "equity_krw": 3_600_000,
+        }
+        client.get_domestic_period_trade_profit.side_effect = RuntimeError("profit lookup failed")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = LiveBrokerExecutionEngine(
+                kis_client=client,
+                quote_provider=Mock(),
+                fx_provider=Mock(),
+                config=EngineConfig(state_path=Path(tmpdir) / "live.json"),
+            )
+
+            account = engine.get_account()
+
+        self.assertFalse(account["ok"])
+        self.assertEqual(account["mode"], "live")
+        self.assertIn("profit lookup failed", account["error"])
+
     def test_get_account_propagates_ledger_capacity_error(self) -> None:
         client = Mock()
         error = KISLedgerCapacityError("EGW00215: 원장 처리량 초과")

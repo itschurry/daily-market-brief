@@ -48,7 +48,7 @@ def _risk_config(cfg: Mapping[str, Any]) -> dict[str, Any]:
     performance_starting_equity_krw = _to_float(cfg.get("performance_starting_equity_krw"), 0.0)
     normalized = {
         "daily_loss_limit_pct": _normalize_percent(cfg.get("daily_loss_limit_pct"), 2.0),
-        "max_total_drawdown_pct": _normalize_percent(cfg.get("max_total_drawdown_pct"), 10.0),
+        "max_total_drawdown_pct": _normalize_percent(cfg.get("max_total_drawdown_pct"), 3.0),
         "max_symbol_weight_pct": _normalize_percent(cfg.get("max_symbol_weight_pct"), 20.0),
         "max_sector_weight_pct": _normalize_percent(cfg.get("max_sector_weight_pct"), 35.0),
         "max_market_exposure_pct": _normalize_percent(cfg.get("max_market_exposure_pct"), 70.0),

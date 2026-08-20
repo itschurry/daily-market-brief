@@ -806,7 +806,31 @@ class LiveBrokerExecutionEngine:
     def get_account(self, *, refresh_quotes: bool = True) -> dict[str, Any]:
         """실계좌 잔고를 KIS API에서 직접 조회한다."""
         try:
-            return self._client.get_balance()
+            account = self._client.get_balance()
+            if not isinstance(account, dict):
+                raise RuntimeError("KIS 실계좌 잔고 응답 형식이 잘못됐습니다.")
+            if account.get("ok") is False or account.get("error"):
+                return account
+
+            realized_date = get_market_local_dt("KOSPI").date().isoformat()
+            realized = self._client.get_domestic_period_trade_profit(realized_date)
+            if not isinstance(realized, dict):
+                raise RuntimeError("KIS 확정 실현손익 응답 형식이 잘못됐습니다.")
+            realized_trades = realized.get("trades")
+            realized_summary = realized.get("summary")
+            if not isinstance(realized_trades, list) or not isinstance(realized_summary, dict):
+                raise RuntimeError("KIS 확정 실현손익 필드가 누락됐습니다.")
+            if realized_summary.get("realized_pnl_krw") is None:
+                raise RuntimeError("KIS 확정 실현손익 합계가 누락됐습니다.")
+
+            return {
+                **account,
+                "realized_pnl_krw": float(realized_summary["realized_pnl_krw"]),
+                "daily_realized_pnl_available": True,
+                "daily_realized_pnl_date": realized_date,
+                "daily_realized_pnl_krw": float(realized_summary["realized_pnl_krw"]),
+                "daily_realized_trades": [dict(item) for item in realized_trades if isinstance(item, dict)],
+            }
         except (KISLedgerCapacityError, KISRequestAuditError):
             raise
         except Exception as exc:
